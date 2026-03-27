@@ -681,6 +681,16 @@ export default function App() {
   const [bpElapsed, setBpElapsed] = useState(0);
   const bpAbortRef = useRef(null);
   const bpTimerRef = useRef(null);
+  // Listing audit scorecard state
+  const [auditAsin, setAuditAsin] = useState("");
+  const [auditTitle, setAuditTitle] = useState("");
+  const [auditBullets, setAuditBullets] = useState("");
+  const [auditResults, setAuditResults] = useState(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState(null);
+  const [auditElapsed, setAuditElapsed] = useState(0);
+  const auditAbortRef = useRef(null);
+  const auditTimerRef = useRef(null);
   const [authState, setAuthState] = useState("login");
   const [isAdmin, setIsAdmin] = useState(false);
   const [authUser, setAuthUser] = useState("");
@@ -1088,6 +1098,44 @@ export default function App() {
     }
   }, [bpModel, bpMarketplace]);
 
+  // Listing audit scorecard
+  const runListingAudit = useCallback(async () => {
+    if (auditLoading || (!auditTitle.trim() && !auditAsin.trim())) return;
+    setAuditLoading(true); setAuditError(null); setAuditResults(null); setAuditElapsed(0);
+    const startTime = Date.now();
+    auditTimerRef.current = setInterval(() => setAuditElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (auditAbortRef.current) auditAbortRef.current.abort();
+    const controller = new AbortController();
+    auditAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 60000);
+    try {
+      const product = auditAsin.trim() ? lookupProduct(auditAsin, liveProductDbRef.current) : null;
+      const productCtx = product ? "\n\nVERIFIED PRODUCT DATA:\n" + formatProductContext(product) : "";
+      const auditSystem = "You are an Amazon listing optimization expert for CUCKOO Electronics America. Audit a product listing and score it on 6 criteria (each 0-10): title_seo (keyword coverage, char usage, structure), bullet_quality (benefit-driven, keyword-rich, complete), keyword_coverage (high-volume terms present), brand_compliance (CUCKOO title rules — Uncooked/Cooked, no & Warmer, tech frontloaded), competitiveness (vs top rice cooker listings), and completeness (all fields filled). Give an overall_score (weighted average). List specific actionable improvements.\nRespond ONLY with valid JSON: {\"overall_score\":<0-10>,\"scores\":{\"title_seo\":<n>,\"bullet_quality\":<n>,\"keyword_coverage\":<n>,\"brand_compliance\":<n>,\"competitiveness\":<n>,\"completeness\":<n>},\"details\":{\"title_seo\":{\"strengths\":[],\"issues\":[]},\"bullet_quality\":{\"strengths\":[],\"issues\":[]},\"keyword_coverage\":{\"missing_keywords\":[],\"present_keywords\":[]},\"brand_compliance\":{\"passes\":[],\"violations\":[]},\"competitiveness\":{\"notes\":[]},\"completeness\":{\"notes\":[]}},\"top_actions\":[\"action1\",\"action2\",\"action3\"]}";
+      const auditUserMsg = "Audit this Amazon listing:" + (auditAsin.trim() ? "\nASIN/Model: " + auditAsin.trim() : "") + (auditTitle.trim() ? "\nTitle: " + auditTitle.trim() : "") + (auditBullets.trim() ? "\nBullet Points:\n" + auditBullets.trim() : "") + productCtx + "\nRespond ONLY with valid JSON.";
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: auditSystem, messages: [{ role: "user", content: auditUserMsg }] })
+      });
+      if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
+      if (!text) throw new Error("Empty response");
+      let parsed;
+      try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
+      catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Could not parse response"); }
+      setAuditResults(parsed);
+    } catch (e) {
+      if (e.name === "AbortError") { if (controller.signal.reason === "timeout") setAuditError("Request timed out (60s). Please retry."); }
+      else setAuditError("Error: " + (e.message || "Something went wrong."));
+    } finally {
+      clearTimeout(timeoutId);
+      if (auditTimerRef.current) { clearInterval(auditTimerRef.current); auditTimerRef.current = null; }
+      setAuditLoading(false); auditAbortRef.current = null;
+    }
+  }, [auditAsin, auditTitle, auditBullets]);
+
   const optimize = useCallback(async () => {
     const title = titleRef.current;
     const sel = selectedRef.current;
@@ -1268,6 +1316,7 @@ export default function App() {
             { key: "backend_keywords", label: "Amazon Backend Keywords", icon: "\u{1F50D}" },
             { key: "search_volume", label: "Amazon Search Volume Report", icon: "\u{1F4CA}" },
             { key: "product_compare", label: "Product Comparison", icon: "\u{1F4CB}" },
+            { key: "listing_audit", label: "Listing Audit", icon: "\u{1F4CB}" },
             { key: "asin_reference", label: "Amazon ASIN Reference", icon: "\u{1F517}" },
           ].map(tab => (
             <button key={tab.key} role="tab" aria-selected={page === tab.key} aria-controls={`panel-${tab.key}`} onClick={() => { setPage(tab.key); window.scrollTo(0, 0); }}
@@ -2215,6 +2264,125 @@ export default function App() {
         {/* FOOTER */}
         <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
           <span style={{ fontSize: 10, color: "#ccc" }}>Data from Rice Cooker Categorization {"\u00B7"} {Object.keys(PRODUCT_DB).length} verified models {"\u00B7"} March 2026</span>
+        </div>
+      </div>}
+
+      {/* LISTING AUDIT SCORECARD PAGE */}
+      {page === "listing_audit" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Paste your Amazon listing details to get a comprehensive audit scorecard. The tool evaluates title SEO, bullet point quality, keyword coverage, CUCKOO brand compliance, competitiveness, and completeness.
+          </p>
+        </div>
+
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>ASIN or Model Number <span style={{ fontWeight: 400, color: "#bbb" }}>(auto-fills product data)</span></label>
+            <input value={auditAsin} onChange={e => setAuditAsin(e.target.value)} placeholder="e.g. B08DP4TGNN or CRP-LHTR0609FW"
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Amazon Title</label>
+            <textarea value={auditTitle} onChange={e => setAuditTitle(e.target.value)} placeholder="Paste the current Amazon listing title..." rows={2}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {auditTitle.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{auditTitle.trim().length} chars</div>}
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Bullet Points <span style={{ fontWeight: 400, color: "#bbb" }}>(paste all 5, one per line)</span></label>
+            <textarea value={auditBullets} onChange={e => setAuditBullets(e.target.value)} placeholder="Paste bullet points here (one per line)..." rows={5}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          </div>
+        </div>
+
+        {/* Generate */}
+        {(() => {
+          const dis = auditLoading || (!auditTitle.trim() && !auditAsin.trim());
+          return (<>
+            <button className="cuckoo-btn" disabled={dis} onClick={runListingAudit}
+              style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: dis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
+              {auditLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                Auditing listing...
+              </span>) : dis ? "Enter a title or model number to audit" : "Run Listing Audit"}
+            </button>
+            {auditLoading && <div style={{ textAlign: "center", fontSize: 10, color: "#aaa", marginBottom: 12 }}>{auditElapsed}s
+              <button onClick={() => { if (auditAbortRef.current) auditAbortRef.current.abort(); setAuditLoading(false); setAuditError("Cancelled."); if (auditTimerRef.current) { clearInterval(auditTimerRef.current); auditTimerRef.current = null; } }}
+                style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer", marginLeft: 8 }}>Cancel</button>
+            </div>}
+          </>);
+        })()}
+
+        {auditError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 24, color: "#dc2626", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{auditError}</span>
+          <button onClick={runListingAudit} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Retry</button>
+        </div>}
+
+        {/* Results */}
+        {auditResults && (() => {
+          const scoreColor = s => s >= 8 ? "#16a34a" : s >= 5 ? "#d97706" : "#dc2626";
+          const categories = [
+            { key: "title_seo", label: "Title SEO", icon: "\u{1F50D}" },
+            { key: "bullet_quality", label: "Bullet Quality", icon: "\u{1F4DD}" },
+            { key: "keyword_coverage", label: "Keyword Coverage", icon: "\u{1F3AF}" },
+            { key: "brand_compliance", label: "Brand Compliance", icon: "\u2713" },
+            { key: "competitiveness", label: "Competitiveness", icon: "\u{1F3C6}" },
+            { key: "completeness", label: "Completeness", icon: "\u{1F4CB}" },
+          ];
+          return (<div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            {/* Overall score */}
+            <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #f0eeeb" }}>
+              <div style={{ width: 72, height: 72, borderRadius: "50%", border: `4px solid ${scoreColor(auditResults.overall_score)}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <span style={{ fontSize: 24, fontWeight: 800, color: scoreColor(auditResults.overall_score), fontFamily: "'IBM Plex Mono',monospace" }}>{auditResults.overall_score}</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#1a1a1a" }}>Overall Listing Score</div>
+                <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>{auditResults.overall_score >= 8 ? "Strong listing — minor optimizations possible" : auditResults.overall_score >= 5 ? "Needs improvement — several optimization opportunities" : "Significant issues — major rework recommended"}</div>
+              </div>
+            </div>
+
+            {/* Score grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
+              {categories.map(cat => {
+                const score = auditResults.scores?.[cat.key] || 0;
+                return (<div key={cat.key} style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, padding: "12px 14px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "#666" }}>{cat.icon} {cat.label}</span>
+                    <span style={{ fontSize: 16, fontWeight: 800, color: scoreColor(score), fontFamily: "'IBM Plex Mono',monospace" }}>{score}</span>
+                  </div>
+                  <div style={{ height: 4, background: "#e8e5e0", borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ width: `${score * 10}%`, height: "100%", background: scoreColor(score), borderRadius: 2 }} />
+                  </div>
+                </div>);
+              })}
+            </div>
+
+            {/* Top actions */}
+            {auditResults.top_actions?.length > 0 && (
+              <div style={{ background: "#fffbf5", border: "1px solid #ffe8c4", borderRadius: 8, padding: "14px 16px", marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#d97706", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Top Actions</div>
+                {auditResults.top_actions.map((a, i) => <div key={i} style={{ fontSize: 12, color: "#666", padding: "4px 0", borderBottom: i < auditResults.top_actions.length - 1 ? "1px solid #f5f3f0" : "none", display: "flex", gap: 8, alignItems: "flex-start" }}><span style={{ color: "#d97706", fontWeight: 700, flexShrink: 0 }}>{i + 1}.</span>{a}</div>)}
+              </div>
+            )}
+
+            {/* Details per category */}
+            {categories.map(cat => {
+              const detail = auditResults.details?.[cat.key];
+              if (!detail) return null;
+              const items = [...(detail.strengths || []).map(s => ({ text: s, type: "good" })), ...(detail.issues || []).map(s => ({ text: s, type: "issue" })), ...(detail.passes || []).map(s => ({ text: s, type: "good" })), ...(detail.violations || []).map(s => ({ text: s, type: "issue" })), ...(detail.missing_keywords || []).map(s => ({ text: "Missing: " + s, type: "issue" })), ...(detail.present_keywords || []).map(s => ({ text: "Present: " + s, type: "good" })), ...(detail.notes || []).map(s => ({ text: s, type: "note" }))];
+              if (!items.length) return null;
+              return (<div key={cat.key} style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>{cat.label}</div>
+                {items.map((item, i) => <div key={i} style={{ fontSize: 12, color: item.type === "issue" ? "#dc2626" : item.type === "good" ? "#16a34a" : "#666", padding: "3px 0", display: "flex", gap: 6 }}><span>{item.type === "good" ? "\u2713" : item.type === "issue" ? "\u2717" : "\u2022"}</span>{item.text}</div>)}
+              </div>);
+            })}
+          </div>);
+        })()}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Listing audit scores are directional {"\u00B7"} Always verify against current marketplace requirements</span>
         </div>
       </div>}
 
