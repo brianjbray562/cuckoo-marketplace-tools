@@ -691,6 +691,15 @@ export default function App() {
   const [auditElapsed, setAuditElapsed] = useState(0);
   const auditAbortRef = useRef(null);
   const auditTimerRef = useRef(null);
+  // Competitor title analyzer state
+  const [ctCuckooTitle, setCtCuckooTitle] = useState("");
+  const [ctCompetitorTitles, setCtCompetitorTitles] = useState("");
+  const [ctResults, setCtResults] = useState(null);
+  const [ctLoading, setCtLoading] = useState(false);
+  const [ctError, setCtError] = useState(null);
+  const [ctElapsed, setCtElapsed] = useState(0);
+  const ctAbortRef = useRef(null);
+  const ctTimerRef = useRef(null);
   const [authState, setAuthState] = useState("login");
   const [isAdmin, setIsAdmin] = useState(false);
   const [authUser, setAuthUser] = useState("");
@@ -1136,6 +1145,43 @@ export default function App() {
     }
   }, [auditAsin, auditTitle, auditBullets]);
 
+  // Competitor title analyzer
+  const analyzeCompetitors = useCallback(async () => {
+    if (ctLoading || !ctCuckooTitle.trim() || !ctCompetitorTitles.trim()) return;
+    setCtLoading(true); setCtError(null); setCtResults(null); setCtElapsed(0);
+    const startTime = Date.now();
+    ctTimerRef.current = setInterval(() => setCtElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (ctAbortRef.current) ctAbortRef.current.abort();
+    const controller = new AbortController();
+    ctAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 60000);
+    try {
+      const ctSystem = "You are an Amazon listing competitive analyst for CUCKOO Electronics America. Compare a CUCKOO title against competitor titles. Analyze: keyword overlap, unique keywords each title has, character usage efficiency, SEO structure strengths/weaknesses, and keyword gaps (high-value terms competitors use that CUCKOO is missing). Provide a competitive_score (0-10) for the CUCKOO title relative to competitors.\nRespond ONLY with valid JSON: {\"competitive_score\":<0-10>,\"cuckoo_analysis\":{\"char_count\":<n>,\"keyword_count\":<n>,\"strengths\":[],\"weaknesses\":[]},\"competitors\":[{\"title\":\"...\",\"char_count\":<n>,\"keyword_count\":<n>,\"unique_keywords\":[],\"strengths\":[]}],\"keyword_gaps\":[\"terms CUCKOO should consider\"],\"shared_keywords\":[\"terms all titles use\"],\"recommendations\":[\"action1\",\"action2\"]}";
+      const competitors = ctCompetitorTitles.split("\n").map(t => t.trim()).filter(Boolean);
+      const ctUserMsg = "Compare this CUCKOO title against " + competitors.length + " competitor title(s):\n\nCUCKOO Title: " + ctCuckooTitle.trim() + "\n\nCompetitor Titles:\n" + competitors.map((t, i) => (i + 1) + ". " + t).join("\n") + "\n\nRespond ONLY with valid JSON.";
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: ctSystem, messages: [{ role: "user", content: ctUserMsg }] })
+      });
+      if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
+      if (!text) throw new Error("Empty response");
+      let parsed;
+      try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
+      catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Could not parse response"); }
+      setCtResults(parsed);
+    } catch (e) {
+      if (e.name === "AbortError") { if (controller.signal.reason === "timeout") setCtError("Request timed out (60s). Please retry."); }
+      else setCtError("Error: " + (e.message || "Something went wrong."));
+    } finally {
+      clearTimeout(timeoutId);
+      if (ctTimerRef.current) { clearInterval(ctTimerRef.current); ctTimerRef.current = null; }
+      setCtLoading(false); ctAbortRef.current = null;
+    }
+  }, [ctCuckooTitle, ctCompetitorTitles]);
+
   const optimize = useCallback(async () => {
     const title = titleRef.current;
     const sel = selectedRef.current;
@@ -1317,6 +1363,7 @@ export default function App() {
             { key: "search_volume", label: "Amazon Search Volume Report", icon: "\u{1F4CA}" },
             { key: "product_compare", label: "Product Comparison", icon: "\u{1F4CB}" },
             { key: "listing_audit", label: "Listing Audit", icon: "\u{1F4CB}" },
+            { key: "competitor_analyzer", label: "Competitor Analyzer", icon: "\u{1F3C6}" },
             { key: "asin_reference", label: "Amazon ASIN Reference", icon: "\u{1F517}" },
           ].map(tab => (
             <button key={tab.key} role="tab" aria-selected={page === tab.key} aria-controls={`panel-${tab.key}`} onClick={() => { setPage(tab.key); window.scrollTo(0, 0); }}
@@ -2264,6 +2311,109 @@ export default function App() {
         {/* FOOTER */}
         <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
           <span style={{ fontSize: 10, color: "#ccc" }}>Data from Rice Cooker Categorization {"\u00B7"} {Object.keys(PRODUCT_DB).length} verified models {"\u00B7"} March 2026</span>
+        </div>
+      </div>}
+
+      {/* COMPETITOR TITLE ANALYZER PAGE */}
+      {page === "competitor_analyzer" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Compare your CUCKOO title against competitor listings to identify keyword gaps, structural advantages, and optimization opportunities.
+          </p>
+        </div>
+
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Your CUCKOO Title</label>
+            <textarea value={ctCuckooTitle} onChange={e => setCtCuckooTitle(e.target.value)} placeholder="Paste your CUCKOO Amazon title here..." rows={2}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {ctCuckooTitle.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{ctCuckooTitle.trim().length} chars</div>}
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Competitor Titles <span style={{ fontWeight: 400, color: "#bbb" }}>(one per line)</span></label>
+            <textarea value={ctCompetitorTitles} onChange={e => setCtCompetitorTitles(e.target.value)} placeholder={"Paste competitor titles here, one per line...\ne.g. Zojirushi NP-HCC10XH Induction Heating System Rice Cooker...\nTiger JBV-A10U-W 5.5-Cup Micom Rice Cooker..."} rows={5}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {ctCompetitorTitles.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{ctCompetitorTitles.split("\n").filter(l => l.trim()).length} competitor title(s)</div>}
+          </div>
+        </div>
+
+        {(() => {
+          const dis = ctLoading || !ctCuckooTitle.trim() || !ctCompetitorTitles.trim();
+          return (<>
+            <button className="cuckoo-btn" disabled={dis} onClick={analyzeCompetitors}
+              style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: dis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
+              {ctLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                Analyzing competitors...
+              </span>) : dis ? "Enter both titles to analyze" : "Analyze Competitors"}
+            </button>
+            {ctLoading && <div style={{ textAlign: "center", fontSize: 10, color: "#aaa", marginBottom: 12 }}>{ctElapsed}s
+              <button onClick={() => { if (ctAbortRef.current) ctAbortRef.current.abort(); setCtLoading(false); setCtError("Cancelled."); if (ctTimerRef.current) { clearInterval(ctTimerRef.current); ctTimerRef.current = null; } }}
+                style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer", marginLeft: 8 }}>Cancel</button>
+            </div>}
+          </>);
+        })()}
+
+        {ctError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 24, color: "#dc2626", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{ctError}</span>
+          <button onClick={analyzeCompetitors} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Retry</button>
+        </div>}
+
+        {ctResults && (() => {
+          const scoreColor = s => s >= 8 ? "#16a34a" : s >= 5 ? "#d97706" : "#dc2626";
+          return (<div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            {/* Competitive score */}
+            <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 20, paddingBottom: 16, borderBottom: "1px solid #f0eeeb" }}>
+              <div style={{ width: 64, height: 64, borderRadius: "50%", border: `4px solid ${scoreColor(ctResults.competitive_score)}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <span style={{ fontSize: 22, fontWeight: 800, color: scoreColor(ctResults.competitive_score), fontFamily: "'IBM Plex Mono',monospace" }}>{ctResults.competitive_score}</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a" }}>Competitive Score</div>
+                <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{ctResults.competitive_score >= 8 ? "Your title is highly competitive" : ctResults.competitive_score >= 5 ? "Room for improvement vs competitors" : "Competitors have significant advantages"}</div>
+              </div>
+            </div>
+
+            {/* CUCKOO analysis */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: MAROON, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Your CUCKOO Title ({ctResults.cuckoo_analysis?.char_count || 0} chars)</div>
+              {ctResults.cuckoo_analysis?.strengths?.map((s, i) => <div key={i} style={{ fontSize: 12, color: "#16a34a", padding: "2px 0", display: "flex", gap: 6 }}>{"\u2713"} {s}</div>)}
+              {ctResults.cuckoo_analysis?.weaknesses?.map((s, i) => <div key={i} style={{ fontSize: 12, color: "#dc2626", padding: "2px 0", display: "flex", gap: 6 }}>{"\u2717"} {s}</div>)}
+            </div>
+
+            {/* Keyword gaps */}
+            {ctResults.keyword_gaps?.length > 0 && (
+              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "12px 16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#dc2626", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Keyword Gaps</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {ctResults.keyword_gaps.map((kw, i) => <span key={i} style={{ padding: "3px 10px", background: "#fff", border: "1px solid #fecaca", borderRadius: 4, fontSize: 11, color: "#dc2626", fontFamily: "'IBM Plex Mono',monospace" }}>{kw}</span>)}
+                </div>
+              </div>
+            )}
+
+            {/* Shared keywords */}
+            {ctResults.shared_keywords?.length > 0 && (
+              <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "12px 16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#16a34a", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Shared Keywords</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {ctResults.shared_keywords.map((kw, i) => <span key={i} style={{ padding: "3px 10px", background: "#fff", border: "1px solid #bbf7d0", borderRadius: 4, fontSize: 11, color: "#16a34a", fontFamily: "'IBM Plex Mono',monospace" }}>{kw}</span>)}
+                </div>
+              </div>
+            )}
+
+            {/* Recommendations */}
+            {ctResults.recommendations?.length > 0 && (
+              <div style={{ background: "#fffbf5", border: "1px solid #ffe8c4", borderRadius: 8, padding: "14px 16px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#d97706", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Recommendations</div>
+                {ctResults.recommendations.map((r, i) => <div key={i} style={{ fontSize: 12, color: "#666", padding: "3px 0", display: "flex", gap: 8 }}><span style={{ color: "#d97706", fontWeight: 700 }}>{i + 1}.</span>{r}</div>)}
+              </div>
+            )}
+          </div>);
+        })()}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Competitive analysis is directional {"\u00B7"} Combine with search volume data for best results</span>
         </div>
       </div>}
 
