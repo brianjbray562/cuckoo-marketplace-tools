@@ -1430,6 +1430,40 @@ export default function App() {
           </div>}
           <button onClick={resetSvToDefault} style={{ padding: "6px 14px", background: "#fff", border: "1px solid #e0ddd8", borderRadius: 6, fontSize: 11, color: "#666", cursor: "pointer" }}>Reset to Defaults</button>
         </div>
+        {/* Downloads */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Downloads</div>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 16 }}>Export the current product database and ASIN-to-SKU mapping as JSON files.</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => {
+              const blob = new Blob([JSON.stringify(liveProductDb, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url;
+              a.download = "cuckoo-product-db-" + new Date().toISOString().slice(0, 10) + ".json";
+              a.click(); URL.revokeObjectURL(url);
+            }} style={{ padding: "8px 20px", background: MAROON, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+              {"\u{1F4E5}"} Product Database ({Object.keys(liveProductDb).length} models)
+            </button>
+            <button onClick={() => {
+              const existingAsins = new Set(ASIN_DATA.map(r => r.asin));
+              const dbExtras = Object.entries(liveProductDb).filter(([sku, d]) => d.asin && !existingAsins.has(d.asin)).map(([sku, d]) => ({ asin: d.asin, sku }));
+              const merged = [...ASIN_DATA, ...dbExtras];
+              const blob = new Blob([JSON.stringify(merged, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url;
+              a.download = "cuckoo-asin-sku-" + new Date().toISOString().slice(0, 10) + ".json";
+              a.click(); URL.revokeObjectURL(url);
+            }} style={{ padding: "8px 20px", background: MAROON, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+              {"\u{1F4E5}"} ASIN-to-SKU Mapping ({(() => { const s = new Set(ASIN_DATA.map(r => r.asin)); return ASIN_DATA.length + Object.entries(liveProductDb).filter(([, d]) => d.asin && !s.has(d.asin)).length; })()} entries)
+            </button>
+            <button onClick={() => {
+              const blob = new Blob([JSON.stringify(liveSearchData, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url;
+              a.download = "cuckoo-search-volume-" + new Date().toISOString().slice(0, 10) + ".json";
+              a.click(); URL.revokeObjectURL(url);
+            }} style={{ padding: "8px 20px", background: MAROON, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+              {"\u{1F4E5}"} Search Volume Data ({liveSearchData.length} keywords)
+            </button>
+          </div>
+        </div>
       </div>}
 
       {page === "title_optimizer" && <div data-page="title_optimizer" style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
