@@ -672,6 +672,15 @@ export default function App() {
   const bkLoadingRef = useRef(false);
   useEffect(() => () => { bkLoadingRef.current = false; }, []);
   const bkCatConfig = BK_CATEGORY_CONFIG[bkCategory] || BK_CATEGORY_CONFIG.other;
+  // Bullet point generator state
+  const [bpModel, setBpModel] = useState("");
+  const [bpMarketplace, setBpMarketplace] = useState("amazon");
+  const [bpResults, setBpResults] = useState(null);
+  const [bpLoading, setBpLoading] = useState(false);
+  const [bpError, setBpError] = useState(null);
+  const [bpElapsed, setBpElapsed] = useState(0);
+  const bpAbortRef = useRef(null);
+  const bpTimerRef = useRef(null);
   const [authState, setAuthState] = useState("login");
   const [isAdmin, setIsAdmin] = useState(false);
   const [authUser, setAuthUser] = useState("");
@@ -1037,6 +1046,48 @@ export default function App() {
     }
   }, [bkCategory, bkFeatures, bkModelNumber, bkCurrentTitle]);
 
+  // Bullet point generator
+  const generateBulletPoints = useCallback(async () => {
+    if (bpLoading || !bpModel.trim()) return;
+    setBpLoading(true); setBpError(null); setBpResults(null); setBpElapsed(0);
+    const startTime = Date.now();
+    bpTimerRef.current = setInterval(() => setBpElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (bpAbortRef.current) bpAbortRef.current.abort();
+    const controller = new AbortController();
+    bpAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 60000);
+    try {
+      const product = lookupProduct(bpModel, liveProductDbRef.current);
+      const productCtx = product ? "\n\n" + formatProductContext(product) : "";
+      const mpConfig = MARKETPLACES[bpMarketplace] || MARKETPLACES.amazon;
+      const bpSystemPrompt = "You are a senior ecommerce copywriter at CUCKOO Electronics America. Generate 5 bullet points for a product listing. Each bullet should start with a CAPITALIZED benefit phrase (2-4 words), followed by a colon and descriptive text. Bullet points should cover: key technology/feature, capacity/convenience, material/quality, ease of use, and brand trust/warranty. For Amazon: max 500 chars per bullet, keyword-rich. For other marketplaces: adapt tone per guidelines. Only use verified product data — never invent features.\nRespond ONLY with valid JSON: {\"bullets\":[{\"heading\":\"...\",\"text\":\"...\"}],\"marketplace\":\"...\",\"char_counts\":[]}";
+      const bpUserMsg = "Generate 5 bullet points for this CUCKOO product on " + mpConfig.name + ":\nModel: " + bpModel.trim() + productCtx + "\nMarketplace: " + mpConfig.name + "\n" + mpConfig.guidelines + "\nRespond ONLY with valid JSON.";
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: bpSystemPrompt, messages: [{ role: "user", content: bpUserMsg }] })
+      });
+      if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
+      if (!text) throw new Error("Empty response");
+      let parsed;
+      try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
+      catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Could not parse response"); }
+      parsed._productVerified = !!product;
+      parsed._productSku = product?.sku || null;
+      setBpResults(parsed);
+    } catch (e) {
+      if (e.name === "AbortError") { if (controller.signal.reason === "timeout") setBpError("Request timed out (60s). Please retry."); }
+      else setBpError("Error: " + (e.message || "Something went wrong."));
+    } finally {
+      clearTimeout(timeoutId);
+      if (bpTimerRef.current) { clearInterval(bpTimerRef.current); bpTimerRef.current = null; }
+      setBpLoading(false);
+      bpAbortRef.current = null;
+    }
+  }, [bpModel, bpMarketplace]);
+
   const optimize = useCallback(async () => {
     const title = titleRef.current;
     const sel = selectedRef.current;
@@ -1213,6 +1264,7 @@ export default function App() {
           <nav className="nav-scroll" role="tablist" aria-label="Tool navigation" style={{ flex: 1, display: "flex", gap: 0 }}>
           {[
             { key: "title_optimizer", label: "Marketplace Title Generator", icon: "\u270F\uFE0F" },
+            { key: "bullet_points", label: "Bullet Point Generator", icon: "\u{1F4DD}" },
             { key: "backend_keywords", label: "Amazon Backend Keywords", icon: "\u{1F50D}" },
             { key: "search_volume", label: "Amazon Search Volume Report", icon: "\u{1F4CA}" },
             { key: "product_compare", label: "Product Comparison", icon: "\u{1F4CB}" },
@@ -1641,6 +1693,119 @@ export default function App() {
         {/* FOOTER */}
         <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
           <span style={{ fontSize: 10, color: "#ccc" }}>Guidelines researched March 2026 {"\u00B7"} Verify with marketplace docs before publishing</span>
+        </div>
+      </div>}
+
+      {/* BULLET POINT GENERATOR PAGE */}
+      {page === "bullet_points" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16, padding: "0 2px" }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Generate optimized bullet points for any CUCKOO product listing. Enter a model number and select a marketplace to get 5 benefit-driven bullet points tailored to that platform's style and requirements.
+          </p>
+          <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
+            Amazon allows up to <strong>5 bullet points</strong> with max 500 characters each. Other marketplaces vary.
+          </p>
+        </div>
+
+        {/* Model input */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Product Model Number</label>
+          <input value={bpModel} onChange={e => { setBpModel(e.target.value); setBpResults(null); setBpError(null); }} placeholder="e.g. CRP-LHTR0609FW, CR-0675FW, CRP-P0609S"
+            style={{ width: "100%", padding: "12px 16px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 14, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          {(() => { const m = bpModel.trim() ? lookupProduct(bpModel, liveProductDbRef.current) : null; return (<>
+            {m && <div style={{ marginTop: 6, fontSize: 10, color: "#16a34a", fontWeight: 600 }}>{"\u2713"} Matched: {m.sku} — {m.type}, {m.cupSize}, {m.color}</div>}
+            {!m && bpModel.trim().length >= 3 && <div style={{ marginTop: 6, fontSize: 10, color: "#d97706" }}>Model not in database — bullet points will use general CUCKOO product knowledge</div>}
+          </>); })()}
+        </div>
+
+        {/* Marketplace selector */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "16px 24px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Target Marketplace</label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {Object.entries(MARKETPLACES).map(([key, mp]) => (
+              <button key={key} onClick={() => { setBpMarketplace(key); setBpResults(null); }}
+                style={{ padding: "6px 14px", background: bpMarketplace === key ? MAROON : "#fff", border: `1.5px solid ${bpMarketplace === key ? MAROON : "#e0ddd8"}`, borderRadius: 100, color: bpMarketplace === key ? "#fff" : "#777", fontSize: 11, fontWeight: 500, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "all .15s" }}>
+                {mp.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Generate button */}
+        {(() => {
+          const bpDis = bpLoading || !bpModel.trim();
+          return (<>
+            <button className="cuckoo-btn" aria-label="Generate bullet points" disabled={bpDis} onClick={generateBulletPoints}
+              style={{ width: "100%", padding: 16, background: bpDis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: bpDis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: bpDis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: bpDis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", transition: "all .2s", marginBottom: 8 }}>
+              {bpLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                {bpElapsed < 5 ? "Generating bullet points..." : bpElapsed < 20 ? "Crafting compelling copy..." : "Almost done..."}
+              </span>) : bpDis ? "Enter a model number to get started" : `Generate Bullet Points for ${(MARKETPLACES[bpMarketplace] || {}).name || "Amazon"}`}
+            </button>
+            {bpLoading && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ height: 4, background: "#f0eeeb", borderRadius: 2, overflow: "hidden", marginBottom: 8 }}>
+                  <div style={{ width: `${Math.min(bpElapsed / 60 * 100, 95)}%`, height: "100%", background: MAROON, borderRadius: 2, transition: "width 1s linear" }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#aaa" }}>
+                  <span>{bpElapsed}s</span>
+                  <button onClick={() => { if (bpAbortRef.current) bpAbortRef.current.abort(); setBpLoading(false); setBpError("Cancelled."); if (bpTimerRef.current) { clearInterval(bpTimerRef.current); bpTimerRef.current = null; } }}
+                    style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer" }}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </>);
+        })()}
+
+        {/* Error */}
+        {bpError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 24, color: "#dc2626", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{bpError}</span>
+          <button onClick={generateBulletPoints} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", whiteSpace: "nowrap", marginLeft: 12 }}>Retry</button>
+        </div>}
+
+        {/* Results */}
+        {bpResults && (
+          <div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>Bullet Points for {(MARKETPLACES[bpMarketplace] || {}).name || "Amazon"}</div>
+                {bpResults._productVerified && <span style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", background: "rgba(22,163,74,0.1)", padding: "2px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 4, marginTop: 4 }}>{"\u2713"} Verified: {bpResults._productSku}</span>}
+              </div>
+              <button onClick={() => {
+                const text = (bpResults.bullets || []).map((b, i) => `${b.heading}: ${b.text}`).join("\n\n");
+                try { navigator.clipboard.writeText(text); } catch(e) { const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); }
+                setCopied("bp-all"); setToast("All bullet points copied"); setTimeout(() => { setCopied(null); setToast(null); }, 2000);
+              }} style={{ padding: "8px 16px", background: copied === "bp-all" ? "#16a34a" : MAROON, border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                {copied === "bp-all" ? "\u2713 Copied All" : "Copy All"}
+              </button>
+            </div>
+
+            {(bpResults.bullets || []).map((bullet, i) => (
+              <div key={i} style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderLeft: `3px solid ${MAROON}`, borderRadius: 8, padding: "14px 16px", marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#1a1a1a", textTransform: "uppercase" }}>{bullet.heading}</span>
+                    <span style={{ fontSize: 12, color: "#666" }}>: {bullet.text}</span>
+                  </div>
+                  <button onClick={() => {
+                    const t = `${bullet.heading}: ${bullet.text}`;
+                    try { navigator.clipboard.writeText(t); } catch(e) { const ta = document.createElement("textarea"); ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); }
+                    setCopied("bp-" + i); setToast("Bullet point copied"); setTimeout(() => { setCopied(null); setToast(null); }, 2000);
+                  }} style={{ padding: "3px 8px", background: copied === "bp-" + i ? "#16a34a" : MAROON, border: "none", borderRadius: 4, color: "#fff", fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", flexShrink: 0 }}>
+                    {copied === "bp-" + i ? "\u2713" : "Copy"}
+                  </button>
+                </div>
+                <div style={{ marginTop: 6, fontSize: 10, color: "#aaa", fontFamily: "'IBM Plex Mono',monospace" }}>
+                  {(bullet.heading + ": " + bullet.text).length} chars
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Bullet points generated from verified product data {"\u00B7"} Review before publishing</span>
         </div>
       </div>}
 
