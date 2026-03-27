@@ -1132,6 +1132,17 @@ export default function App() {
   const allSel = selected.length === MP_KEYS.length;
   const resultCount = results ? Object.keys(results.conversions || {}).filter(k => results.conversions[k]).length : 0;
 
+  // Memoize search volume filtering/sorting to avoid recalculating on unrelated re-renders
+  const svMaxVol = useMemo(() => Math.max(...SEARCH_DATA.map(d => d.v)), []);
+  const svFiltered = useMemo(() => {
+    return SEARCH_DATA.filter(d => {
+      if (svTier !== "all" && d.tier !== svTier) return false;
+      if (svCat !== "all" && d.cat !== svCat) return false;
+      if (svFilter && !d.t.toLowerCase().includes(svFilter.toLowerCase())) return false;
+      return true;
+    }).sort((a, b) => svSortDir === "desc" ? b[svSort] - a[svSort] : a[svSort] - b[svSort]);
+  }, [svTier, svCat, svFilter, svSort, svSortDir]);
+
   // Memoize marketplace chip data to avoid re-filtering every render
   const mpEntries = useMemo(() => MP_KEYS.map(k => [k, MARKETPLACES[k]]), []);
 
@@ -1305,10 +1316,11 @@ export default function App() {
             <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Target Marketplaces <span style={{ color: "#ccc", fontWeight: 400 }}>({selected.length} selected)</span></label>
             <button onClick={() => setSelected(allSel ? [] : [...MP_KEYS])} style={{ background: "none", border: "none", fontSize: 11, color: MAROON, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>{allSel ? "Deselect All" : "Select All"}</button>
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {mpEntries.map(([key, mp]) => {
+          <div role="group" aria-label="Marketplace selection" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {mpEntries.map(([key, mp], idx) => {
               const sel = selected.includes(key); const conf = confidenceConfig[mp.confidence];
               return (<button key={key} className="mp-chip" role="checkbox" aria-checked={sel} aria-label={`${mp.name} marketplace`} onClick={() => setSelected(p => p.includes(key) ? p.filter(k => k !== key) : [...p, key])}
+                onKeyDown={e => { if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); const chips = e.target.parentElement.querySelectorAll(".mp-chip"); chips[(idx + 1) % chips.length]?.focus(); } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); const chips = e.target.parentElement.querySelectorAll(".mp-chip"); chips[(idx - 1 + chips.length) % chips.length]?.focus(); } }}
                 style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", background: sel ? MAROON : "#fff", border: `1.5px solid ${sel ? MAROON : "#e0ddd8"}`, borderRadius: 100, cursor: "pointer", color: sel ? "#fff" : "#777", fontSize: 12, fontWeight: 500, fontFamily: "'Outfit',sans-serif", transition: "background .15s, color .15s, border-color .15s" }}>
                 <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 5, background: mp.accent, color: "#fff", fontSize: 8, fontWeight: 800, fontFamily: "'Outfit',sans-serif", flexShrink: 0, letterSpacing: "-0.02em" }}>{mp.badge}</span>{mp.name}
                 {sel && <span style={{ width: 6, height: 6, borderRadius: "50%", background: conf.color, display: "inline-block", flexShrink: 0 }} />}
@@ -1812,14 +1824,8 @@ export default function App() {
 
         {/* Results table */}
         {(() => {
-          const filtered = SEARCH_DATA.filter(d => {
-            if (svTier !== "all" && d.tier !== svTier) return false;
-            if (svCat !== "all" && d.cat !== svCat) return false;
-            if (svFilter && !d.t.toLowerCase().includes(svFilter.toLowerCase())) return false;
-            return true;
-          }).sort((a, b) => svSortDir === "desc" ? b[svSort] - a[svSort] : a[svSort] - b[svSort]);
-
-          const maxVol = Math.max(...SEARCH_DATA.map(d => d.v));
+          const filtered = svFiltered;
+          const maxVol = svMaxVol;
           const sortBtn = (key, label) => (
             <button onClick={() => { if (svSort === key) { setSvSortDir(d => d === "desc" ? "asc" : "desc"); } else { setSvSort(key); setSvSortDir("desc"); } }}
               style={{ background: "none", border: "none", cursor: "pointer", fontSize: 9, fontWeight: 700, color: svSort === key ? MAROON : "#999", fontFamily: "'Outfit',sans-serif", textTransform: "uppercase", letterSpacing: "0.06em", padding: "4px 0", display: "flex", alignItems: "center", gap: 2 }}>
