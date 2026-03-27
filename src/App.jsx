@@ -629,6 +629,27 @@ function hasBadCupCount(title) {
   return num >= 1 && num <= 30;
 }
 
+// Ranking Juice: scan a title for exact-match keywords from search volume data.
+// Returns { score: total cumulative volume, matches: [{ keyword, volume, tier }] }
+// Each keyword counted at most once per title. Case-insensitive exact substring match.
+function calcRankingJuice(title, searchData) {
+  if (!title || !searchData?.length) return { score: 0, matches: [] };
+  const lower = title.toLowerCase();
+  const matches = [];
+  const seen = new Set();
+  // Sort by volume descending so higher-volume phrases match first
+  const sorted = [...searchData].sort((a, b) => b.v - a.v);
+  for (const kw of sorted) {
+    const term = kw.t.toLowerCase();
+    if (seen.has(term)) continue;
+    if (lower.includes(term)) {
+      seen.add(term);
+      matches.push({ keyword: kw.t, volume: kw.v, tier: kw.tier });
+    }
+  }
+  return { score: matches.reduce((sum, m) => sum + m.volume, 0), matches };
+}
+
 export default function App() {
   const [page, setPage] = useState("title_optimizer"); // "title_optimizer" or "backend_keywords"
   const isMac = useMemo(() => typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform), []);
@@ -1173,7 +1194,7 @@ export default function App() {
     ctAbortRef.current = controller;
     const timeoutId = setTimeout(() => controller.abort("timeout"), 60000);
     try {
-      const ctSystem = "You are an Amazon listing competitive analyst for CUCKOO Electronics America. Compare a CUCKOO title against competitor titles. Analyze: keyword overlap, unique keywords each title has, character usage efficiency, SEO structure strengths/weaknesses, and keyword gaps (high-value terms competitors use that CUCKOO is missing). Provide a competitive_score (0-10) for the CUCKOO title relative to competitors.\nRespond ONLY with valid JSON: {\"competitive_score\":<0-10>,\"cuckoo_analysis\":{\"char_count\":<n>,\"keyword_count\":<n>,\"strengths\":[],\"weaknesses\":[]},\"competitors\":[{\"title\":\"...\",\"char_count\":<n>,\"keyword_count\":<n>,\"unique_keywords\":[],\"strengths\":[]}],\"keyword_gaps\":[\"terms CUCKOO should consider\"],\"shared_keywords\":[\"terms all titles use\"],\"recommendations\":[\"action1\",\"action2\"]}";
+      const ctSystem = "You are an Amazon listing competitive analyst for CUCKOO Electronics America. Compare a CUCKOO title against competitor titles.\n\nAMAZON TITLE RULES TO EVALUATE AGAINST:\n- Max 200 characters. Title Case.\n- Brand first. No promotional phrases. No !, $, ?, _.\n- Cup counts must include Uncooked or Cooked (e.g. '6-Cup Uncooked').\n- Model numbers in parentheses at end.\n- No '& Warmer'. Tech type should be frontloaded.\n- Features must be real/verified — no invented specs.\n- Use 'with' to connect features, '&' within groups. Flowing style, not keyword lists.\n\nFor EACH title (CUCKOO and competitors), evaluate:\n1. Amazon title rule compliance (score 0-10 per title)\n2. Keyword strategy: which high-value search terms are present\n3. Character usage efficiency\n4. Structural strengths and weaknesses\n5. Keyword gaps: high-value terms competitors use that CUCKOO is missing\n\nProvide a competitive_score (0-10) for the CUCKOO title relative to competitors.\nRespond ONLY with valid JSON: {\"competitive_score\":<0-10>,\"cuckoo_analysis\":{\"char_count\":<n>,\"rule_compliance\":<0-10>,\"strengths\":[],\"weaknesses\":[]},\"competitors\":[{\"title\":\"...\",\"char_count\":<n>,\"rule_compliance\":<0-10>,\"strengths\":[],\"weaknesses\":[]}],\"keyword_gaps\":[\"terms CUCKOO should consider\"],\"shared_keywords\":[\"terms all titles use\"],\"recommendations\":[\"action1\",\"action2\"]}";
       const competitors = ctCompetitorTitles.split("\n").map(t => t.trim()).filter(Boolean);
       const ctUserMsg = "Compare this CUCKOO title against " + competitors.length + " competitor title(s):\n\nCUCKOO Title: " + ctCuckooTitle.trim() + "\n\nCompetitor Titles:\n" + competitors.map((t, i) => (i + 1) + ". " + t).join("\n") + "\n\nRespond ONLY with valid JSON.";
       const res = await fetch("/api/messages", {
@@ -1188,6 +1209,11 @@ export default function App() {
       let parsed;
       try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
       catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Could not parse response"); }
+      // Client-side Ranking Juice calculation from search volume data
+      const svData = liveSearchData;
+      parsed._rankingJuice = {};
+      parsed._rankingJuice.cuckoo = calcRankingJuice(ctCuckooTitle.trim(), svData);
+      parsed._rankingJuice.competitors = competitors.map(t => calcRankingJuice(t, svData));
       setCtResults(parsed);
     } catch (e) {
       if (e.name === "AbortError") { if (controller.signal.reason === "timeout") setCtError("Request timed out (60s). Please retry."); }
@@ -2415,7 +2441,7 @@ export default function App() {
       {page === "competitor_analyzer" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
         <div style={{ marginBottom: 16 }}>
           <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
-            Compare your CUCKOO title against competitor listings to identify keyword gaps, structural advantages, and optimization opportunities.
+            Compare your CUCKOO title against competitor listings. Each title gets a <strong>Ranking Juice</strong> score — the cumulative search volume of exact-match keywords found in the title, sourced from the Amazon Search Volume Report ({liveSearchData.length} keywords). Titles are also evaluated against Amazon title rules.
           </p>
         </div>
 
@@ -2460,8 +2486,20 @@ export default function App() {
 
         {ctResults && (() => {
           const scoreColor = s => s >= 8 ? "#16a34a" : s >= 5 ? "#d97706" : "#dc2626";
+          const rj = ctResults._rankingJuice || {};
+          const cuckooJuice = rj.cuckoo || { score: 0, matches: [] };
+          const compJuices = rj.competitors || [];
+          const competitors = ctCompetitorTitles.split("\n").map(t => t.trim()).filter(Boolean);
+          // Build leaderboard sorted by ranking juice
+          const leaderboard = [
+            { label: "CUCKOO", title: ctCuckooTitle.trim(), juice: cuckooJuice, isCuckoo: true, compliance: ctResults.cuckoo_analysis?.rule_compliance },
+            ...competitors.map((t, i) => ({ label: "Competitor " + (i + 1), title: t, juice: compJuices[i] || { score: 0, matches: [] }, isCuckoo: false, compliance: ctResults.competitors?.[i]?.rule_compliance }))
+          ].sort((a, b) => b.juice.score - a.juice.score);
+          const maxJuice = Math.max(...leaderboard.map(e => e.juice.score), 1);
+          const fmt = n => n >= 1000000 ? (n / 1000000).toFixed(1) + "M" : n >= 1000 ? (n / 1000).toFixed(0) + "K" : String(n);
+
           return (<div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-            {/* Competitive score */}
+            {/* Competitive score header */}
             <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 20, paddingBottom: 16, borderBottom: "1px solid #f0eeeb" }}>
               <div style={{ width: 64, height: 64, borderRadius: "50%", border: `4px solid ${scoreColor(ctResults.competitive_score)}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <span style={{ fontSize: 22, fontWeight: 800, color: scoreColor(ctResults.competitive_score), fontFamily: "'IBM Plex Mono',monospace" }}>{ctResults.competitive_score}</span>
@@ -2472,9 +2510,49 @@ export default function App() {
               </div>
             </div>
 
-            {/* CUCKOO analysis */}
+            {/* RANKING JUICE LEADERBOARD */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Ranking Juice Leaderboard</div>
+              <div style={{ fontSize: 10, color: "#bbb", marginBottom: 12 }}>Cumulative search volume from exact-match keywords found in each title (source: Amazon Product Opportunity Explorer)</div>
+              {leaderboard.map((entry, i) => (
+                <div key={i} style={{ background: entry.isCuckoo ? "rgba(107,28,35,0.04)" : "#faf9f7", border: `1px solid ${entry.isCuckoo ? MAROON : "#e8e5e0"}`, borderRadius: 10, padding: "14px 16px", marginBottom: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 16, fontWeight: 800, color: i === 0 ? "#d97706" : "#999", fontFamily: "'IBM Plex Mono',monospace", width: 24 }}>#{i + 1}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: entry.isCuckoo ? MAROON : "#1a1a1a" }}>{entry.label}</span>
+                      {entry.compliance != null && <span style={{ fontSize: 9, fontWeight: 600, color: scoreColor(entry.compliance), background: entry.compliance >= 8 ? "rgba(22,163,74,0.1)" : entry.compliance >= 5 ? "rgba(217,119,6,0.1)" : "rgba(220,38,38,0.1)", padding: "2px 6px", borderRadius: 4 }}>Rules: {entry.compliance}/10</span>}
+                      <span style={{ fontSize: 10, color: "#bbb" }}>{entry.title.length} chars</span>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: entry.isCuckoo ? MAROON : "#1a1a1a", fontFamily: "'IBM Plex Mono',monospace" }}>{fmt(entry.juice.score)}</div>
+                      <div style={{ fontSize: 9, color: "#aaa" }}>{entry.juice.matches.length} keyword{entry.juice.matches.length !== 1 ? "s" : ""} matched</div>
+                    </div>
+                  </div>
+                  {/* Volume bar */}
+                  <div style={{ height: 6, background: "#e8e5e0", borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
+                    <div style={{ width: `${(entry.juice.score / maxJuice) * 100}%`, height: "100%", background: entry.isCuckoo ? MAROON : "#6366f1", borderRadius: 3, transition: "width .4s ease" }} />
+                  </div>
+                  {/* Title text */}
+                  <div style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: "#555", lineHeight: 1.6, marginBottom: 8, padding: "6px 8px", background: "rgba(255,255,255,0.6)", borderRadius: 4 }}>{entry.title}</div>
+                  {/* Matched keywords as pills */}
+                  {entry.juice.matches.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {entry.juice.matches.map((m, j) => {
+                        const tierColors = { T1: "#16a34a", T2: "#d97706", T3: "#6366f1", T4: "#94a3b8" };
+                        return (<span key={j} style={{ padding: "2px 8px", background: "#fff", border: `1px solid ${tierColors[m.tier] || "#e0ddd8"}`, borderRadius: 4, fontSize: 9, color: tierColors[m.tier] || "#666", fontFamily: "'IBM Plex Mono',monospace", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          {m.keyword} <span style={{ fontWeight: 700 }}>{fmt(m.volume)}</span>
+                        </span>);
+                      })}
+                    </div>
+                  )}
+                  {entry.juice.matches.length === 0 && <div style={{ fontSize: 10, color: "#ccc", fontStyle: "italic" }}>No exact-match keywords from search volume data</div>}
+                </div>
+              ))}
+            </div>
+
+            {/* CUCKOO analysis — strengths/weaknesses from AI */}
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: MAROON, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Your CUCKOO Title ({ctResults.cuckoo_analysis?.char_count || 0} chars)</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: MAROON, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>CUCKOO Title Analysis</div>
               {ctResults.cuckoo_analysis?.strengths?.map((s, i) => <div key={i} style={{ fontSize: 12, color: "#16a34a", padding: "2px 0", display: "flex", gap: 6 }}>{"\u2713"} {s}</div>)}
               {ctResults.cuckoo_analysis?.weaknesses?.map((s, i) => <div key={i} style={{ fontSize: 12, color: "#dc2626", padding: "2px 0", display: "flex", gap: 6 }}>{"\u2717"} {s}</div>)}
             </div>
