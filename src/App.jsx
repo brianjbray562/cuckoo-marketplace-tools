@@ -700,6 +700,15 @@ export default function App() {
   const [ctElapsed, setCtElapsed] = useState(0);
   const ctAbortRef = useRef(null);
   const ctTimerRef = useRef(null);
+  // History state
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  useEffect(() => { (async () => { try { const h = await window.storage.get("generation_history"); if (h?.value) setHistory(JSON.parse(h.value)); } catch(e) {} })(); }, []);
+  const saveToHistory = useCallback(async (input, mode, marketplaces, resultData) => {
+    const entry = { id: Date.now(), input, mode, marketplaces, timestamp: new Date().toISOString(), score: resultData?.amazon_audit?.score || null };
+    setHistory(prev => { const next = [entry, ...prev].slice(0, 20); try { window.storage.set("generation_history", JSON.stringify(next)); } catch(e) {} return next; });
+  }, []);
+  const clearHistory = useCallback(async () => { setHistory([]); try { await window.storage.delete("generation_history"); } catch(e) {} }, []);
   const [authState, setAuthState] = useState("login");
   const [isAdmin, setIsAdmin] = useState(false);
   const [authUser, setAuthUser] = useState("");
@@ -1273,6 +1282,7 @@ export default function App() {
       }
 
       setResults(merged); setEditedKeys(new Set()); originalTitlesRef.current = {};
+      saveToHistory(title, inputModeRef.current, sel, merged);
       const ex = { amazon_audit: true }; sel.forEach(k => ex[k] = true);
       setExpanded(ex); setAllExpanded(true);
       setTimeout(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
@@ -1427,6 +1437,27 @@ export default function App() {
             <strong>Bulk mode</strong> processes multiple {inputMode === "model" ? "model numbers" : "titles"} at once. All results are editable, exportable as CSV, and tagged as <strong style={{ color: "#16a34a" }}>{"\u2713"} Verified</strong> when matched to the database.
           </p>
         </div>
+
+        {/* HISTORY */}
+        {history.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <button onClick={() => setShowHistory(p => !p)} style={{ background: "none", border: "none", fontSize: 11, color: "#999", fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", padding: 0, display: "flex", alignItems: "center", gap: 4 }}>
+              {showHistory ? "\u25BE" : "\u25B8"} Recent Generations ({history.length})
+            </button>
+            {showHistory && (
+              <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, padding: "10px 16px", marginTop: 8, maxHeight: 200, overflowY: "auto" }}>
+                {history.map((h, i) => (
+                  <button key={h.id} onClick={() => { setAmazonTitle(h.input); setInputMode(h.mode || "model"); if (h.marketplaces) setSelected(h.marketplaces); setShowHistory(false); }}
+                    style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: i < history.length - 1 ? "1px solid #f5f3f0" : "none", background: "none", border: "none", borderBottomWidth: i < history.length - 1 ? 1 : 0, borderBottomStyle: "solid", borderBottomColor: "#f5f3f0", cursor: "pointer", textAlign: "left" }}>
+                    <span style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>{h.input}</span>
+                    <span style={{ fontSize: 9, color: "#bbb", flexShrink: 0 }}>{h.score ? h.score + "/10 \u00B7 " : ""}{new Date(h.timestamp).toLocaleDateString()}</span>
+                  </button>
+                ))}
+                <button onClick={clearHistory} style={{ marginTop: 6, background: "none", border: "none", fontSize: 10, color: "#dc2626", cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>Clear History</button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* INPUT */}
         <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
