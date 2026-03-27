@@ -21,6 +21,12 @@ body {
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
+/* Mobile responsiveness for data tables */
+@media (max-width: 768px) {
+  .sv-table-wrap, .compare-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .audit-grid { grid-template-columns: 1fr !important; }
+}
+
 /* Scrollbar styling for data tables */
 ::-webkit-scrollbar {
   width: 6px;

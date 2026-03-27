@@ -14,7 +14,7 @@ const MARKETPLACES = {
       { title: "Ecomtent \u2014 Amazon 2025 Title Requirements & COSMO/RUFUS Context", url: "https://www.ecomtent.ai/blog-page/amazons-2025-title-requirements-what-sellers-need-to-know" },
       { title: "Amalytix \u2014 Amazon Product Title Guidelines (with Title Checker Tool)", url: "https://www.amalytix.com/en/knowledge/seo/amazon-product-title/" },
     ],
-    guidelines: "Amazon Title Optimization (SEO-First for CUCKOO):\n- Hard limit: 200 characters. USE the full limit.\n- Prioritize EXACT-MATCH keyword phrases from search data below.\n- Title Case. Prohibited: !, $, ?, _, {, }, ^. Same word max twice.\n- No promotional phrases. Use numerals. Brand CUCKOO first. Pipes | and dashes - OK.\n- MANDATORY: #-Cup Cooked/Uncooked format. Model numbers LAST in parentheses.\n\nAMAZON SEARCH VOLUME DATA (use these exact phrases when they match the product):\nHIGH VOLUME: 'rice cooker', 'cuckoo rice cooker', 'rice maker', 'stainless steel rice cooker', 'rice cooker stainless steel inner pot', 'japanese rice cooker', 'low carb rice cooker', 'korean rice cooker', 'rice steamer'\nMEDIUM VOLUME: 'pressure rice cooker', 'rice warmer', 'neuro fuzzy rice cooker', 'induction rice cooker', 'induction heating rice cooker', 'rice cooker cuckoo', 'cuckoo pressure rice cooker'\nSIZE-SPECIFIC (only if product matches): 'rice cooker 6 cup', 'rice cooker 10 cup', 'rice cooker 4 cup', '3 cup rice cooker'\nFEATURE PHRASES: 'nonstick inner pot', 'stainless steel inner pot', 'keep warm', 'delay timer', 'fuzzy logic', 'steamer basket', 'multi cooker'\n\nKEYWORD RELEVANCY: See product category rules for keyword restrictions (stainless steel, pressure, induction, Korean, size terms). Prioritize high-volume phrases. Exact-match as many as possible while keeping readability solid."
+    guidelines: "Amazon Title Optimization (SEO-First):\n- Hard limit: 200 chars. USE the full limit. Title Case.\n- Prohibited: !, $, ?, _, {, }, ^. Same word max twice. No promo phrases.\n- Brand CUCKOO first. Numerals for numbers. Pipes | and dashes - OK.\n\nAMAZON KEYWORD DATA (exact-match these when product matches):\nHIGH: rice cooker, cuckoo rice cooker, rice maker, stainless steel rice cooker, japanese rice cooker, korean rice cooker, rice steamer\nMEDIUM: pressure rice cooker, rice warmer, induction rice cooker, induction heating rice cooker, cuckoo pressure rice cooker\nSIZE: rice cooker 6 cup, rice cooker 10 cup, rice cooker 4 cup, 3 cup rice cooker\nFEATURE: nonstick inner pot, stainless steel inner pot, keep warm, delay timer, fuzzy logic, steamer basket, multi cooker\nPrioritize high-volume. Exact-match as many as possible while readable."
   },
   walmart: { name: "Walmart", badge: "W", accent: "#0071CE", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -24,7 +24,7 @@ const MARKETPLACES = {
       { title: "GoAura \u2014 How to Write High-Converting Walmart Product Titles", url: "https://goaura.com/blog/how-to-write-high-converting-walmart-product-titles-and-descriptions" },
       { title: "Channable \u2014 Walmart Product Listing: Beginner\u2019s Guide & Best Practices", url: "https://www.channable.com/blog/walmart-product-listing" },
     ],
-    guidelines: "Walmart Title Guidelines:\n- Official limit: 75 chars. Over 70 gets cut off on mobile AND desktop.\n- Format: Brand + Item Name + Model + Style + Key Attribute + Pack Count + Size\n- Walmart search does NOT rely heavily on title keywords — uses backend fields\n- Brevity/clarity rewarded over keyword density. No keyword stuffing.\n- No special symbols, marketing phrases, or other marketplace references\n- Title Case. Think mobile-first.\n- WALMART TONE: Short, clear, practical. Focus on what the product IS, not what it does.\n- DIRECTIONAL KEYWORDS (from shopper search behavior, adapt for Walmart brevity): 'Rice Cooker', 'Rice Maker', 'Pressure Rice Cooker'. 'Korean' only if made in Korea. Within 75 chars, prioritize the product type and technology. Do not stuff — one or two descriptors max after the core."
+    guidelines: "Walmart: 75 chars max (70 safe for mobile). Title Case.\n- Format: Brand + Item Name + Key Attribute + Size. Brevity over keywords.\n- No special symbols, promo, or other marketplace refs. Mobile-first.\n- Tone: short, clear, practical. 1-2 descriptors max.\n- Keywords: 'Rice Cooker', 'Rice Maker', 'Pressure Rice Cooker'."
   },
   target: { name: "Target", badge: "TGT", accent: "#CC0000", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -34,7 +34,7 @@ const MARKETPLACES = {
       { title: "ChannelEngine \u2014 Target Plus: Marketplace Guide (Jan 2026)", url: "https://www.channelengine.com/en/blog/selling-on-target-plus" },
       { title: "eComClips \u2014 Sell on Target Plus with ChannelAdvisor (Title Requirements)", url: "https://ecomclips.com/blog/sell-on-target-plus-marketplace-target-with-channeladvisor/" },
     ],
-    guidelines: "Target Title Guidelines:\n- Max 100 chars (hard limit 150). Min 21 chars.\n- Format: Brand + Size Grouping + Item Description + Item Type + Style/Model # + Size/Color + Count\n- No keyword stuffing. Title Case. Clean retail-ready language.\n- Titles = department store labels, not SEO-stuffed listings.\n- No promotional language, pricing, or shipping info.\n- TARGET TONE: Clean, approachable, lifestyle-oriented. Think how it reads on a shelf tag.\n- DIRECTIONAL KEYWORDS (from shopper search behavior, use naturally): 'Rice Cooker', 'Rice Maker', 'Nonstick'. 'Stainless Steel' only if the product has a stainless steel inner pot. 'Korean' only if made in Korea. Target shoppers respond to material and finish callouts. Keep it readable — 2-3 descriptors max."
+    guidelines: "Target: 100 chars (hard limit 150, min 21). Title Case.\n- Format: Brand + Item Type + Key Feature + Size/Color. Retail-ready, not SEO-stuffed.\n- No promo, pricing, or shipping. Clean shelf-tag tone.\n- Keywords: 'Rice Cooker', 'Rice Maker', 'Nonstick'. Material/finish callouts valued. 2-3 descriptors max."
   },
   bestbuy: { name: "Best Buy", badge: "BB", accent: "#0046BE", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
@@ -43,7 +43,7 @@ const MARKETPLACES = {
       { title: "Best Buy Corporate \u2014 Digital Marketplace Launch Announcement (Aug 2025)", url: "https://corporate.bestbuy.com/2025/marketplace/" },
       { title: "ChannelEngine \u2014 Best Buy US Marketplace Guide", url: "https://support.channelengine.com/hc/en-us/articles/31873642736925" },
     ],
-    guidelines: "Best Buy Title Guidelines:\n- No official public char limit — recommend 100-150 chars\n- Title, brand, model number are required fields\n- Tech-savvy audience: include model numbers, key specs\n- Format: Brand + Product Line + Model + Key Spec + Product Type\n- Title Case. No promotional language.\n- DIRECTIONAL KEYWORDS (from shopper search behavior): 'Rice Cooker', 'Induction Heating', 'Pressure Rice Cooker', 'Fuzzy Logic'. 'Stainless Steel' only if the product has a stainless steel inner pot. Best Buy shoppers care about technology specs — lean into tech descriptors.\n- NOTE: Detailed rules provided during onboarding"
+    guidelines: "Best Buy: 100-150 chars recommended. Title Case.\n- Format: Brand + Product Line + Model + Key Spec + Product Type.\n- Tech-savvy audience: include model numbers, key specs. No promo.\n- Keywords: 'Rice Cooker', 'Induction Heating', 'Pressure Rice Cooker', 'Fuzzy Logic'. Lean into tech descriptors."
   },
   wayfair: { name: "Wayfair", badge: "WF", accent: "#7B2D8E", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -52,26 +52,26 @@ const MARKETPLACES = {
       { title: "Linnworks \u2014 Wayfair Marketplace: A Seller\u2019s Guide to Success", url: "https://www.linnworks.com/blog/wayfair-marketplace-ultimate-sellers-guide/" },
       { title: "Priceva \u2014 Selling on Wayfair in 2025: Complete Guide", url: "https://priceva.com/blog/How-to-Sell-on-wayfair-marketplace" },
     ],
-    guidelines: "Wayfair Title Guidelines:\n- Max ~100 characters recommended\n- Include: Brand, Product Type, Key Features, Capacity, Color/Finish\n- Wayfair shoppers value style descriptors: Modern, Mid-Century, Industrial\n- Include material and finish details when relevant\n- Generate a standard optimized title (same format as other marketplaces)\n- WAYFAIR TONE: Home-focused, style-conscious.\n- DIRECTIONAL KEYWORDS (from shopper search behavior, adapt for Wayfair home audience): 'Rice Cooker', 'Countertop', 'Kitchen Appliance'. 'Stainless Steel' only if the product has a stainless steel inner pot. 'Korean' only if made in Korea."
+    guidelines: "Wayfair: ~100 chars recommended.\n- Include: Brand, Product Type, Key Features, Capacity, Color/Finish.\n- Home-focused, style-conscious tone. Material/finish details valued.\n- Keywords: 'Rice Cooker', 'Countertop', 'Kitchen Appliance'."
   },
   kohls: { name: "Kohl's", badge: "K", accent: "#5C2D91", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
       { title: "Kohl's \u2014 Marketplace Certified Partners", url: "https://www.kohls.com/feature/certifiedpartners.jsp" },
     ],
-    guidelines: "Kohl's Title Guidelines:\n- No official public limit — recommend ~100-150 chars (Mirakl platform)\n- Format: Brand + Product Name + Key Feature + Size/Color\n- Clean, department-store-ready titles. Brand prominent.\n- No promotional language. No ALL CAPS or special chars.\n- DIRECTIONAL KEYWORDS (from shopper search behavior): 'Rice Cooker', 'Rice Maker', 'Nonstick'. 'Stainless Steel' only if the product has a stainless steel inner pot. 'Korean' only if made in Korea. Department store tone — clean product descriptors, not SEO phrases.\n- NOTE: Detailed rules provided during onboarding"
+    guidelines: "Kohl's: ~100-150 chars (Mirakl platform).\n- Format: Brand + Product Name + Key Feature + Size/Color. Department-store-ready.\n- No promo, ALL CAPS, or special chars. Brand prominent.\n- Keywords: 'Rice Cooker', 'Rice Maker', 'Nonstick'. Clean descriptors, not SEO phrases."
   },
   macys: { name: "Macy's", badge: "M", accent: "#E21A2C", confidence: "partial", confidenceLabel: "Partial Docs",
     sources: [
       { title: "Macy's Marketplace \u2014 FAQ & Requirements", url: "https://marketplace.macys.com/faq.html" },
       { title: "ChannelEngine \u2014 Macy's Guide", url: "https://support.channelengine.com/hc/en-us/articles/9000052801053" },
     ],
-    guidelines: "Macy's Title Guidelines:\n- Title Case required. Mirakl-powered, invite-only.\n- Format: Brand + Product Name + Collection/Line + Key Detail\n- Brand-conscious audience. Department-store tone.\n- Material/quality callouts valued. No promotional language.\n- CUCKOO already sold at Macy's — align with existing naming.\n- DIRECTIONAL KEYWORDS (from shopper search behavior): 'Rice Cooker', 'Nonstick Inner Pot'. 'Stainless Steel' only if the product has a stainless steel inner pot. 'Korean' only if made in Korea. Macy's shoppers value brand + material — lead with quality signals."
+    guidelines: "Macy's: Title Case. Mirakl-powered.\n- Format: Brand + Product Name + Collection/Line + Key Detail.\n- Department-store tone. Material/quality callouts valued. No promo.\n- CUCKOO already sold at Macy's — align with existing naming.\n- Keywords: 'Rice Cooker', 'Nonstick Inner Pot'. Lead with quality signals."
   },
   bloomingdales: { name: "Bloomingdale's", badge: "B", accent: "#1a1a1a", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
       { title: "Macy's Marketplace FAQ (shared platform)", url: "https://marketplace.macys.com/faq.html" },
     ],
-    guidelines: "Bloomingdale's Title Guidelines:\n- Shares Macy's Mirakl infrastructure. Recommend ~100-120 chars.\n- Format: Brand + Collection/Line + Product Name + Material/Detail\n- PREMIUM luxury tone. Brand must lead.\n- Minimal elegant language. Less is more.\n- BLOOMINGDALE'S TONE: Upscale, refined. Think premium kitchen registry.\n- DIRECTIONAL KEYWORDS (from shopper search behavior, adapt for luxury): 'Rice Cooker', 'Induction Heating'. 'Stainless Steel' only if the product has a stainless steel inner pot. 'Korean' only if made in Korea. Bloomingdale's shoppers respond to premium technology and material callouts. Keep it restrained — quality over quantity.\n- NOTE: Most rules are internal to Mirakl onboarding"
+    guidelines: "Bloomingdale's: ~100-120 chars. Shares Macy's Mirakl platform.\n- Format: Brand + Collection/Line + Product Name + Material/Detail.\n- Premium luxury tone. Brand leads. Minimal elegant language.\n- Keywords: 'Rice Cooker', 'Induction Heating'. Premium tech/material callouts. Quality over quantity."
   },
   tiktokshop: { name: "TikTok Shop", badge: "TT", accent: "#010101", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -81,60 +81,60 @@ const MARKETPLACES = {
       { title: "TikTok Seller Center \u2014 Content Policy (Official)", url: "https://seller-us.tiktok.com/university/essay?knowledge_id=6837891779151617" },
       { title: "TikTok Seller Center \u2014 Policy Pulse (Jan 2026)", url: "https://seller-us.tiktok.com/university/essay?knowledge_id=6747273381791534" },
     ],
-    guidelines: "TikTok Shop Title Guidelines:\n- Titles should be 25-200 characters, concise and accurate.\n- Must include: brand, product type, and essential info for purchase decisions.\n- Title Case. No repetitive words, no clickbait, no seller name/URL/platform references.\n- TIKTOK TONE: Social commerce — snappy, scannable in a video feed.\n- DIRECTIONAL KEYWORDS (from shopper search behavior, adapt for social): 'Rice Cooker', 'Rice Maker', 'Nonstick', 'Keep Warm'. 'Korean Rice Cooker' only if made in Korea. TikTok shoppers discover through content — the title confirms what they saw in the video. Lead with brand + product type, then the most compelling feature."
+    guidelines: "TikTok Shop: 25-200 chars. Title Case.\n- Include: brand, product type, essential purchase info. No clickbait or platform refs.\n- Social commerce tone: snappy, scannable. Title confirms what shoppers saw in video.\n- Keywords: 'Rice Cooker', 'Rice Maker', 'Nonstick', 'Keep Warm'. Brand + product type first, then compelling feature."
   },
   weee: { name: "Weee!", badge: "W!", accent: "#1DB954", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
       { title: "Weee! \u2014 Sell on Weee!", url: "https://www.sayweee.com/company/sell-on-weee" },
       { title: "Weee! \u2014 Global+ Seller Onboarding", url: "https://www.sayweee.com/en/company/vendor/onboarding" },
     ],
-    guidelines: "Weee! Title Guidelines:\n- Asian grocery/goods delivery platform targeting Asian-American shoppers.\n- Recommend ~80-120 characters based on display patterns.\n- Brand CUCKOO is well-recognized among Asian-American consumers.\n- Clean, descriptive titles with key attributes (capacity, material, color).\n- No promotional language.\n- WEEE! TONE: Community-focused, cultural relevance matters.\n- DIRECTIONAL KEYWORDS (from shopper search behavior, adapt for Asian-American audience): 'Korean Rice Cooker' is a strong phrase for this audience but ONLY use if the model is made in Korea. Also: 'Rice Cooker', 'Pressure Rice Cooker', 'Nonstick Inner Pot'. 'Stainless Steel' only if the product has a stainless steel inner pot. Weee! shoppers already know CUCKOO — CUCKOO is a Korean brand, but only reference 'Korean' in the title if the specific model is manufactured in Korea.\n- NOTE: Detailed listing rules provided during vendor onboarding."
+    guidelines: "Weee!: ~80-120 chars. Asian grocery/goods platform for Asian-American shoppers.\n- Clean, descriptive: capacity, material, color. No promo. CUCKOO well-recognized.\n- Community-focused tone, cultural relevance matters.\n- Keywords: 'Rice Cooker', 'Pressure Rice Cooker', 'Nonstick Inner Pot'. 'Korean Rice Cooker' strong for this audience (only if made in Korea per keyword restrictions)."
   }
 };
 
-const SYSTEM_PROMPT = `You are a senior ecommerce listing specialist at CUCKOO Electronics America. Products: rice cookers, water purifiers, air purifiers, bidets, kitchen appliances. Premium Korean brand.
+const SYSTEM_PROMPT = `You are a senior ecommerce listing specialist at CUCKOO Electronics America. Premium Korean brand: rice cookers, water purifiers, air purifiers, bidets, kitchen appliances.
 
-CUCKOO TITLE RULES (apply to ALL marketplaces without exception):
+CUCKOO TITLE RULES (apply to ALL marketplaces):
 
-PRIORITY ORDER (when character limits are tight, drop items from the BOTTOM of this list first):
-P1 (NEVER DROP): Brand "CUCKOO" + Cup capacity with Uncooked/Cooked designation
-P2 (NEVER DROP): Rice cooker technology/type — including dual technologies when both are present
+PRIORITY (tight char limits — drop from bottom first):
+P1 (NEVER DROP): Brand "CUCKOO" + Cup capacity with Uncooked/Cooked
+P2 (NEVER DROP): Technology/type (include dual technologies when both present)
 P3 (drop first): Model number in parentheses
 
-RULE 1 — NON-NEGOTIABLE: Every cup capacity MUST include "Uncooked" or "Cooked". Format: #-Cup Uncooked or #-Cup Cooked (e.g. "6-Cup Uncooked"). Hyphen required. NEVER output a bare cup count like "6-Cup" or "6 Cup" without Uncooked/Cooked — this is the single most important rule. Default to Uncooked if the original title doesn't specify. Include both if known (e.g. "6-Cup Uncooked / 12-Cup Cooked").
-RULE 2 — Title order: CUCKOO [Technologies] Rice Cooker [Cup Size], [Features], [Color] ([Model]). Do NOT use "& Warmer". Use "with" and "&" to connect features naturally. Cup size comes AFTER "Rice Cooker", not before it. When BOTH "Twin Pressure" AND "Induction Heating" are present in the original title, BOTH must appear immediately after CUCKOO in EVERY optimized marketplace title. Example: "CUCKOO Twin Pressure Induction Heating Rice Cooker 10-Cup Uncooked, Nonstick Inner Pot, White (CRP-JHT1010F)". This is non-negotiable across ALL marketplaces — do NOT drop either technology to save space. Drop the model number instead. For single-technology products: "CUCKOO [Type] Rice Cooker [#-Cup Uncooked], [Features], [Color] ([Model])". Types: "Micom", "Basic", "Twin Pressure", "Induction Heating Pressure", "Electric Heating Pressure", "HP (High Pressure)". NOTE: When auditing the original Amazon title, do NOT flag it for not frontloading dual technologies — that is a rule for optimized output only.
-RULE 3 — Model numbers MUST be in parentheses and placed LAST (e.g. "(CR-3032)", "(CRP-P0609S)"). The parentheses are required. If the title exceeds the marketplace character limit, REMOVE the model number entirely. The model number is the FIRST thing to sacrifice for space — never drop technologies or Uncooked/Cooked.
-RULE 4 — TITLE STYLE: Write flowing titles, not comma-separated keyword lists. Use "with" to connect features, "&" within groups, 3-4 commas max. Group related features into natural clauses. Reference: "CUCKOO Twin Pressure Rice Cooker 6-Cup Uncooked / 12-Cup Cooked with Induction Heating Technology, 20 Menu Modes with Voice Guide, Versatile Rice Maker Multi-Cooker & Pressure Cooker (CRP-LHTR0609FW)"
-RULE 5 — ONLY include features, materials, colors, and specs that are either (a) explicitly stated in the original Amazon title, or (b) found in the VERIFIED PRODUCT DATA provided below from the internal product database. Do NOT invent or assume features. If the original title is sparse (e.g. just brand + model + "Rice Cooker"), use the product database data to find real specs, features, capacity, color, and technology type. This is strongly preferred over generating thin titles.
+RULE 1 — Every cup capacity MUST have "Uncooked" or "Cooked" (e.g. "6-Cup Uncooked"). Hyphen required. NEVER bare "6-Cup" without qualifier. Default Uncooked. Include both if known (e.g. "6-Cup Uncooked / 12-Cup Cooked").
+RULE 2 — Order: CUCKOO [Tech] Rice Cooker [Cup Size], [Features], [Color] ([Model]). No "& Warmer". Cup size AFTER "Rice Cooker". Dual tech (Twin Pressure + Induction Heating): BOTH must appear after CUCKOO in every title — drop model number before dropping tech. Types: Micom, Basic, Twin Pressure, Induction Heating Pressure, Electric Heating Pressure, HP. When auditing originals, don't flag for not frontloading dual tech.
+RULE 3 — Model numbers in parentheses, placed LAST. Remove entirely if over char limit — first thing to sacrifice.
+RULE 4 — Flowing titles, not keyword lists. "with" connects features, "&" within groups, 3-4 commas max. Ref: "CUCKOO Twin Pressure Rice Cooker 6-Cup Uncooked / 12-Cup Cooked with Induction Heating Technology, 20 Menu Modes with Voice Guide, Versatile Rice Maker Multi-Cooker & Pressure Cooker (CRP-LHTR0609FW)"
+RULE 5 — ONLY use features from (a) the original title or (b) VERIFIED PRODUCT DATA from the internal database. Never invent. If title is sparse, enrich from database.
 
-EXAMPLES (follow this style exactly):
+KEYWORD RESTRICTIONS (all marketplaces):
+- 'small'/'mini'/'compact': only for 3-cup or smaller
+- 'pressure': only for CRP- models
+- 'induction': only for IH models
+- 'Korean'/'Korean Rice Cooker': only if verified made in Korea
+- 'Stainless Steel': only if inner pot IS stainless steel
+- 'low carb': only if product has that feature
 
+EXAMPLE:
 Input: "CUCKOO CRP-P0609S 6 Cup Electric Heating Pressure Rice Cooker with Nonstick Inner Pot, Black"
 Amazon (200): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked / 12-Cup Cooked Rice Maker with Nonstick Inner Pot, Fuzzy Logic, Keep Warm, Steamer Basket, Black (CRP-P0609S)"
 Walmart (75): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked, Nonstick, Black"
 Target (100): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked with Nonstick Inner Pot, Keep Warm, Black"
-Note: Uses 'Pressure Rice Cooker' (27K), 'Rice Maker' (350K), 'Fuzzy Logic' (21K) — all verified features. 'Korean' (55K) only used if made in Korea. Does NOT use 'small' or 'mini' because this is a 6-cup model.
-
-Input: "CUCKOO CRP-JHT1010F Induction Heating Twin Pressure Rice Cooker 10 Cup White"
-Amazon (200): "CUCKOO Twin Pressure Induction Heating Rice Cooker 10-Cup Uncooked / 20-Cup Cooked Rice Maker with Nonstick Inner Pot, Keep Warm, White (CRP-JHT1010F)"
-Walmart (75): "CUCKOO Twin Pressure Induction Heating Rice Cooker 10-Cup"
-Target (100): "CUCKOO Twin Pressure Induction Heating Rice Cooker 10-Cup Uncooked, Nonstick, White"
-Note: Uses 'Induction Heating Rice Cooker' (10K), 'Rice Maker' (350K). 'Korean Rice Cooker' (55K) only if verified made in Korea. Does NOT use 'small', 'mini', or 'Japanese'.
 
 TASK:
-1. If the original title appears sparse (missing key details like technology type, features, color, or capacity beyond cup count), use the VERIFIED PRODUCT DATA provided from the internal database to find the real product details. Use these to enrich the titles.
-2. If an Amazon title is provided: Audit it for SEO strength. CUCKOO prioritizes exact-match keywords and full character usage. If NO Amazon title is provided (model-number-only input): Create an optimized Amazon title from scratch using the product data from the internal database, the search volume keyword data, and all CUCKOO title rules. Set the audit score based on the title YOU create. In the strengths, note that this is a newly generated title. In improvements, list any features or keywords that couldn't fit within the 200 char limit.
-3. Generate optimized titles per each marketplace's guidelines while always following the CUCKOO rules above.
-4. For Amazon ONLY: maximize character usage up to the 200-char limit by including all features from the original title and product page. For other marketplaces: use characters efficiently within their limits, following each marketplace's tone (brevity for Walmart, clarity for Target, etc.). Do not keyword-stuff non-Amazon marketplaces.
-5. ALWAYS provide a suggested_title in the Amazon audit, regardless of score. The user wants to compare. When generating from a model number with no original title, put the full optimized Amazon title in suggested_title.
-6. SELF-CHECK before responding: scan every title you output. If ANY title contains a cup number without "Uncooked" or "Cooked" immediately after it, FIX IT. If ANY model number is missing parentheses, FIX IT. If ANY title contains a feature not verified from the original title or the product database, REMOVE IT. If ANY title uses 'small', 'mini', or 'compact' for a 6-cup or larger model, REMOVE those terms. If ANY title uses 'pressure' for a non-CRP model or 'induction' for a non-IH model, REMOVE those terms. If ANY title uses 'Korean' or 'Korean Rice Cooker' without verifying the model is manufactured in Korea, REMOVE those terms. If ANY title uses 'Stainless Steel' but the product's inner pot is NOT stainless steel, REMOVE it. If ANY title contains "& Warmer", REMOVE it. Model numbers must always be in parentheses.
+1. Sparse titles: enrich from VERIFIED PRODUCT DATA.
+2. With Amazon title: audit SEO strength. Without (model-only): create optimized Amazon title from DB + keywords + rules. Score your own title; note in strengths it's newly generated; list what couldn't fit in improvements.
+3. Generate per marketplace guidelines + CUCKOO rules.
+4. Amazon: maximize 200 chars with all features. Others: efficient within limits, match marketplace tone. No keyword-stuffing non-Amazon.
+5. ALWAYS provide suggested_title in amazon_audit.
+6. SELF-CHECK: verify every title for Uncooked/Cooked, parenthesized model numbers, no invented features, no banned terms per keyword restrictions, no "& Warmer".
 
-Respond ONLY in valid JSON (no markdown, no backticks, no other text):
-{"amazon_audit":{"score":<1-10>,"strengths":["..."],"improvements":["..."],"suggested_title":"always provide an improved version"},"conversions":{"<key>":{"title":"optimized title","char_count":<number>,"changes":["change1","change2","change3"]}}}`;
+Respond ONLY in valid JSON:
+{"amazon_audit":{"score":<1-10>,"strengths":["..."],"improvements":["..."],"suggested_title":"always provide"},"conversions":{"<key>":{"title":"...","char_count":<n>,"changes":["..."]}}}`;
 
 // Category-specific rules appended to system prompt
 const CATEGORY_RULES = {
-  rice_cooker: `\nPRODUCT CATEGORY: Rice Cooker\nApply ALL CUCKOO TITLE RULES above (cup size, technology frontloading, etc.).\nFor Amazon titles: prioritize exact-matching high-volume search phrases from the keyword data provided. Fit as many relevant phrases as possible within 200 chars while keeping readability solid.\nKEYWORD RELEVANCY: Only use size terms (small/mini/compact) for 3-cup or smaller models. Only use 'pressure' for CRP- models. Only use 'induction' for IH models. Only use 'low carb' if the product has that feature. 'Korean Rice Cooker' is ONLY valid for models made in Korea — verify country of manufacture from the product database before using. Do NOT assume. CUCKOO is a Korean brand but some models are manufactured in China. 'Rice Maker' and 'Rice Warmer' are high-volume synonyms that can be naturally included.`,
+  rice_cooker: `\nPRODUCT CATEGORY: Rice Cooker\nApply ALL CUCKOO TITLE RULES above. For Amazon: prioritize exact-matching high-volume keyword phrases within 200 chars. 'Rice Maker' and 'Rice Warmer' are high-volume synonyms — include naturally. See KEYWORD RESTRICTIONS in system prompt for all restrictions.`,
   water_purifier: `\nPRODUCT CATEGORY: Water Purifier\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Purifier Line/Type] [Product Type] [Key Feature/Stage Count] [extras]\nCommon keywords: Water Purifier, Filtration, Reverse Osmosis, Alkaline, Mineral, Countertop, Under-Sink, Filter, Stage, Tankless, Self-Cleaning.`,
   air_purifier: `\nPRODUCT CATEGORY: Air Purifier\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Product Line] Air Purifier [Coverage Area] [Key Feature] [extras]\nCommon keywords: Air Purifier, HEPA, True HEPA, Activated Carbon, Coverage, Sq Ft, Smart Sensor, Auto Mode, Sleep Mode, Allergen, Dust, Odor.`,
   bidet: `\nPRODUCT CATEGORY: Bidet\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Product Line] Bidet [Seat Type] [Key Features] [extras]\nCommon keywords: Bidet, Bidet Seat, Elongated, Round, Heated Seat, Warm Water, Air Dryer, Deodorizer, Self-Cleaning Nozzle, Adjustable.`,
@@ -844,7 +844,7 @@ export default function App() {
       const res = await fetch("/api/messages", {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514", max_tokens: 2000, temperature: 0.3, system: SYSTEM_PROMPT + catRules,
+          model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: SYSTEM_PROMPT + catRules,
           messages: [{ role: "user", content: userMsg }]
         })
       });
@@ -891,6 +891,7 @@ export default function App() {
       setLoading(false);
       abortRef.current = null;
       setBulkProgress({ current: 0, total: 0 });
+      setTimeout(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
     }
   }, []);
 
@@ -1036,7 +1037,7 @@ export default function App() {
         const makeRequest = () => fetch("/api/messages", {
           method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
           body: JSON.stringify({
-            model: "claude-sonnet-4-20250514", max_tokens: 2000, temperature: 0.3, system: SYSTEM_PROMPT + catRules,
+            model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: SYSTEM_PROMPT + catRules,
             messages: [{ role: "user", content: userMsg }]
           })
         });
@@ -1172,7 +1173,7 @@ export default function App() {
       {/* NAV BAR */}
       <div style={{ background: "#fff", borderBottom: "1px solid #e8e5e0", position: "sticky", top: 0, zIndex: 50 }}>
         <div style={{ maxWidth: 940, margin: "0 auto", padding: "0 24px", display: "flex", alignItems: "center" }}>
-          <div className="nav-scroll" style={{ flex: 1, display: "flex", gap: 0 }}>
+          <nav className="nav-scroll" role="tablist" aria-label="Tool navigation" style={{ flex: 1, display: "flex", gap: 0 }}>
           {[
             { key: "title_optimizer", label: "Marketplace Title Generator", icon: "\u270F\uFE0F" },
             { key: "backend_keywords", label: "Amazon Backend Keywords", icon: "\u{1F50D}" },
@@ -1180,14 +1181,14 @@ export default function App() {
             { key: "product_compare", label: "Product Comparison", icon: "\u{1F4CB}" },
             { key: "asin_reference", label: "Amazon ASIN Reference", icon: "\u{1F517}" },
           ].map(tab => (
-            <button key={tab.key} onClick={() => { setPage(tab.key); window.scrollTo(0, 0); }}
+            <button key={tab.key} role="tab" aria-selected={page === tab.key} aria-controls={`panel-${tab.key}`} onClick={() => { setPage(tab.key); window.scrollTo(0, 0); }}
               style={{ padding: "14px 20px", background: "transparent", border: "none", borderBottom: page === tab.key ? `2px solid ${MAROON}` : "2px solid transparent", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontSize: 13, fontWeight: page === tab.key ? 700 : 400, color: page === tab.key ? MAROON : "#999", transition: "all .15s", display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 14 }}>{tab.icon}</span>{tab.label}
             </button>
           ))}
-          </div>
+          </nav>
           <div ref={accountMenuRef} style={{ position: "relative", flexShrink: 0, marginLeft: 8 }}>
-            <button onClick={() => setShowAccountMenu(p => !p)} style={{ width: 32, height: 32, borderRadius: "50%", background: isAdmin ? MAROON : "#e8e5e0", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: isAdmin ? "#fff" : "#666" }}>{loggedInUser.charAt(0).toUpperCase()}</button>
+            <button aria-label="Account menu" aria-expanded={showAccountMenu} onClick={() => setShowAccountMenu(p => !p)} style={{ width: 32, height: 32, borderRadius: "50%", background: isAdmin ? MAROON : "#e8e5e0", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: isAdmin ? "#fff" : "#666" }}>{loggedInUser.charAt(0).toUpperCase()}</button>
             {showAccountMenu && (<div style={{ position: "absolute", right: 0, top: 40, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.1)", width: 200, zIndex: 100, overflow: "hidden" }}>
               <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0eeeb" }}><div style={{ fontSize: 12, fontWeight: 700, color: "#1a1a1a" }}>{loggedInUser}</div><div style={{ fontSize: 10, color: isAdmin ? "#16a34a" : "#999", fontWeight: 600 }}>{isAdmin ? "Admin" : "Team Member"}</div></div>
               {isAdmin && <button onClick={() => { setPage("settings"); setShowAccountMenu(false); window.scrollTo(0,0); }} style={{ width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderBottom: "1px solid #f0eeeb", cursor: "pointer", fontSize: 12, color: "#666", textAlign: "left" }}>Settings</button>}
@@ -1307,7 +1308,7 @@ export default function App() {
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {mpEntries.map(([key, mp]) => {
               const sel = selected.includes(key); const conf = confidenceConfig[mp.confidence];
-              return (<button key={key} className="mp-chip" onClick={() => setSelected(p => p.includes(key) ? p.filter(k => k !== key) : [...p, key])}
+              return (<button key={key} className="mp-chip" role="checkbox" aria-checked={sel} aria-label={`${mp.name} marketplace`} onClick={() => setSelected(p => p.includes(key) ? p.filter(k => k !== key) : [...p, key])}
                 style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", background: sel ? MAROON : "#fff", border: `1.5px solid ${sel ? MAROON : "#e0ddd8"}`, borderRadius: 100, cursor: "pointer", color: sel ? "#fff" : "#777", fontSize: 12, fontWeight: 500, fontFamily: "'Outfit',sans-serif", transition: "background .15s, color .15s, border-color .15s" }}>
                 <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 5, background: mp.accent, color: "#fff", fontSize: 8, fontWeight: 800, fontFamily: "'Outfit',sans-serif", flexShrink: 0, letterSpacing: "-0.02em" }}>{mp.badge}</span>{mp.name}
                 {sel && <span style={{ width: 6, height: 6, borderRadius: "50%", background: conf.color, display: "inline-block", flexShrink: 0 }} />}
@@ -1323,7 +1324,7 @@ export default function App() {
           const dis = loading || !amazonTitle.trim() || !selected.length;
           const onClickFn = mode === "bulk" ? optimizeBulk : optimize;
           return (
-            <button className="cuckoo-btn" onClick={onClickFn} disabled={dis}
+            <button className="cuckoo-btn" aria-label="Generate optimized titles" onClick={onClickFn} disabled={dis}
               style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, fontFamily: "'Outfit',sans-serif", cursor: dis ? "not-allowed" : "pointer", marginBottom: 8, transition: "all .2s", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)" }}>
               {loading && mode === "bulk" ? <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}><span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin .7s linear infinite", display: "inline-block" }} />{inputMode === "model" ? "Looking up" : "Processing"} {bulkProgress.current} of {bulkProgress.total}...</span>
                 : loading ? <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}><span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin .7s linear infinite", display: "inline-block" }} />{inputMode === "model" ? "Looking up product & generating" : "Analyzing title & generating"} {selected.length} conversions...</span>
@@ -1358,7 +1359,7 @@ export default function App() {
             <div style={{ height: 4, background: "#f0eeeb", borderRadius: 2, overflow: "hidden" }}>
               <div style={{ width: `${(bulkProgress.current / bulkProgress.total) * 100}%`, height: "100%", background: MAROON, borderRadius: 2, transition: "width 0.4s ease" }} />
             </div>
-            <div style={{ fontSize: 10, color: "#aaa", fontFamily: "'IBM Plex Mono',monospace", marginTop: 4, textAlign: "center" }}>{bulkProgress.current}/{bulkProgress.total} complete</div>
+            <div style={{ fontSize: 10, color: "#aaa", fontFamily: "'IBM Plex Mono',monospace", marginTop: 4, textAlign: "center" }}>{bulkProgress.current}/{bulkProgress.total} complete{bulkProgress.current > 0 && loadingElapsed > 0 ? ` · ~${Math.max(1, Math.round((loadingElapsed / bulkProgress.current) * (bulkProgress.total - bulkProgress.current)))}s remaining` : ""}</div>
           </div>
         )}
         {!loading && mode === "bulk" && <div style={{ height: 20 }} />}
@@ -1827,7 +1828,7 @@ export default function App() {
           );
 
           return (
-            <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div className="sv-table-wrap" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
               <div style={{ padding: "10px 16px", borderBottom: "1px solid #f0eeeb", fontSize: 11, color: "#999", fontWeight: 600 }}>{filtered.length} keyword{filtered.length !== 1 ? "s" : ""}</div>
               {/* Header */}
               <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 80px 80px 80px 80px", padding: "8px 16px", borderBottom: "1px solid #f0eeeb", background: "#faf9f7", gap: 8, alignItems: "center" }}>
@@ -1943,7 +1944,7 @@ export default function App() {
             return m[row.key] || "—";
           };
           return (
-            <div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div className="compare-table-wrap result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
               {/* Header row */}
               <div style={{ display: "grid", gridTemplateColumns: `140px repeat(${models.length}, 1fr)`, borderBottom: "2px solid #e8e5e0" }}>
                 <div style={{ padding: "14px 16px", background: "#faf9f7", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.06em" }}>Spec</div>
@@ -1974,6 +1975,28 @@ export default function App() {
           );
         })()}
 
+        {/* Export comparison */}
+        {compareModels.length >= 2 && (
+          <button onClick={() => {
+            const models = compareModels.map(sku => ({ sku, ...PRODUCT_DB[sku] }));
+            const specRows = [
+              { label: "Type", get: m => m.type || "" }, { label: "Heating", get: m => m.heating || "" },
+              { label: "Pressure", get: m => m.pressure ? "Yes" : "No" }, { label: "Cup Size", get: m => m.cupSize || "" },
+              { label: "Color", get: m => m.color || "" }, { label: "Cooking Modes", get: m => m.cookingModes || "" },
+              { label: "Other Menu Modes", get: m => m.otherMenuModes || "" }, { label: "Inner Pot", get: m => m.innerPot || "" },
+              { label: "Features", get: m => (m.features || []).join(", ") }, { label: "ASIN", get: m => m.asin || "" },
+            ];
+            const esc = s => '"' + (s || "").replace(/"/g, '""') + '"';
+            const csvRows = [["Spec", ...models.map(m => m.sku)].join(",")];
+            specRows.forEach(r => csvRows.push([esc(r.label), ...models.map(m => esc(r.get(m)))].join(",")));
+            const blob = new Blob([csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url;
+            a.download = "cuckoo-comparison-" + compareModels.join("-vs-") + ".csv"; a.click(); URL.revokeObjectURL(url);
+          }} style={{ width: "100%", marginTop: 12, padding: 14, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, color: "#999", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            {"\u{1F4E5}"} Download Comparison as CSV
+          </button>
+        )}
+
         {compareModels.length === 1 && <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 16, fontSize: 12, color: "#92400e", textAlign: "center" }}>Select at least one more model to compare</div>}
         {compareModels.length === 0 && <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 10, padding: 24, fontSize: 12, color: "#aaa", textAlign: "center" }}>Select 2–4 models above to see a side-by-side comparison</div>}
 
@@ -1985,16 +2008,20 @@ export default function App() {
 
       {/* ASIN REFERENCE PAGE */}
       {page === "asin_reference" && (() => {
+        // Merge static ASIN_DATA with any new ASINs from the live product DB
+        const existingAsins = new Set(ASIN_DATA.map(r => r.asin));
+        const dbExtras = Object.entries(liveProductDb).filter(([sku, d]) => d.asin && !existingAsins.has(d.asin)).map(([sku, d]) => ({ asin: d.asin, sku }));
+        const mergedAsinData = [...ASIN_DATA, ...dbExtras];
         const filtered = asinSearch.trim()
-          ? ASIN_DATA.filter(r => r.asin.toLowerCase().includes(asinSearch.toLowerCase()) || r.sku.toLowerCase().includes(asinSearch.toLowerCase()))
-          : ASIN_DATA;
+          ? mergedAsinData.filter(r => r.asin.toLowerCase().includes(asinSearch.toLowerCase()) || r.sku.toLowerCase().includes(asinSearch.toLowerCase()))
+          : mergedAsinData;
         return (
           <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
             <div style={{ marginBottom: 20 }}>
               <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
                 All CUCKOO products currently listed on Amazon. Click any ASIN to open the product detail page.
               </p>
-              <p style={{ fontSize: 11, color: "#aaa", margin: 0 }}>{ASIN_DATA.length} ASINs · March 2026</p>
+              <p style={{ fontSize: 11, color: "#aaa", margin: 0 }}>{mergedAsinData.length} ASINs{dbExtras.length > 0 ? ` (${dbExtras.length} from custom DB)` : ""} · March 2026</p>
             </div>
 
             {/* Search */}
