@@ -704,6 +704,10 @@ export default function App() {
   const [darkMode, setDarkMode] = useState(false);
   useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} })(); }, []);
   const toggleDarkMode = useCallback(() => { setDarkMode(prev => { const next = !prev; document.body.classList.toggle("dark-mode", next); try { window.storage.set("dark_mode", String(next)); } catch(e) {} return next; }); }, []);
+  // Nav group dropdown
+  const [openNavGroup, setOpenNavGroup] = useState(null);
+  const navGroupRef = useRef(null);
+  useEffect(() => { if (!openNavGroup) return; const handler = (e) => { if (navGroupRef.current && !navGroupRef.current.contains(e.target)) setOpenNavGroup(null); }; document.addEventListener("mousedown", handler); return () => document.removeEventListener("mousedown", handler); }, [openNavGroup]);
   // History state
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -1369,24 +1373,47 @@ export default function App() {
       {/* NAV BAR */}
       <div style={{ background: "#fff", borderBottom: "1px solid #e8e5e0", position: "sticky", top: 0, zIndex: 50 }}>
         <div style={{ maxWidth: 940, margin: "0 auto", padding: "0 24px", display: "flex", alignItems: "center" }}>
-          <nav className="nav-scroll" role="tablist" aria-label="Tool navigation" style={{ flex: 1, display: "flex", gap: 0 }}>
+          <nav ref={navGroupRef} className="nav-scroll" role="tablist" aria-label="Tool navigation" style={{ flex: 1, display: "flex", gap: 0 }}>
           {[
-            { key: "title_optimizer", label: "Marketplace Title Generator", icon: "\u270F\uFE0F" },
-            { key: "bullet_points", label: "Bullet Point Generator", icon: "\u{1F4DD}" },
-            { key: "backend_keywords", label: "Amazon Backend Keywords", icon: "\u{1F50D}" },
-            { key: "search_volume", label: "Amazon Search Volume Report", icon: "\u{1F4CA}" },
-            { key: "product_compare", label: "Product Comparison", icon: "\u{1F4CB}" },
-            { key: "listing_audit", label: "Listing Audit", icon: "\u{1F4CB}" },
-            { key: "competitor_analyzer", label: "Competitor Analyzer", icon: "\u{1F3C6}" },
-            { key: "asin_reference", label: "Amazon ASIN Reference", icon: "\u{1F517}" },
-          ].map(tab => (
-            <button key={tab.key} role="tab" aria-selected={page === tab.key} aria-controls={`panel-${tab.key}`} onClick={() => { setPage(tab.key); window.scrollTo(0, 0); }}
-              style={{ padding: "14px 20px", background: "transparent", border: "none", borderBottom: page === tab.key ? `2px solid ${MAROON}` : "2px solid transparent", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontSize: 13, fontWeight: page === tab.key ? 700 : 400, color: page === tab.key ? MAROON : "#999", transition: "all .15s", display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 14 }}>{tab.icon}</span>{tab.label}
-            </button>
-          ))}
+            { group: "generate", label: "Generate", icon: "\u270F\uFE0F", items: [
+              { key: "title_optimizer", label: "Marketplace Titles", icon: "\u270F\uFE0F" },
+              { key: "bullet_points", label: "Bullet Points", icon: "\u{1F4DD}" },
+              { key: "backend_keywords", label: "Backend Keywords", icon: "\u{1F50D}" },
+            ]},
+            { group: "analyze", label: "Analyze", icon: "\u{1F4CA}", items: [
+              { key: "listing_audit", label: "Listing Audit", icon: "\u{1F4CB}" },
+              { key: "competitor_analyzer", label: "Competitor Analyzer", icon: "\u{1F3C6}" },
+            ]},
+            { group: "reference", label: "Reference", icon: "\u{1F4D6}", items: [
+              { key: "search_volume", label: "Search Volume", icon: "\u{1F4CA}" },
+              { key: "product_compare", label: "Product Comparison", icon: "\u{1F4CB}" },
+              { key: "asin_reference", label: "ASIN Reference", icon: "\u{1F517}" },
+            ]},
+          ].map(group => {
+            const isActive = group.items.some(i => i.key === page);
+            const isOpen = openNavGroup === group.group;
+            return (
+              <div key={group.group} style={{ position: "relative" }}>
+                <button onClick={() => setOpenNavGroup(isOpen ? null : group.group)}
+                  style={{ padding: "14px 20px", background: "transparent", border: "none", borderBottom: isActive ? `2px solid ${MAROON}` : "2px solid transparent", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontSize: 13, fontWeight: isActive ? 700 : 400, color: isActive ? MAROON : "#999", transition: "all .15s", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                  <span style={{ fontSize: 14 }}>{group.icon}</span>{group.label}<span style={{ fontSize: 9, opacity: 0.6, transform: isOpen ? "rotate(180deg)" : "rotate(0)", transition: "transform .15s" }}>{"\u25BC"}</span>
+                </button>
+                {isOpen && (
+                  <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 200, minWidth: 220, overflow: "hidden", marginTop: 2 }}>
+                    {group.items.map(item => (
+                      <button key={item.key} role="tab" aria-selected={page === item.key} onClick={() => { setPage(item.key); setOpenNavGroup(null); window.scrollTo(0, 0); }}
+                        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", background: page === item.key ? "rgba(107,28,35,0.06)" : "transparent", border: "none", borderLeft: page === item.key ? `3px solid ${MAROON}` : "3px solid transparent", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontSize: 12, fontWeight: page === item.key ? 700 : 400, color: page === item.key ? MAROON : "#555", textAlign: "left", transition: "background .1s" }}
+                        onMouseEnter={e => { if (page !== item.key) e.target.style.background = "#faf9f7"; }}
+                        onMouseLeave={e => { if (page !== item.key) e.target.style.background = "transparent"; }}>
+                        <span style={{ fontSize: 14 }}>{item.icon}</span>{item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
           </nav>
-          <button aria-label="Toggle dark mode" onClick={toggleDarkMode} style={{ width: 32, height: 32, borderRadius: "50%", background: darkMode ? "#fff" : "rgba(255,255,255,0.15)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>{darkMode ? "\u2600\uFE0F" : "\u{1F319}"}</button>
           <div ref={accountMenuRef} style={{ position: "relative", flexShrink: 0, marginLeft: 8 }}>
             <button aria-label="Account menu" aria-expanded={showAccountMenu} onClick={() => setShowAccountMenu(p => !p)} style={{ width: 32, height: 32, borderRadius: "50%", background: isAdmin ? MAROON : "#e8e5e0", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: isAdmin ? "#fff" : "#666" }}>{loggedInUser.charAt(0).toUpperCase()}</button>
             {showAccountMenu && (<div style={{ position: "absolute", right: 0, top: 40, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.1)", width: 200, zIndex: 100, overflow: "hidden" }}>
@@ -2669,9 +2696,22 @@ export default function App() {
         );
       })()}
 
+      {/* Global footer with dark mode toggle */}
+      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #e8e5e0", padding: "8px 24px", display: "flex", justifyContent: "flex-end", alignItems: "center", zIndex: 90 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 10, color: "#999", fontFamily: "'Outfit',sans-serif" }}>{darkMode ? "Dark" : "Light"}</span>
+          <button aria-label="Toggle dark mode" role="switch" aria-checked={darkMode} onClick={toggleDarkMode}
+            style={{ position: "relative", width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer", background: darkMode ? MAROON : "#e0ddd8", transition: "background .2s", padding: 0, flexShrink: 0 }}>
+            <span style={{ position: "absolute", top: 2, left: darkMode ? 20 : 2, width: 18, height: 18, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", transition: "left .2s", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>
+              {darkMode ? "\u{1F319}" : "\u2600\uFE0F"}
+            </span>
+          </button>
+        </div>
+      </div>
+
       {/* Toast notification */}
       {toast && (
-        <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: "#1a1a1a", color: "#fff", padding: "10px 20px", borderRadius: 8, fontSize: 12, fontWeight: 600, fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(0,0,0,0.2)", zIndex: 100, animation: "toastIn .2s ease" }}>
+        <div style={{ position: "fixed", bottom: 48, left: "50%", transform: "translateX(-50%)", background: "#1a1a1a", color: "#fff", padding: "10px 20px", borderRadius: 8, fontSize: 12, fontWeight: 600, fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(0,0,0,0.2)", zIndex: 100, animation: "toastIn .2s ease" }}>
           {toast}
         </div>
       )}
