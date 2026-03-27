@@ -54,7 +54,7 @@ app.post("/api/messages", async (req, res) => {
 
 // Serve built frontend in production
 app.use(express.static(join(__dirname, "dist")));
-app.get("*", (req, res) => {
+app.get("/{*splat}", (req, res) => {
   res.sendFile(join(__dirname, "dist", "index.html"));
 });
 
