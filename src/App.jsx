@@ -689,12 +689,38 @@ export default function App() {
   const [liveProductDb, setLiveProductDb] = useState(PRODUCT_DB);
   const liveProductDbRef = useRef(PRODUCT_DB);
   useEffect(() => { liveProductDbRef.current = liveProductDb; }, [liveProductDb]);
+  const [liveSearchData, setLiveSearchData] = useState(SEARCH_DATA);
+  const [svUploadStatus, setSvUploadStatus] = useState(null);
   useEffect(() => { if (!showAccountMenu) return; const handler = (e) => { if (accountMenuRef.current && !accountMenuRef.current.contains(e.target)) setShowAccountMenu(false); }; document.addEventListener("mousedown", handler); return () => document.removeEventListener("mousedown", handler); }, [showAccountMenu]);
-  useEffect(() => { (async () => { try { const customDb = await window.storage.get("product_db_custom"); if (customDb && customDb.value) setLiveProductDb(JSON.parse(customDb.value)); } catch(e) {} try { const ts = await window.storage.get("product_db_updated"); if (ts && ts.value) setDbLastUpdated(ts.value); } catch(e) {} })(); }, []);
+  useEffect(() => { (async () => { try { const customDb = await window.storage.get("product_db_custom"); if (customDb && customDb.value) setLiveProductDb(JSON.parse(customDb.value)); } catch(e) {} try { const ts = await window.storage.get("product_db_updated"); if (ts && ts.value) setDbLastUpdated(ts.value); } catch(e) {} try { const customSv = await window.storage.get("search_data_custom"); if (customSv && customSv.value) setLiveSearchData(JSON.parse(customSv.value)); } catch(e) {} })(); }, []);
   const handleDbUpload = useCallback(async (file) => { setDbUploadStatus(null); if (!file) return; if (file.size > 2*1024*1024) { setDbUploadStatus({type:"error",message:"File too large"}); return; } const ext = file.name.split(".").pop().toLowerCase(); if (!["xlsx","xls","json"].includes(ext)) { setDbUploadStatus({type:"error",message:"Use .xlsx or .json"}); return; } try { let db; const errors = []; if (ext==="json") { db=JSON.parse(await file.text()); } else { const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs"); const wb=XLSX.read(await file.arrayBuffer(),{type:"array"}); const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]); db={}; for (const row of rows) { const sku=String(row["Model Number"]||row["SKU"]||Object.values(row)[0]||"").trim(); if(!sku||!sku.startsWith("CR")){errors.push(sku+": invalid"); continue;} db[sku]={type:row["Type"]||"",heating:row["Heating"]||"",pressure:row["Pressure"]===true||String(row["Pressure"]).toLowerCase()==="yes",cupSize:row["Cup Size"]||"",color:row["Color"]||"",innerPot:row["Inner Pot"]||"",features:typeof row["Features"]==="string"?row["Features"].split(",").map(f=>f.trim()).filter(Boolean):[],asin:row["ASIN"]||""}; if(row["Cooking Modes"])db[sku].cookingModes=String(row["Cooking Modes"]); } } const count=Object.keys(db).length; if(count===0){setDbUploadStatus({type:"error",message:"No valid models"});return;} setDbUploadStatus({type:"preview",message:count+" models parsed",data:db,errors:errors.slice(0,10),count}); } catch(err){setDbUploadStatus({type:"error",message:"Parse error: "+err.message});} }, []);
   const applyDbUpload = useCallback(async () => { if(!dbUploadStatus||!dbUploadStatus.data)return; try{await window.storage.set("product_db_backup",JSON.stringify(liveProductDb));await window.storage.set("product_db_custom",JSON.stringify(dbUploadStatus.data));const ts=new Date().toISOString();await window.storage.set("product_db_updated",ts);setLiveProductDb(dbUploadStatus.data);setDbLastUpdated(ts);setDbUploadStatus({type:"success",message:"Updated: "+Object.keys(dbUploadStatus.data).length+" models"});}catch(err){setDbUploadStatus({type:"error",message:"Save failed"});} }, [dbUploadStatus, liveProductDb]);
   const revertDb = useCallback(async () => { try{const b=await window.storage.get("product_db_backup");if(b&&b.value){const p=JSON.parse(b.value);await window.storage.set("product_db_custom",JSON.stringify(p));setLiveProductDb(p);setDbUploadStatus({type:"success",message:"Reverted"});}else setDbUploadStatus({type:"error",message:"No backup"});}catch(e){setDbUploadStatus({type:"error",message:"Revert failed"});} }, []);
   const resetDbToDefault = useCallback(async () => { try{await window.storage.delete("product_db_custom");await window.storage.delete("product_db_updated");await window.storage.delete("product_db_backup");setLiveProductDb(PRODUCT_DB);setDbLastUpdated(null);setDbUploadStatus({type:"success",message:"Reset to defaults"});}catch(e){setDbUploadStatus({type:"error",message:"Reset failed"});} }, []);
+  const handleSvUpload = useCallback(async (file) => {
+    setSvUploadStatus(null);
+    if (!file) return;
+    const ext = file.name.split(".").pop().toLowerCase();
+    try {
+      let data;
+      if (ext === "json") { data = JSON.parse(await file.text()); }
+      else if (ext === "csv") {
+        const text = await file.text();
+        const lines = text.trim().split("\n");
+        const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+        data = lines.slice(1).map(line => {
+          const cols = line.split(",").map(c => c.trim().replace(/^"|"$/g, ""));
+          const row = {};
+          headers.forEach((h, i) => row[h] = cols[i] || "");
+          return { t: row.keyword || row.t || row.term || "", v: parseInt(row.volume || row.v || "0") || 0, g90: parseFloat(row.g90 || row["90d_growth"] || "0") || 0, g180: parseFloat(row.g180 || row["180d_growth"] || "0") || 0, cs: parseFloat(row.cs || row.click_share || "0") || 0, cr: parseFloat(row.cr || row.conv_rate || "0") || 0, tier: row.tier || "T4", cat: row.cat || row.category || "general" };
+        }).filter(d => d.t);
+      } else { setSvUploadStatus({ type: "error", message: "Use .json or .csv" }); return; }
+      if (!Array.isArray(data) || !data.length) { setSvUploadStatus({ type: "error", message: "No valid keywords found" }); return; }
+      setSvUploadStatus({ type: "preview", message: data.length + " keywords parsed", data, count: data.length });
+    } catch(e) { setSvUploadStatus({ type: "error", message: "Parse error: " + e.message }); }
+  }, []);
+  const applySvUpload = useCallback(async () => { if(!svUploadStatus?.data)return; try{await window.storage.set("search_data_custom",JSON.stringify(svUploadStatus.data));setLiveSearchData(svUploadStatus.data);setSvUploadStatus({type:"success",message:"Updated: "+svUploadStatus.data.length+" keywords"});}catch(e){setSvUploadStatus({type:"error",message:"Save failed"});} }, [svUploadStatus]);
+  const resetSvToDefault = useCallback(async () => { try{await window.storage.delete("search_data_custom");setLiveSearchData(SEARCH_DATA);setSvUploadStatus({type:"success",message:"Reset to defaults"});}catch(e){setSvUploadStatus({type:"error",message:"Reset failed"});} }, []);
   const ref = useRef(null);
   const abortRef = useRef(null);
 
@@ -1133,15 +1159,15 @@ export default function App() {
   const resultCount = results ? Object.keys(results.conversions || {}).filter(k => results.conversions[k]).length : 0;
 
   // Memoize search volume filtering/sorting to avoid recalculating on unrelated re-renders
-  const svMaxVol = useMemo(() => Math.max(...SEARCH_DATA.map(d => d.v)), []);
+  const svMaxVol = useMemo(() => Math.max(...liveSearchData.map(d => d.v)), [liveSearchData]);
   const svFiltered = useMemo(() => {
-    return SEARCH_DATA.filter(d => {
+    return liveSearchData.filter(d => {
       if (svTier !== "all" && d.tier !== svTier) return false;
       if (svCat !== "all" && d.cat !== svCat) return false;
       if (svFilter && !d.t.toLowerCase().includes(svFilter.toLowerCase())) return false;
       return true;
     }).sort((a, b) => svSortDir === "desc" ? b[svSort] - a[svSort] : a[svSort] - b[svSort]);
-  }, [svTier, svCat, svFilter, svSort, svSortDir]);
+  }, [liveSearchData, svTier, svCat, svFilter, svSort, svSortDir]);
 
   // Memoize marketplace chip data to avoid re-filtering every render
   const mpEntries = useMemo(() => MP_KEYS.map(k => [k, MARKETPLACES[k]]), []);
@@ -1225,6 +1251,21 @@ export default function App() {
             <button onClick={revertDb} style={{ padding: "6px 14px", background: "#fff", border: "1px solid #e0ddd8", borderRadius: 6, fontSize: 11, color: "#666", cursor: "pointer" }}>Revert to Previous</button>
             <button onClick={resetDbToDefault} style={{ padding: "6px 14px", background: "#fff", border: "1px solid #e0ddd8", borderRadius: 6, fontSize: 11, color: "#666", cursor: "pointer" }}>Reset to Defaults</button>
           </div>
+        </div>
+        {/* Search Volume Data */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Search Volume Data</div>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 16 }}>{liveSearchData.length} keywords loaded{liveSearchData !== SEARCH_DATA ? " (custom)" : " (default)"}</div>
+          <div style={{ border: "2px dashed #e0ddd8", borderRadius: 10, padding: 24, textAlign: "center", marginBottom: 16, background: "#faf9f7" }}>
+            <input type="file" accept=".json,.csv" id="sv-upload" onChange={e => handleSvUpload(e.target.files[0])} style={{ display: "none" }} />
+            <label htmlFor="sv-upload" style={{ display: "inline-block", padding: "8px 20px", background: MAROON, color: "#fff", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Choose File (.json or .csv)</label>
+            <div style={{ fontSize: 10, color: "#aaa", marginTop: 8 }}>CSV: keyword, volume, g90, g180, cs, cr, tier, cat</div>
+          </div>
+          {svUploadStatus && <div style={{ padding: 16, borderRadius: 10, marginBottom: 16, background: svUploadStatus.type === "error" ? "#fef2f2" : svUploadStatus.type === "success" ? "#f0fdf4" : "#fffbeb" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: svUploadStatus.type === "error" ? "#dc2626" : svUploadStatus.type === "success" ? "#16a34a" : "#92400e" }}>{svUploadStatus.message}</div>
+            {svUploadStatus.type === "preview" && <div style={{ marginTop: 12, display: "flex", gap: 8 }}><button onClick={applySvUpload} style={{ padding: "8px 16px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Apply {svUploadStatus.count} Keywords</button><button onClick={() => setSvUploadStatus(null)} style={{ padding: "8px 16px", background: "#fff", color: "#666", border: "1px solid #e0ddd8", borderRadius: 6, fontSize: 12, cursor: "pointer" }}>Cancel</button></div>}
+          </div>}
+          <button onClick={resetSvToDefault} style={{ padding: "6px 14px", background: "#fff", border: "1px solid #e0ddd8", borderRadius: 6, fontSize: 11, color: "#666", cursor: "pointer" }}>Reset to Defaults</button>
         </div>
       </div>}
 
@@ -1785,7 +1826,7 @@ export default function App() {
         {/* Intro */}
         <div style={{ marginBottom: 16, padding: "0 2px" }}>
           <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
-            Amazon search volume data for <strong>179 rice cooker keywords</strong> from Product Opportunity Explorer. This data can be utilized directly for <strong>Sponsored Ads campaigns</strong> on Amazon and directionally for keyword strategy across other retailers. Filter by tier, category, or search for specific terms.
+            Amazon search volume data for <strong>{liveSearchData.length} rice cooker keywords</strong> from Product Opportunity Explorer. This data can be utilized directly for <strong>Sponsored Ads campaigns</strong> on Amazon and directionally for keyword strategy across other retailers. Filter by tier, category, or search for specific terms.
           </p>
           <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
             Source: Amazon Product Opportunity Explorer {"\u00B7"} Last updated <strong>March 14, 2026</strong> {"\u00B7"} Search volume = past 360 days
@@ -1795,8 +1836,8 @@ export default function App() {
         {/* Tier summary cards */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
           {Object.entries(SV_TIER_CONFIG).map(([k, cfg]) => {
-            const count = SEARCH_DATA.filter(d => d.tier === k).length;
-            const totalVol = SEARCH_DATA.filter(d => d.tier === k).reduce((s, d) => s + d.v, 0);
+            const count = liveSearchData.filter(d => d.tier === k).length;
+            const totalVol = liveSearchData.filter(d => d.tier === k).reduce((s, d) => s + d.v, 0);
             return (
               <button key={k} onClick={() => setSvTier(svTier === k ? "all" : k)}
                 style={{ background: svTier === k ? cfg.bg : "#fff", border: `1.5px solid ${svTier === k ? cfg.color : "#e8e5e0"}`, borderRadius: 10, padding: "12px 14px", cursor: "pointer", textAlign: "left", transition: "all .15s" }}>
