@@ -1380,7 +1380,7 @@ export default function App() {
   return (
     <div className="cuckoo-app" style={{ fontFamily: "'Outfit','Helvetica Neue',sans-serif", minHeight: "100vh", background: "#f7f5f3", color: "#1a1a1a" }}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes slideIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}} @keyframes toastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}} .cuckoo-btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 8px 24px rgba(107,28,35,0.3)!important} .cuckoo-btn:active:not(:disabled){transform:translateY(0);opacity:0.9} .mp-chip:hover{opacity:0.85} .mp-chip:active{opacity:0.7;transform:scale(0.97)} .result-card{animation:slideIn .3s ease forwards} .src-link:hover{color:${MAROON}!important} .editable-title{border-bottom:1px dashed #ddd!important} .editable-title:focus{border-bottom:1px solid currentColor!important;border-color:inherit!important} .nav-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none} .nav-scroll::-webkit-scrollbar{display:none} @media(max-width:600px){.audit-grid{grid-template-columns:1fr!important} input,textarea,select{font-size:16px!important}}`}</style>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes slideIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}} @keyframes toastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}} .cuckoo-btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 8px 24px rgba(107,28,35,0.3)!important} .cuckoo-btn:active:not(:disabled){transform:translateY(0);opacity:0.9} .mp-chip:hover{opacity:0.85} .mp-chip:active{opacity:0.7;transform:scale(0.97)} .result-card{animation:slideIn .3s ease forwards} .src-link:hover{color:${MAROON}!important} .editable-title{border-bottom:1px dashed #ddd!important} .editable-title:focus{border-bottom:1px solid currentColor!important;border-color:inherit!important} .nav-scroll{overflow:visible} .nav-scroll::-webkit-scrollbar{display:none} @media(max-width:600px){.audit-grid{grid-template-columns:1fr!important} input,textarea,select{font-size:16px!important}}`}</style>
 
       {/* HEADER */}
       <div style={{ background: MAROON, position: "relative", overflow: "hidden" }}>
@@ -1440,12 +1440,37 @@ export default function App() {
             );
           })}
           </nav>
-          <div ref={accountMenuRef} style={{ position: "relative", flexShrink: 0, marginLeft: 8 }}>
-            <button aria-label="Account menu" aria-expanded={showAccountMenu} onClick={() => setShowAccountMenu(p => !p)} style={{ width: 32, height: 32, borderRadius: "50%", background: isAdmin ? MAROON : "#e8e5e0", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: isAdmin ? "#fff" : "#666" }}>{loggedInUser.charAt(0).toUpperCase()}</button>
-            {showAccountMenu && (<div style={{ position: "absolute", right: 0, top: 40, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.1)", width: 200, zIndex: 100, overflow: "hidden" }}>
-              <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0eeeb" }}><div style={{ fontSize: 12, fontWeight: 700, color: "#1a1a1a" }}>{loggedInUser}</div><div style={{ fontSize: 10, color: isAdmin ? "#16a34a" : "#999", fontWeight: 600 }}>{isAdmin ? "Admin" : "Team Member"}</div></div>
-              {isAdmin && <button onClick={() => { setPage("settings"); setShowAccountMenu(false); window.scrollTo(0,0); }} style={{ width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderBottom: "1px solid #f0eeeb", cursor: "pointer", fontSize: 12, color: "#666", textAlign: "left" }}>Settings</button>}
-              <button onClick={handleLogout} style={{ width: "100%", padding: "10px 16px", background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "#dc2626", textAlign: "left" }}>Log Out</button>
+          <div ref={accountMenuRef} style={{ position: "relative", flexShrink: 0, marginLeft: 12 }}>
+            <button aria-label="Account menu" aria-expanded={showAccountMenu} onClick={() => setShowAccountMenu(p => !p)}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "transparent", border: "1px solid #e8e5e0", borderRadius: 8, cursor: "pointer", transition: "border-color .15s" }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = "#ccc"} onMouseLeave={e => e.currentTarget.style.borderColor = "#e8e5e0"}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isAdmin ? MAROON : "#888"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#555", fontFamily: "'Outfit',sans-serif" }}>{loggedInUser}</span>
+              {isAdmin && <span style={{ fontSize: 8, fontWeight: 700, color: "#16a34a", background: "rgba(22,163,74,0.1)", padding: "1px 5px", borderRadius: 3 }}>ADMIN</span>}
+            </button>
+            {showAccountMenu && (<div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.1)", width: 220, zIndex: 100, overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0eeeb", display: "flex", alignItems: "center", gap: 10 }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={isAdmin ? MAROON : "#888"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <div><div style={{ fontSize: 12, fontWeight: 700, color: "#1a1a1a" }}>{loggedInUser}</div><div style={{ fontSize: 10, color: isAdmin ? "#16a34a" : "#999", fontWeight: 600 }}>{isAdmin ? "Admin" : "Team Member"}</div></div>
+              </div>
+              {/* Dark mode toggle */}
+              <div style={{ padding: "10px 16px", borderBottom: "1px solid #f0eeeb", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 12, color: "#666" }}>Dark Mode</span>
+                <button aria-label="Toggle dark mode" role="switch" aria-checked={darkMode} onClick={toggleDarkMode}
+                  style={{ position: "relative", width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer", background: darkMode ? MAROON : "#e0ddd8", transition: "background .2s", padding: 0, flexShrink: 0 }}>
+                  <span style={{ position: "absolute", top: 2, left: darkMode ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", transition: "left .2s", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>
+                    {darkMode ? "\u{1F319}" : "\u2600\uFE0F"}
+                  </span>
+                </button>
+              </div>
+              {isAdmin && <button onClick={() => { setPage("settings"); setShowAccountMenu(false); window.scrollTo(0,0); }} style={{ width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderBottom: "1px solid #f0eeeb", cursor: "pointer", fontSize: 12, color: "#666", textAlign: "left", display: "flex", alignItems: "center", gap: 8 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                Settings
+              </button>}
+              <button onClick={handleLogout} style={{ width: "100%", padding: "10px 16px", background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "#dc2626", textAlign: "left", display: "flex", alignItems: "center", gap: 8 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                Log Out
+              </button>
             </div>)}
           </div>
         </div>
@@ -2774,22 +2799,9 @@ export default function App() {
         );
       })()}
 
-      {/* Global footer with dark mode toggle */}
-      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #e8e5e0", padding: "8px 24px", display: "flex", justifyContent: "flex-end", alignItems: "center", zIndex: 90 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 10, color: "#999", fontFamily: "'Outfit',sans-serif" }}>{darkMode ? "Dark" : "Light"}</span>
-          <button aria-label="Toggle dark mode" role="switch" aria-checked={darkMode} onClick={toggleDarkMode}
-            style={{ position: "relative", width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer", background: darkMode ? MAROON : "#e0ddd8", transition: "background .2s", padding: 0, flexShrink: 0 }}>
-            <span style={{ position: "absolute", top: 2, left: darkMode ? 20 : 2, width: 18, height: 18, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", transition: "left .2s", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>
-              {darkMode ? "\u{1F319}" : "\u2600\uFE0F"}
-            </span>
-          </button>
-        </div>
-      </div>
-
       {/* Toast notification */}
       {toast && (
-        <div style={{ position: "fixed", bottom: 48, left: "50%", transform: "translateX(-50%)", background: "#1a1a1a", color: "#fff", padding: "10px 20px", borderRadius: 8, fontSize: 12, fontWeight: 600, fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(0,0,0,0.2)", zIndex: 100, animation: "toastIn .2s ease" }}>
+        <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: "#1a1a1a", color: "#fff", padding: "10px 20px", borderRadius: 8, fontSize: 12, fontWeight: 600, fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(0,0,0,0.2)", zIndex: 100, animation: "toastIn .2s ease" }}>
           {toast}
         </div>
       )}
