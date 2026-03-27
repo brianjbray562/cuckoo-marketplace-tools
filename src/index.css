@@ -27,6 +27,18 @@ body {
   .audit-grid { grid-template-columns: 1fr !important; }
 }
 
+/* Dark mode */
+body.dark-mode {
+  background: #1a1a1a;
+  color: #e0e0e0;
+}
+body.dark-mode .cuckoo-app {
+  filter: invert(1) hue-rotate(180deg);
+}
+body.dark-mode .cuckoo-app img {
+  filter: invert(1) hue-rotate(180deg);
+}
+
 /* Scrollbar styling for data tables */
 ::-webkit-scrollbar {
   width: 6px;

@@ -700,6 +700,10 @@ export default function App() {
   const [ctElapsed, setCtElapsed] = useState(0);
   const ctAbortRef = useRef(null);
   const ctTimerRef = useRef(null);
+  // Dark mode
+  const [darkMode, setDarkMode] = useState(false);
+  useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} })(); }, []);
+  const toggleDarkMode = useCallback(() => { setDarkMode(prev => { const next = !prev; document.body.classList.toggle("dark-mode", next); try { window.storage.set("dark_mode", String(next)); } catch(e) {} return next; }); }, []);
   // History state
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -1344,7 +1348,7 @@ export default function App() {
   );
 
   return (
-    <div style={{ fontFamily: "'Outfit','Helvetica Neue',sans-serif", minHeight: "100vh", background: "#f7f5f3", color: "#1a1a1a" }}>
+    <div className="cuckoo-app" style={{ fontFamily: "'Outfit','Helvetica Neue',sans-serif", minHeight: "100vh", background: "#f7f5f3", color: "#1a1a1a" }}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
       <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes slideIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}} @keyframes toastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}} .cuckoo-btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 8px 24px rgba(107,28,35,0.3)!important} .cuckoo-btn:active:not(:disabled){transform:translateY(0);opacity:0.9} .mp-chip:hover{opacity:0.85} .mp-chip:active{opacity:0.7;transform:scale(0.97)} .result-card{animation:slideIn .3s ease forwards} .src-link:hover{color:${MAROON}!important} .editable-title{border-bottom:1px dashed #ddd!important} .editable-title:focus{border-bottom:1px solid currentColor!important;border-color:inherit!important} .nav-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none} .nav-scroll::-webkit-scrollbar{display:none} @media(max-width:600px){.audit-grid{grid-template-columns:1fr!important} input,textarea,select{font-size:16px!important}}`}</style>
 
@@ -1382,6 +1386,7 @@ export default function App() {
             </button>
           ))}
           </nav>
+          <button aria-label="Toggle dark mode" onClick={toggleDarkMode} style={{ width: 32, height: 32, borderRadius: "50%", background: darkMode ? "#fff" : "rgba(255,255,255,0.15)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>{darkMode ? "\u2600\uFE0F" : "\u{1F319}"}</button>
           <div ref={accountMenuRef} style={{ position: "relative", flexShrink: 0, marginLeft: 8 }}>
             <button aria-label="Account menu" aria-expanded={showAccountMenu} onClick={() => setShowAccountMenu(p => !p)} style={{ width: 32, height: 32, borderRadius: "50%", background: isAdmin ? MAROON : "#e8e5e0", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: isAdmin ? "#fff" : "#666" }}>{loggedInUser.charAt(0).toUpperCase()}</button>
             {showAccountMenu && (<div style={{ position: "absolute", right: 0, top: 40, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.1)", width: 200, zIndex: 100, overflow: "hidden" }}>
