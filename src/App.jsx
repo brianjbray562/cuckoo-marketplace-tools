@@ -1935,6 +1935,19 @@ export default function App() {
           </button>
         </div>)}
 
+        {/* Next Step: Title Gen → Bullet Points */}
+        {results && results.amazon_audit?.suggested_title && !loading && mode === "single" && (
+          <button onClick={() => {
+            const model = results._productSku || (inputMode === "model" ? amazonTitle.trim() : "");
+            if (model) setBpModel(model);
+            // Pre-fill BK current title for downstream pipeline
+            if (results.amazon_audit?.suggested_title) setBkCurrentTitle(results.amazon_audit.suggested_title);
+            setPage("bullet_points"); window.scrollTo(0, 0);
+          }} style={{ width: "100%", marginTop: 10, padding: 14, background: MAROON, border: "none", borderRadius: 10, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(107,28,35,0.2)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            Next: Generate Bullet Points {"\u2192"}
+          </button>
+        )}
+
         {/* FOOTER */}
         <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
           <span style={{ fontSize: 10, color: "#ccc" }}>Guidelines researched March 2026 {"\u00B7"} Verify with marketplace docs before publishing</span>
@@ -2047,6 +2060,17 @@ export default function App() {
               </div>
             ))}
           </div>
+        )}
+
+        {/* Next Step: Bullet Points → Backend Keywords */}
+        {bpResults && !bpLoading && (
+          <button onClick={() => {
+            const model = bpResults._productSku || bpModel.trim();
+            if (model) { bkAutoFill(model); }
+            setPage("backend_keywords"); window.scrollTo(0, 0);
+          }} style={{ width: "100%", marginTop: 16, padding: 14, background: MAROON, border: "none", borderRadius: 10, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(107,28,35,0.2)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            Next: Generate Backend Keywords {"\u2192"}
+          </button>
         )}
 
         <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
@@ -2224,6 +2248,20 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
+
+        {/* Next Step: Backend Keywords → Listing Audit */}
+        {bkResults && !bkLoading && (
+          <button onClick={() => {
+            if (bkModelNumber.trim()) setAuditAsin(bkModelNumber.trim());
+            if (bkCurrentTitle.trim()) setAuditTitle(bkCurrentTitle.trim());
+            // Carry bullet points from earlier in pipeline if available
+            if (bpResults?.bullets?.length) setAuditBullets(bpResults.bullets.map(b => b.heading + ": " + b.text).join("\n"));
+            if (bkResults.keywords) setAuditBackendKw(bkResults.keywords);
+            setPage("listing_audit"); window.scrollTo(0, 0);
+          }} style={{ width: "100%", marginTop: 16, padding: 14, background: MAROON, border: "none", borderRadius: 10, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(107,28,35,0.2)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            Next: Run Listing Audit {"\u2192"}
+          </button>
         )}
 
         {/* FOOTER */}
