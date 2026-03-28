@@ -681,6 +681,7 @@ export default function App() {
   // Product comparison state
   const [compareModels, setCompareModels] = useState([]);
   const [compareSearch, setCompareSearch] = useState("");
+  const [enlargedImage, setEnlargedImage] = useState(null); // { sku, src }
   const [asinSearch, setAsinSearch] = useState("");
   // Backend keyword generator state
   const [bkCategory, setBkCategory] = useState("rice_cooker");
@@ -2431,8 +2432,8 @@ export default function App() {
             { label: "Pressure", key: "pressure", fmt: v => v ? "Yes" : "No" },
             { label: "Cup Size", key: "cupSize" },
             { label: "Color", key: "color" },
-            { label: "Cooking Modes", key: "cookingModes" },
-            { label: "Other Menu Modes", key: "otherMenuModes" },
+            { label: "Cooking Modes", key: "cookingModes", fmt: v => { if (!v) return "—"; if (/^\d+$/.test(String(v).trim())) return v + " modes"; return v; } },
+            { label: "Other Menu Modes", key: "otherMenuModes", fmt: v => { if (!v) return "—"; if (/^\d+$/.test(String(v).trim())) return v + " modes"; return v; } },
             { label: "Inner Pot", key: "innerPot" },
             { label: "Auto Clean", key: "_feat_Auto Clean", feat: true },
             { label: "Turbo Mode", key: "_feat_Turbo Mode", feat: true },
@@ -2459,7 +2460,7 @@ export default function App() {
                 <div style={{ padding: "14px 16px", background: "#faf9f7", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.06em" }}>Spec</div>
                 {models.map(m => (
                   <div key={m.sku} style={{ padding: "14px 16px", background: "#faf9f7", borderLeft: "1px solid #f0eeeb", textAlign: "center" }}>
-                    {PRODUCT_IMAGES[m.sku] && <img src={PRODUCT_IMAGES[m.sku]} alt={m.sku} style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 6, borderRadius: 6 }} />}
+                    {PRODUCT_IMAGES[m.sku] && <img src={PRODUCT_IMAGES[m.sku]} alt={m.sku} onClick={() => setEnlargedImage({ sku: m.sku, src: PRODUCT_IMAGES[m.sku] })} style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 6, borderRadius: 6, cursor: "pointer", transition: "transform .15s" }} onMouseEnter={e => e.target.style.transform = "scale(1.1)"} onMouseLeave={e => e.target.style.transform = "scale(1)"} />}
                     <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", color: MAROON }}>{m.sku}</div>
                     <div style={{ fontSize: 9, color: "#aaa", marginTop: 2 }}>{m.type}</div>
                   </div>
@@ -2472,11 +2473,15 @@ export default function App() {
                 return (
                   <div key={row.key} style={{ display: "grid", gridTemplateColumns: `140px repeat(${models.length}, 1fr)`, borderBottom: "1px solid #f5f3f0", background: i % 2 === 0 ? "#fff" : "#fdfcfb" }}>
                     <div style={{ padding: "8px 16px", fontSize: 11, fontWeight: 600, color: "#888" }}>{row.label}</div>
-                    {vals.map((val, j) => (
-                      <div key={j} style={{ padding: "8px 16px", borderLeft: "1px solid #f0eeeb", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: val === "No" || val === "—" ? "#ccc" : allSame ? "#666" : "#1a1a1a", fontWeight: !allSame && val !== "No" && val !== "—" ? 700 : 400, textAlign: "center" }}>
+                    {vals.map((val, j) => {
+                      const rawVal = (row.key === "cookingModes" || row.key === "otherMenuModes") ? models[j][row.key] : null;
+                      const isModesCount = rawVal && /^\d+$/.test(String(rawVal).trim());
+                      return (
+                      <div key={j} title={isModesCount ? rawVal + " programmed modes — upload detailed mode names via Settings to see specifics" : undefined} style={{ padding: "8px 16px", borderLeft: "1px solid #f0eeeb", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: val === "No" || val === "—" ? "#ccc" : allSame ? "#666" : "#1a1a1a", fontWeight: !allSame && val !== "No" && val !== "—" ? 700 : 400, textAlign: "center", cursor: isModesCount ? "help" : "default" }}>
                         {val === "Yes" ? "\u2713" : val === "No" ? "\u2717" : val}
-                      </div>
-                    ))}
+                        {isModesCount && <span style={{ fontSize: 9, color: "#bbb", display: "block", marginTop: 2 }}>hover for info</span>}
+                      </div>);
+                    })}
                   </div>
                 );
               })}
@@ -2906,6 +2911,17 @@ export default function App() {
           </div>
         );
       })()}
+
+      {/* Image lightbox */}
+      {enlargedImage && (
+        <div onClick={() => setEnlargedImage(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", backdropFilter: "blur(4px)" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: 24, maxWidth: "90vw", maxHeight: "90vh", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, boxShadow: "0 16px 48px rgba(0,0,0,0.3)", cursor: "default" }}>
+            <img src={enlargedImage.src} alt={enlargedImage.sku} style={{ maxWidth: "70vw", maxHeight: "70vh", objectFit: "contain", borderRadius: 8 }} />
+            <div style={{ fontSize: 14, fontWeight: 700, color: MAROON, fontFamily: "'IBM Plex Mono',monospace" }}>{enlargedImage.sku}</div>
+            <button onClick={() => setEnlargedImage(null)} style={{ padding: "6px 20px", background: "#e8e5e0", border: "none", borderRadius: 6, fontSize: 12, color: "#666", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontWeight: 600 }}>Close</button>
+          </div>
+        </div>
+      )}
 
       {/* Toast notification */}
       {toast && (
