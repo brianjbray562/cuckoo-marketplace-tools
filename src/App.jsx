@@ -706,6 +706,7 @@ export default function App() {
   const [auditAsin, setAuditAsin] = useState("");
   const [auditTitle, setAuditTitle] = useState("");
   const [auditBullets, setAuditBullets] = useState("");
+  const [auditBackendKw, setAuditBackendKw] = useState("");
   const [auditResults, setAuditResults] = useState(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState(null);
@@ -1158,8 +1159,8 @@ export default function App() {
     try {
       const product = auditAsin.trim() ? lookupProduct(auditAsin, liveProductDbRef.current) : null;
       const productCtx = product ? "\n\nVERIFIED PRODUCT DATA:\n" + formatProductContext(product) : "";
-      const auditSystem = "You are an Amazon listing optimization expert for CUCKOO Electronics America. Audit a product listing and score it on 6 criteria (each 0-10): title_seo (keyword coverage, char usage, structure), bullet_quality (benefit-driven, keyword-rich, complete), keyword_coverage (high-volume terms present), brand_compliance (CUCKOO title rules — Uncooked/Cooked, no & Warmer, tech frontloaded), competitiveness (vs top rice cooker listings), and completeness (all fields filled). Give an overall_score (weighted average). List specific actionable improvements.\nRespond ONLY with valid JSON: {\"overall_score\":<0-10>,\"scores\":{\"title_seo\":<n>,\"bullet_quality\":<n>,\"keyword_coverage\":<n>,\"brand_compliance\":<n>,\"competitiveness\":<n>,\"completeness\":<n>},\"details\":{\"title_seo\":{\"strengths\":[],\"issues\":[]},\"bullet_quality\":{\"strengths\":[],\"issues\":[]},\"keyword_coverage\":{\"missing_keywords\":[],\"present_keywords\":[]},\"brand_compliance\":{\"passes\":[],\"violations\":[]},\"competitiveness\":{\"notes\":[]},\"completeness\":{\"notes\":[]}},\"top_actions\":[\"action1\",\"action2\",\"action3\"]}";
-      const auditUserMsg = "Audit this Amazon listing:" + (auditAsin.trim() ? "\nASIN/Model: " + auditAsin.trim() : "") + (auditTitle.trim() ? "\nTitle: " + auditTitle.trim() : "") + (auditBullets.trim() ? "\nBullet Points:\n" + auditBullets.trim() : "") + productCtx + "\nRespond ONLY with valid JSON.";
+      const auditSystem = "You are an Amazon listing optimization expert for CUCKOO Electronics America. Audit a product listing and score it on 7 criteria (each 0-10): title_seo (keyword coverage, char usage, structure), bullet_quality (benefit-driven, keyword-rich, complete), backend_keywords (space-separated, no punctuation, no title-word duplication, competitor brands included, alternate language terms, under 500 bytes, no ASINs/promo), keyword_coverage (high-volume terms present across title + bullets + backend combined), brand_compliance (CUCKOO title rules — Uncooked/Cooked, no & Warmer, tech frontloaded), competitiveness (vs top rice cooker listings), and completeness (all fields filled — title, 5 bullets, backend keywords). Give an overall_score (weighted average). List specific actionable improvements.\nRespond ONLY with valid JSON: {\"overall_score\":<0-10>,\"scores\":{\"title_seo\":<n>,\"bullet_quality\":<n>,\"backend_keywords\":<n>,\"keyword_coverage\":<n>,\"brand_compliance\":<n>,\"competitiveness\":<n>,\"completeness\":<n>},\"details\":{\"title_seo\":{\"strengths\":[],\"issues\":[]},\"bullet_quality\":{\"strengths\":[],\"issues\":[]},\"backend_keywords\":{\"strengths\":[],\"issues\":[]},\"keyword_coverage\":{\"missing_keywords\":[],\"present_keywords\":[]},\"brand_compliance\":{\"passes\":[],\"violations\":[]},\"competitiveness\":{\"notes\":[]},\"completeness\":{\"notes\":[]}},\"top_actions\":[\"action1\",\"action2\",\"action3\"]}";
+      const auditUserMsg = "Audit this Amazon listing:" + (auditAsin.trim() ? "\nASIN/Model: " + auditAsin.trim() : "") + (auditTitle.trim() ? "\nTitle: " + auditTitle.trim() : "") + (auditBullets.trim() ? "\nBullet Points:\n" + auditBullets.trim() : "") + (auditBackendKw.trim() ? "\nBackend Keywords:\n" + auditBackendKw.trim() : "") + productCtx + "\nRespond ONLY with valid JSON.";
       const res = await fetch("/api/messages", {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
         body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: auditSystem, messages: [{ role: "user", content: auditUserMsg }] })
@@ -1181,7 +1182,7 @@ export default function App() {
       if (auditTimerRef.current) { clearInterval(auditTimerRef.current); auditTimerRef.current = null; }
       setAuditLoading(false); auditAbortRef.current = null;
     }
-  }, [auditAsin, auditTitle, auditBullets]);
+  }, [auditAsin, auditTitle, auditBullets, auditBackendKw]);
 
   // Competitor title analyzer
   const analyzeCompetitors = useCallback(async () => {
@@ -2621,7 +2622,7 @@ export default function App() {
       {page === "listing_audit" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
         <div style={{ marginBottom: 16 }}>
           <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
-            Paste your Amazon listing details to get a comprehensive audit scorecard. The tool evaluates title SEO, bullet point quality, keyword coverage, CUCKOO brand compliance, competitiveness, and completeness.
+            Paste your Amazon listing details to get a comprehensive audit scorecard. The tool evaluates title SEO, bullet point quality, backend keyword optimization, keyword coverage, CUCKOO brand compliance, competitiveness, and completeness.
           </p>
         </div>
 
@@ -2644,6 +2645,13 @@ export default function App() {
             <textarea value={auditBullets} onChange={e => setAuditBullets(e.target.value)} placeholder="Paste bullet points here (one per line)..." rows={5}
               style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
               onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Backend Keywords <span style={{ fontWeight: 400, color: "#bbb" }}>(paste the space-separated string from Seller Central)</span></label>
+            <textarea value={auditBackendKw} onChange={e => setAuditBackendKw(e.target.value)} placeholder="e.g. zojirushi tiger aroma olla arrocera cocedor arroz korean japanese..." rows={3}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {auditBackendKw.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{new TextEncoder().encode(auditBackendKw.trim()).length} / 500 bytes</div>}
           </div>
         </div>
 
@@ -2676,6 +2684,7 @@ export default function App() {
           const categories = [
             { key: "title_seo", label: "Title SEO", icon: "\u{1F50D}" },
             { key: "bullet_quality", label: "Bullet Quality", icon: "\u{1F4DD}" },
+            { key: "backend_keywords", label: "Backend Keywords", icon: "\u{1F511}" },
             { key: "keyword_coverage", label: "Keyword Coverage", icon: "\u{1F3AF}" },
             { key: "brand_compliance", label: "Brand Compliance", icon: "\u2713" },
             { key: "competitiveness", label: "Competitiveness", icon: "\u{1F3C6}" },
