@@ -2432,8 +2432,8 @@ export default function App() {
             { label: "Pressure", key: "pressure", fmt: v => v ? "Yes" : "No" },
             { label: "Cup Size", key: "cupSize" },
             { label: "Color", key: "color" },
-            { label: "Cooking Modes", key: "cookingModes", fmt: v => { if (!v) return "—"; if (/^\d+$/.test(String(v).trim())) return v + " modes"; return v; } },
-            { label: "Other Menu Modes", key: "otherMenuModes", fmt: v => { if (!v) return "—"; if (/^\d+$/.test(String(v).trim())) return v + " modes"; return v; } },
+            { label: "Cooking Modes", key: "cookingModes" },
+            { label: "Other Menu Modes", key: "otherMenuModes" },
             { label: "Inner Pot", key: "innerPot" },
             { label: "Auto Clean", key: "_feat_Auto Clean", feat: true },
             { label: "Turbo Mode", key: "_feat_Turbo Mode", feat: true },
@@ -2473,15 +2473,11 @@ export default function App() {
                 return (
                   <div key={row.key} style={{ display: "grid", gridTemplateColumns: `140px repeat(${models.length}, 1fr)`, borderBottom: "1px solid #f5f3f0", background: i % 2 === 0 ? "#fff" : "#fdfcfb" }}>
                     <div style={{ padding: "8px 16px", fontSize: 11, fontWeight: 600, color: "#888" }}>{row.label}</div>
-                    {vals.map((val, j) => {
-                      const rawVal = (row.key === "cookingModes" || row.key === "otherMenuModes") ? models[j][row.key] : null;
-                      const isModesCount = rawVal && /^\d+$/.test(String(rawVal).trim());
-                      return (
-                      <div key={j} title={isModesCount ? rawVal + " programmed modes — upload detailed mode names via Settings to see specifics" : undefined} style={{ padding: "8px 16px", borderLeft: "1px solid #f0eeeb", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: val === "No" || val === "—" ? "#ccc" : allSame ? "#666" : "#1a1a1a", fontWeight: !allSame && val !== "No" && val !== "—" ? 700 : 400, textAlign: "center", cursor: isModesCount ? "help" : "default" }}>
+                    {vals.map((val, j) => (
+                      <div key={j} style={{ padding: "8px 16px", borderLeft: "1px solid #f0eeeb", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: val === "No" || val === "—" ? "#ccc" : allSame ? "#666" : "#1a1a1a", fontWeight: !allSame && val !== "No" && val !== "—" ? 700 : 400, textAlign: "center" }}>
                         {val === "Yes" ? "\u2713" : val === "No" ? "\u2717" : val}
-                        {isModesCount && <span style={{ fontSize: 9, color: "#bbb", display: "block", marginTop: 2 }}>hover for info</span>}
-                      </div>);
-                    })}
+                      </div>
+                    ))}
                   </div>
                 );
               })}
