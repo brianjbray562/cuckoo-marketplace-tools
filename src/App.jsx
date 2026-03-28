@@ -1161,11 +1161,11 @@ export default function App() {
     try {
       const product = auditAsin.trim() ? lookupProduct(auditAsin, liveProductDbRef.current) : null;
       const productCtx = product ? "\n\nVERIFIED PRODUCT DATA:\n" + formatProductContext(product) : "";
-      const auditSystem = "You are an Amazon listing optimization expert for CUCKOO Electronics America. Audit a product listing and score it on 7 criteria (each 0-10): title_seo (keyword coverage, char usage, structure), bullet_quality (benefit-driven, keyword-rich, complete), backend_keywords (space-separated, no punctuation, no title-word duplication, competitor brands included, alternate language terms, under 500 bytes, no ASINs/promo), keyword_coverage (high-volume terms present across title + bullets + backend combined), brand_compliance (CUCKOO title rules — Uncooked/Cooked, no & Warmer, tech frontloaded), competitiveness (vs top rice cooker listings), and completeness (all fields filled — title, 5 bullets, backend keywords). Give an overall_score (weighted average). List specific actionable improvements.\nRespond ONLY with valid JSON: {\"overall_score\":<0-10>,\"scores\":{\"title_seo\":<n>,\"bullet_quality\":<n>,\"backend_keywords\":<n>,\"keyword_coverage\":<n>,\"brand_compliance\":<n>,\"competitiveness\":<n>,\"completeness\":<n>},\"details\":{\"title_seo\":{\"strengths\":[],\"issues\":[]},\"bullet_quality\":{\"strengths\":[],\"issues\":[]},\"backend_keywords\":{\"strengths\":[],\"issues\":[]},\"keyword_coverage\":{\"missing_keywords\":[],\"present_keywords\":[]},\"brand_compliance\":{\"passes\":[],\"violations\":[]},\"competitiveness\":{\"notes\":[]},\"completeness\":{\"notes\":[]}},\"top_actions\":[\"action1\",\"action2\",\"action3\"]}";
-      const auditUserMsg = "Audit this Amazon listing:" + (auditAsin.trim() ? "\nASIN/Model: " + auditAsin.trim() : "") + (auditTitle.trim() ? "\nTitle: " + auditTitle.trim() : "") + (auditBullets.trim() ? "\nBullet Points:\n" + auditBullets.trim() : "") + (auditBackendKw.trim() ? "\nBackend Keywords:\n" + auditBackendKw.trim() : "") + productCtx + "\nRespond ONLY with valid JSON.";
+      const auditSystem = "You are an Amazon listing optimization expert for CUCKOO Electronics America. Audit a product listing and score it on 7 criteria (each 0-10): title_seo (keyword coverage, char usage, structure), bullet_quality (benefit-driven, keyword-rich, complete), backend_keywords (space-separated, no punctuation, no title-word duplication, competitor brands included, alternate language terms, under 500 bytes, no ASINs/promo), keyword_coverage (high-volume terms present across title + bullets + backend combined), brand_compliance (CUCKOO title rules — Uncooked/Cooked, no & Warmer, tech frontloaded), competitiveness (vs top rice cooker listings), and completeness (all fields filled — title, 5 bullets, backend keywords). Give an overall_score (weighted average).\n\nFor EVERY category that scores below 8, provide a concrete 'recommended' rewrite or fix. For title_seo: provide a rewritten title. For bullet_quality: provide rewritten bullets (all 5). For backend_keywords: provide a rewritten keyword string. For keyword_coverage: list the exact missing high-volume terms to add. For brand_compliance: provide the specific fix for each violation. For completeness: list what's missing.\n\nRespond ONLY with valid JSON: {\"overall_score\":<0-10>,\"scores\":{\"title_seo\":<n>,\"bullet_quality\":<n>,\"backend_keywords\":<n>,\"keyword_coverage\":<n>,\"brand_compliance\":<n>,\"competitiveness\":<n>,\"completeness\":<n>},\"details\":{\"title_seo\":{\"strengths\":[],\"issues\":[],\"recommended\":\"rewritten title or null\"},\"bullet_quality\":{\"strengths\":[],\"issues\":[],\"recommended\":[\"bullet 1\",\"bullet 2\",\"bullet 3\",\"bullet 4\",\"bullet 5\"] or null},\"backend_keywords\":{\"strengths\":[],\"issues\":[],\"recommended\":\"rewritten keywords or null\"},\"keyword_coverage\":{\"missing_keywords\":[],\"present_keywords\":[]},\"brand_compliance\":{\"passes\":[],\"violations\":[],\"recommended\":\"specific fixes or null\"},\"competitiveness\":{\"notes\":[]},\"completeness\":{\"notes\":[]}},\"top_actions\":[\"action1\",\"action2\",\"action3\"]}";
+      const auditUserMsg = "Audit this Amazon listing:" + (auditAsin.trim() ? "\nASIN/Model: " + auditAsin.trim() : "") + (auditTitle.trim() ? "\nTitle: " + auditTitle.trim() : "") + (auditBullets.trim() ? "\nBullet Points:\n" + auditBullets.trim() : "") + (auditBackendKw.trim() ? "\nBackend Keywords:\n" + auditBackendKw.trim() : "") + productCtx + "\nFor any category scoring below 8, provide a concrete recommended rewrite.\nRespond ONLY with valid JSON.";
       const res = await fetch("/api/messages", {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: auditSystem, messages: [{ role: "user", content: auditUserMsg }] })
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0.3, system: auditSystem, messages: [{ role: "user", content: auditUserMsg }] })
       });
       if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
       const data = await res.json();
@@ -2782,11 +2782,58 @@ export default function App() {
             {categories.map(cat => {
               const detail = auditResults.details?.[cat.key];
               if (!detail) return null;
+              const score = auditResults.scores?.[cat.key] || 0;
               const items = [...(detail.strengths || []).map(s => ({ text: s, type: "good" })), ...(detail.issues || []).map(s => ({ text: s, type: "issue" })), ...(detail.passes || []).map(s => ({ text: s, type: "good" })), ...(detail.violations || []).map(s => ({ text: s, type: "issue" })), ...(detail.missing_keywords || []).map(s => ({ text: "Missing: " + s, type: "issue" })), ...(detail.present_keywords || []).map(s => ({ text: "Present: " + s, type: "good" })), ...(detail.notes || []).map(s => ({ text: s, type: "note" }))];
-              if (!items.length) return null;
-              return (<div key={cat.key} style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>{cat.label}</div>
+              const rec = detail.recommended;
+              if (!items.length && !rec) return null;
+              return (<div key={cat.key} style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.06em" }}>{cat.label}</div>
+                  {score < 8 && <span style={{ fontSize: 9, fontWeight: 600, color: "#d97706", background: "rgba(217,119,6,0.1)", padding: "1px 6px", borderRadius: 3 }}>Needs improvement</span>}
+                </div>
                 {items.map((item, i) => <div key={i} style={{ fontSize: 12, color: item.type === "issue" ? "#dc2626" : item.type === "good" ? "#16a34a" : "#666", padding: "3px 0", display: "flex", gap: 6 }}><span>{item.type === "good" ? "\u2713" : item.type === "issue" ? "\u2717" : "\u2022"}</span>{item.text}</div>)}
+                {/* Recommended rewrite/fix */}
+                {rec && (
+                  <div style={{ marginTop: 10, background: "#fffbf5", border: "1px solid #ffe8c4", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#d97706", textTransform: "uppercase", letterSpacing: "0.06em" }}>Recommended {cat.key === "bullet_quality" ? "Bullets" : cat.key === "backend_keywords" ? "Keywords" : cat.key === "title_seo" ? "Title" : "Fix"}</div>
+                      <button onClick={() => {
+                        const text = Array.isArray(rec) ? rec.join("\n") : rec;
+                        copy(text, "audit-rec-" + cat.key);
+                      }} style={{ padding: "3px 10px", background: copied === "audit-rec-" + cat.key ? "#16a34a" : MAROON, border: "none", borderRadius: 4, color: "#fff", fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                        {copied === "audit-rec-" + cat.key ? "\u2713 Copied" : "Copy"}
+                      </button>
+                    </div>
+                    {Array.isArray(rec) ? rec.map((line, i) => (
+                      <div key={i} style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#555", lineHeight: 1.7, padding: "4px 0", borderBottom: i < rec.length - 1 ? "1px solid #f5ead6" : "none" }}>
+                        <span style={{ color: "#d97706", fontWeight: 700, marginRight: 6 }}>{i + 1}.</span>{line}
+                      </div>
+                    )) : (
+                      <div style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#555", lineHeight: 1.7 }}>{rec}</div>
+                    )}
+                    {/* Apply button for title */}
+                    {cat.key === "title_seo" && typeof rec === "string" && (
+                      <button onClick={() => { setAuditTitle(rec); setToast("Title updated with recommendation"); setTimeout(() => setToast(null), 2000); }}
+                        style={{ marginTop: 8, padding: "5px 12px", background: "#d97706", border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                        Apply to Title Field
+                      </button>
+                    )}
+                    {/* Apply button for bullets */}
+                    {cat.key === "bullet_quality" && Array.isArray(rec) && (
+                      <button onClick={() => { setAuditBullets(rec.join("\n")); setToast("Bullets updated with recommendations"); setTimeout(() => setToast(null), 2000); }}
+                        style={{ marginTop: 8, padding: "5px 12px", background: "#d97706", border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                        Apply to Bullets Field
+                      </button>
+                    )}
+                    {/* Apply button for backend keywords */}
+                    {cat.key === "backend_keywords" && typeof rec === "string" && (
+                      <button onClick={() => { setAuditBackendKw(rec); setToast("Backend keywords updated with recommendation"); setTimeout(() => setToast(null), 2000); }}
+                        style={{ marginTop: 8, padding: "5px 12px", background: "#d97706", border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                        Apply to Keywords Field
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>);
             })}
           </div>);
