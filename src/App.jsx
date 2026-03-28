@@ -1406,9 +1406,9 @@ export default function App() {
               { key: "title_optimizer", label: "Marketplace Titles", icon: "\u270F\uFE0F" },
               { key: "bullet_points", label: "Bullet Points", icon: "\u{1F4DD}" },
               { key: "backend_keywords", label: "Backend Keywords", icon: "\u{1F50D}" },
+              { key: "listing_audit", label: "Listing Audit", icon: "\u{1F4CB}" },
             ]},
             { group: "analyze", label: "Analyze", icon: "\u{1F4CA}", items: [
-              { key: "listing_audit", label: "Listing Audit", icon: "\u{1F4CB}" },
               { key: "competitor_analyzer", label: "Competitor Analyzer", icon: "\u{1F3C6}" },
             ]},
             { group: "reference", label: "Reference", icon: "\u{1F4D6}", items: [
