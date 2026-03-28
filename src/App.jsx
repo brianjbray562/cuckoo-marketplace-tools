@@ -687,6 +687,7 @@ export default function App() {
   const [bkFeatures, setBkFeatures] = useState({});
   const [bkModelNumber, setBkModelNumber] = useState("");
   const [bkCurrentTitle, setBkCurrentTitle] = useState(""); // current listing title to exclude words from
+  const [bkCurrentBullets, setBkCurrentBullets] = useState(""); // current bullet points to exclude words from
   const [bkResults, setBkResults] = useState(null);
   const [bkLoading, setBkLoading] = useState(false);
   const [bkError, setBkError] = useState(null);
@@ -1051,14 +1052,15 @@ export default function App() {
       const productDesc = "CUCKOO " + catCfg.label + ". " + fieldDescs + ". Selected features: " + (featureList || "none") + ". Model: " + (bkModelNumber || "not specified") + ".";
 
       const titleExclusion = bkCurrentTitle.trim() ? "\n\nCURRENT LISTING TITLE (do NOT repeat any of these words in backend keywords — Amazon already indexes them from the title):\n\"" + bkCurrentTitle.trim() + "\"" : "";
+      const bulletExclusion = bkCurrentBullets.trim() ? "\n\nCURRENT BULLET POINTS (do NOT repeat any of these words in backend keywords — Amazon already indexes them from bullet points):\n" + bkCurrentBullets.trim() : "";
 
       const competitorLine = catCfg.competitors ? "\n1. COMPETITOR BRAND NAMES (highest priority): " + catCfg.competitors : "";
       const spanishLine = catCfg.spanishTerms ? "\n2. ALTERNATE LANGUAGE TERMS: " + catCfg.spanishTerms : "";
       const synonymLine = catCfg.synonyms ? "\n3. SYNONYM PHRASES not in the title: " + catCfg.synonyms : "";
 
-      const bkSystemPrompt = "Amazon backend keyword specialist for CUCKOO Electronics America. Generate hidden search terms for a CUCKOO " + catCfg.label + " listing (500 byte max). Prioritize:" + competitorLine + spanishLine + synonymLine + "\n- Feature/spec terms not in the title\n- Use-case synonyms shoppers search\nRules: space-separated only, no punctuation, no words already in listing title, no ASINs or promo phrases, stay under 500 bytes.\nRespond ONLY with valid JSON: {\"keywords\":\"space-separated string\",\"byte_count\":0,\"strategy\":[\"brief explanation\"],\"excluded\":[]}";
+      const bkSystemPrompt = "Amazon backend keyword specialist for CUCKOO Electronics America. Generate hidden search terms for a CUCKOO " + catCfg.label + " listing (500 byte max). Prioritize:" + competitorLine + spanishLine + synonymLine + "\n- Feature/spec terms not in the title or bullet points\n- Use-case synonyms shoppers search\nRules: space-separated only, no punctuation, no words already in listing title or bullet points, no ASINs or promo phrases, stay under 500 bytes.\nRespond ONLY with valid JSON: {\"keywords\":\"space-separated string\",\"byte_count\":0,\"strategy\":[\"brief explanation\"],\"excluded\":[]}";
 
-      const bkUserMsg = "Generate Amazon backend keywords for this product:\n" + productDesc + titleExclusion + "\nRespond ONLY with valid JSON.";
+      const bkUserMsg = "Generate Amazon backend keywords for this product:\n" + productDesc + titleExclusion + bulletExclusion + "\nRespond ONLY with valid JSON.";
 
       const res = await fetch("/api/messages", {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: bkAbort.signal,
@@ -1102,7 +1104,7 @@ export default function App() {
       setBkLoading(false);
       bkAbortRef.current = null;
     }
-  }, [bkCategory, bkFeatures, bkModelNumber, bkCurrentTitle]);
+  }, [bkCategory, bkFeatures, bkModelNumber, bkCurrentTitle, bkCurrentBullets]);
 
   // Bullet point generator
   const generateBulletPoints = useCallback(async () => {
@@ -2067,6 +2069,7 @@ export default function App() {
           <button onClick={() => {
             const model = bpResults._productSku || bpModel.trim();
             if (model) { bkAutoFill(model); }
+            if (bpResults.bullets?.length) setBkCurrentBullets(bpResults.bullets.map(b => b.heading + ": " + b.text).join("\n"));
             setPage("backend_keywords"); window.scrollTo(0, 0);
           }} style={{ width: "100%", marginTop: 16, padding: 14, background: MAROON, border: "none", borderRadius: 10, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(107,28,35,0.2)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             Next: Generate Backend Keywords {"\u2192"}
@@ -2116,6 +2119,17 @@ export default function App() {
               style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
               onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
             {bkCurrentTitle.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{bkCurrentTitle.trim().split(/\s+/).length} words will be excluded from backend keywords</div>}
+          </div>
+
+          {/* Bullet Points */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Bullet Points <span style={{ fontWeight: 400, color: "#bbb" }}>(words in bullets will also be excluded from backend keywords)</span></label>
+            <textarea value={bkCurrentBullets} onChange={e => setBkCurrentBullets(e.target.value)}
+              placeholder="Paste your current bullet points here (one per line)..."
+              rows={4}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {bkCurrentBullets.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{bkCurrentBullets.trim().split(/\s+/).length} words will be excluded from backend keywords</div>}
           </div>
 
           {/* Model Number */}
