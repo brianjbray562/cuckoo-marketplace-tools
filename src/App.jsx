@@ -2965,7 +2965,7 @@ export default function App() {
       {enlargedImage && (
         <div onClick={() => setEnlargedImage(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", backdropFilter: "blur(4px)" }}>
           <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: 24, maxWidth: "90vw", maxHeight: "90vh", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, boxShadow: "0 16px 48px rgba(0,0,0,0.3)", cursor: "default" }}>
-            <img src={enlargedImage.src} alt={enlargedImage.sku} style={{ maxWidth: "70vw", maxHeight: "70vh", objectFit: "contain", borderRadius: 8 }} />
+            <img src={enlargedImage.src} alt={enlargedImage.sku} style={{ width: 240, height: 240, objectFit: "contain", borderRadius: 8, imageRendering: "auto" }} />
             <div style={{ fontSize: 14, fontWeight: 700, color: MAROON, fontFamily: "'IBM Plex Mono',monospace" }}>{enlargedImage.sku}</div>
             <button onClick={() => setEnlargedImage(null)} style={{ padding: "6px 20px", background: "#e8e5e0", border: "none", borderRadius: 6, fontSize: 12, color: "#666", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontWeight: 600 }}>Close</button>
           </div>
