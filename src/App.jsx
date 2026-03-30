@@ -2947,16 +2947,26 @@ export default function App() {
               <p style={{ fontSize: 11, color: "#aaa", margin: 0 }}>{mergedAsinData.length} ASINs{dbExtras.length > 0 ? ` (${dbExtras.length} from custom DB)` : ""} · March 2026</p>
             </div>
 
-            {/* Search */}
-            <div style={{ marginBottom: 16 }}>
+            {/* Search + Export */}
+            <div style={{ marginBottom: 16, display: "flex", gap: 10, alignItems: "center" }}>
               <input
                 value={asinSearch} onChange={e => setAsinSearch(e.target.value)}
                 placeholder="Search by ASIN or SKU..."
-                style={{ width: "100%", padding: "10px 16px", background: "#fff", border: "1px solid #e8e5e0", borderRadius: 8, fontSize: 13, fontFamily: "'Outfit',sans-serif", outline: "none", boxSizing: "border-box", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}
+                style={{ flex: 1, padding: "10px 16px", background: "#fff", border: "1px solid #e8e5e0", borderRadius: 8, fontSize: 13, fontFamily: "'Outfit',sans-serif", outline: "none", boxSizing: "border-box", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}
                 onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"}
               />
-              {asinSearch && <div style={{ fontSize: 11, color: "#aaa", marginTop: 6 }}>{filtered.length} result{filtered.length !== 1 ? "s" : ""}</div>}
+              <button onClick={() => {
+                const rows = [["ASIN", "SKU"].join(","), ...filtered.map(r => [r.asin, r.sku].join(","))];
+                const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = "cuckoo-asin-sku" + (asinSearch.trim() ? "-filtered" : "") + "-" + new Date().toISOString().slice(0, 10) + ".csv";
+                a.click(); URL.revokeObjectURL(a.href);
+              }} style={{ padding: "10px 16px", background: MAROON, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", whiteSpace: "nowrap" }}>
+                {"\u2B07"} Export CSV ({filtered.length})
+              </button>
             </div>
+            {asinSearch && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 12 }}>{filtered.length} result{filtered.length !== 1 ? "s" : ""}</div>}
 
             {/* Table */}
             <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
