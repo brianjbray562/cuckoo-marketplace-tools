@@ -709,6 +709,7 @@ export default function App() {
   const bkCatConfig = BK_CATEGORY_CONFIG[bkCategory] || BK_CATEGORY_CONFIG.other;
   // Bullet point generator state
   const [bpModel, setBpModel] = useState("");
+  const [bpTitle, setBpTitle] = useState(""); // Amazon title to align bullets with
   const [bpMarketplace, setBpMarketplace] = useState("amazon");
   const [bpResults, setBpResults] = useState(null);
   const [bpLoading, setBpLoading] = useState(false);
@@ -1142,7 +1143,8 @@ export default function App() {
       const productCtx = product ? "\n\n" + formatProductContext(product) : "";
       const mpConfig = MARKETPLACES[bpMarketplace] || MARKETPLACES.amazon;
       const bpSystemPrompt = "You are a senior ecommerce copywriter at CUCKOO Electronics America. Generate 5 bullet points for a product listing. Each bullet should start with a CAPITALIZED benefit phrase (2-4 words), followed by a colon and descriptive text. Bullet points should cover: key technology/feature, capacity/convenience, material/quality, ease of use, and brand trust/warranty. For Amazon: max 500 chars per bullet, keyword-rich. For other marketplaces: adapt tone per guidelines. Only use verified product data — never invent features.\nRespond ONLY with valid JSON: {\"bullets\":[{\"heading\":\"...\",\"text\":\"...\"}],\"marketplace\":\"...\",\"char_counts\":[]}";
-      const bpUserMsg = "Generate 5 bullet points for this CUCKOO product on " + mpConfig.name + ":\nModel: " + bpModel.trim() + productCtx + "\nMarketplace: " + mpConfig.name + "\n" + mpConfig.guidelines + "\nRespond ONLY with valid JSON.";
+      const titleCtx = bpTitle.trim() ? "\n\nLISTING TITLE (align bullet points with the keywords and features highlighted in this title for SEO consistency):\n\"" + bpTitle.trim() + "\"" : "";
+      const bpUserMsg = "Generate 5 bullet points for this CUCKOO product on " + mpConfig.name + ":\nModel: " + bpModel.trim() + productCtx + titleCtx + "\nMarketplace: " + mpConfig.name + "\n" + mpConfig.guidelines + "\nRespond ONLY with valid JSON.";
       const res = await fetch("/api/messages", {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
         body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: bpSystemPrompt, messages: [{ role: "user", content: bpUserMsg }] })
@@ -1167,7 +1169,7 @@ export default function App() {
       setBpLoading(false);
       bpAbortRef.current = null;
     }
-  }, [bpModel, bpMarketplace]);
+  }, [bpModel, bpTitle, bpMarketplace]);
 
   // Listing audit scorecard
   const runListingAudit = useCallback(async () => {
@@ -1973,8 +1975,11 @@ export default function App() {
           <button onClick={() => {
             const model = results._productSku || (inputMode === "model" ? amazonTitle.trim() : "");
             if (model) setBpModel(model);
-            // Pre-fill BK current title for downstream pipeline
-            if (results.amazon_audit?.suggested_title) setBkCurrentTitle(results.amazon_audit.suggested_title);
+            // Pre-fill bullet point title and BK current title for downstream pipeline
+            if (results.amazon_audit?.suggested_title) {
+              setBpTitle(results.amazon_audit.suggested_title);
+              setBkCurrentTitle(results.amazon_audit.suggested_title);
+            }
             setPage("bullet_points"); window.scrollTo(0, 0);
           }} style={{ width: "100%", marginTop: 10, padding: 14, background: MAROON, border: "none", borderRadius: 10, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(107,28,35,0.2)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             Next: Generate Bullet Points {"\u2192"}
@@ -2008,6 +2013,16 @@ export default function App() {
             {m && <div style={{ marginTop: 6, fontSize: 10, color: "#16a34a", fontWeight: 600 }}>{"\u2713"} Matched: {m.sku} — {m.type}, {m.cupSize}, {m.color}</div>}
             {!m && bpModel.trim().length >= 3 && <div style={{ marginTop: 6, fontSize: 10, color: "#d97706" }}>Model not in database — bullet points will use general CUCKOO product knowledge</div>}
           </>); })()}
+        </div>
+
+        {/* Amazon Title */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Amazon Title <span style={{ fontWeight: 400, color: "#bbb", textTransform: "none", letterSpacing: 0 }}>(optional — bullets will align with title keywords)</span></label>
+          <textarea value={bpTitle} onChange={e => setBpTitle(e.target.value)}
+            placeholder="Paste your Amazon listing title here to align bullet point keywords..."
+            rows={2}
+            style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
         </div>
 
         {/* Marketplace selector */}
