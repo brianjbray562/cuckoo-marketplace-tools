@@ -1205,21 +1205,56 @@ export default function App() {
         "FEATURE PHRASES: nonstick inner pot, stainless steel inner pot, keep warm, delay timer, fuzzy logic, steamer basket, multi cooker\n\n" +
         "AMAZON TITLE REQUIREMENTS (Source: Amazon Seller Central, updated Jan 2025):\n" +
         "- Hard limit: 200 chars. Title Case. Prohibited: !, $, ?, _, {, }, ^. Same word max twice. No promo phrases. Brand first. Numerals for numbers.\n\n" +
-        "SCORING CRITERIA (each 0-10):\n" +
-        "title_seo: keyword coverage against the AMAZON KEYWORD DATA above, char usage toward 200-char limit, CUCKOO title structure rules\n" +
-        "bullet_quality: benefit-driven, keyword-rich, complete, 5 bullets, max 500 chars each\n" +
-        "backend_keywords: space-separated, no punctuation, under 500 bytes, no ASINs/promo, competitor brands included, alternate language terms. IMPORTANT: strategic repetition of high-volume keywords from the title or bullets is GOOD — exact-match overlap strengthens search visibility. Do NOT penalize keyword overlap between title/bullets/backend. Only penalize if the entire backend string is just a copy of the title with no additional terms\n" +
-        "keyword_coverage: high-volume exact-match terms from the AMAZON KEYWORD DATA above present across title + bullets + backend combined — reward when the same high-volume phrase appears in multiple fields as this strengthens exact-match search ranking. Score against the specific keyword list provided, not general knowledge\n" +
-        "brand_compliance: CUCKOO title rules above — Uncooked/Cooked, no & Warmer, tech frontloaded, keyword restrictions respected\n" +
-        "competitiveness: vs top rice cooker listings on Amazon\n" +
-        "completeness: all fields filled — title, 5 bullets, backend keywords\n" +
-        "Give an overall_score (weighted average).\n\n" +
+        "SCORING RUBRIC (use these exact anchors — do NOT deviate):\n\n" +
+        "title_seo (keyword coverage against AMAZON KEYWORD DATA above + char usage + structure):\n" +
+        "  10: 180-200 chars, 6+ exact-match keyword phrases from data above, perfect CUCKOO structure\n" +
+        "  8-9: 160-179 chars, 4-5 exact-match phrases, minor structure issues\n" +
+        "  6-7: 120-159 chars, 2-3 exact-match phrases, some structure issues\n" +
+        "  4-5: 80-119 chars, 1 exact-match phrase, multiple structure issues\n" +
+        "  0-3: under 80 chars or no exact-match phrases from the keyword data\n\n" +
+        "bullet_quality (benefit-driven, keyword-rich, complete):\n" +
+        "  10: 5 bullets, each 200-500 chars, keywords from data above woven in, benefit-led, no fluff\n" +
+        "  8-9: 5 bullets, mostly 150+ chars, good keyword inclusion, minor improvements possible\n" +
+        "  6-7: 4-5 bullets, some under 150 chars, weak keyword usage or feature-led instead of benefit-led\n" +
+        "  4-5: 3-4 bullets, thin content, few keywords\n" +
+        "  0-3: fewer than 3 bullets or very thin/generic content\n\n" +
+        "backend_keywords (space-separated, no punctuation, under 500 bytes, no ASINs/promo):\n" +
+        "  10: 400-500 bytes, competitor brands included, alternate language terms, strong synonym coverage beyond title/bullets. Strategic repetition of high-volume keywords from title/bullets is GOOD — exact-match overlap strengthens search visibility. Do NOT penalize keyword overlap. Only penalize if the entire string is just a copy of the title.\n" +
+        "  8-9: 300-499 bytes, good synonym/competitor coverage, minor gaps\n" +
+        "  6-7: 200-299 bytes, some useful terms but missing competitor brands or alternate languages\n" +
+        "  4-5: under 200 bytes or contains punctuation/ASINs/promo terms\n" +
+        "  0-3: empty, mostly duplicate of title, or contains prohibited content\n\n" +
+        "keyword_coverage (exact-match terms from AMAZON KEYWORD DATA above across ALL fields combined — title + bullets + backend):\n" +
+        "  Count the SPECIFIC phrases from the keyword data above that appear as exact matches across all fields combined. Reward the same phrase appearing in multiple fields.\n" +
+        "  10: 15+ unique keyword phrases from the data above found across all fields\n" +
+        "  8-9: 11-14 unique phrases found\n" +
+        "  6-7: 7-10 unique phrases found\n" +
+        "  4-5: 4-6 unique phrases found\n" +
+        "  0-3: fewer than 4 unique phrases found\n\n" +
+        "brand_compliance (CUCKOO rules above — count violations):\n" +
+        "  10: zero violations of any CUCKOO rule or keyword restriction\n" +
+        "  8-9: 1 minor violation (e.g. missing hyphen in cup count)\n" +
+        "  6-7: 2 violations or 1 major violation (e.g. missing Uncooked/Cooked, uses banned term)\n" +
+        "  4-5: 3+ violations\n" +
+        "  0-3: fundamental violations (wrong brand position, invented features, \"& Warmer\")\n\n" +
+        "competitiveness (vs top Amazon rice cooker listings — structure, keyword density, completeness):\n" +
+        "  10: title + bullets + backend are at or above the quality of top-5 rice cooker listings on Amazon\n" +
+        "  8-9: competitive with top-10 listings, minor gaps\n" +
+        "  6-7: average quality, missing elements that top listings include\n" +
+        "  4-5: below average, significant gaps vs competitors\n" +
+        "  0-3: not competitive\n\n" +
+        "completeness (all listing fields filled):\n" +
+        "  10: title present + 5 bullets present + backend keywords present\n" +
+        "  7: one field missing (e.g. no backend keywords)\n" +
+        "  4: two fields missing\n" +
+        "  0: only one field provided\n\n" +
+        "overall_score: weighted average — title_seo 25%, keyword_coverage 20%, bullet_quality 20%, backend_keywords 15%, brand_compliance 10%, competitiveness 5%, completeness 5%.\n\n" +
         "For EVERY category that scores below 8, provide a concrete 'recommended' rewrite or fix. For title_seo: provide a rewritten title following all CUCKOO rules and maximizing keyword coverage from the data above. For bullet_quality: provide rewritten bullets (all 5). For backend_keywords: provide a rewritten keyword string. For keyword_coverage: list the exact missing high-volume terms from the keyword data above. For brand_compliance: provide the specific fix for each violation. For completeness: list what's missing.\n\n" +
         "Respond ONLY with valid JSON: {\"overall_score\":<0-10>,\"scores\":{\"title_seo\":<n>,\"bullet_quality\":<n>,\"backend_keywords\":<n>,\"keyword_coverage\":<n>,\"brand_compliance\":<n>,\"competitiveness\":<n>,\"completeness\":<n>},\"details\":{\"title_seo\":{\"strengths\":[],\"issues\":[],\"recommended\":\"rewritten title or null\"},\"bullet_quality\":{\"strengths\":[],\"issues\":[],\"recommended\":[\"bullet 1\",\"bullet 2\",\"bullet 3\",\"bullet 4\",\"bullet 5\"] or null},\"backend_keywords\":{\"strengths\":[],\"issues\":[],\"recommended\":\"rewritten keywords or null\"},\"keyword_coverage\":{\"missing_keywords\":[],\"present_keywords\":[]},\"brand_compliance\":{\"passes\":[],\"violations\":[],\"recommended\":\"specific fixes or null\"},\"competitiveness\":{\"notes\":[]},\"completeness\":{\"notes\":[]}},\"top_actions\":[\"action1\",\"action2\",\"action3\"]}";
       const auditUserMsg = "Audit this Amazon listing:" + (auditAsin.trim() ? "\nASIN/Model: " + auditAsin.trim() : "") + (auditTitle.trim() ? "\nTitle: " + auditTitle.trim() : "") + (auditBullets.trim() ? "\nBullet Points:\n" + auditBullets.trim() : "") + (auditBackendKw.trim() ? "\nBackend Keywords:\n" + auditBackendKw.trim() : "") + productCtx + "\nFor any category scoring below 8, provide a concrete recommended rewrite.\nRespond ONLY with valid JSON.";
       const res = await fetch("/api/messages", {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0.3, system: auditSystem, messages: [{ role: "user", content: auditUserMsg }] })
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0, system: auditSystem, messages: [{ role: "user", content: auditUserMsg }] })
       });
       if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
       const data = await res.json();
