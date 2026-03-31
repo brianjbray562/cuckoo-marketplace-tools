@@ -1087,7 +1087,7 @@ export default function App() {
       const res = await fetch("/api/messages", {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: bkAbort.signal,
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514", max_tokens: 300, temperature: 0.3,
+          model: "claude-sonnet-4-20250514", max_tokens: 800, temperature: 0.3,
           system: bkSystemPrompt,
           messages: [{ role: "user", content: bkUserMsg }]
         })
@@ -1098,8 +1098,18 @@ export default function App() {
       const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
       if (!text) throw new Error("Empty response from API");
       let parsed;
-      try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
-      catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Could not parse response as JSON"); }
+      const cleaned = text.replace(/```json|```/g, "").trim();
+      try { parsed = JSON.parse(cleaned); }
+      catch(e) {
+        const m = cleaned.match(/\{[\s\S]*\}/);
+        if (m) { try { parsed = JSON.parse(m[0]); } catch(e2) {} }
+        if (!parsed) {
+          // Try to salvage truncated JSON by extracting keywords field
+          const kwMatch = cleaned.match(/"keywords"\s*:\s*"([^"]*)"/);
+          if (kwMatch) { parsed = { keywords: kwMatch[1], byte_count: 0, strategy: ["Recovered from truncated response"], excluded: [] }; }
+          else throw new Error("Could not parse response as JSON. Raw: " + cleaned.slice(0, 150));
+        }
+      }
       // Verify byte count client-side and hard-cap at 500 bytes
       parsed.byte_count = new TextEncoder().encode(parsed.keywords).length;
       if (parsed.byte_count > 500) {
