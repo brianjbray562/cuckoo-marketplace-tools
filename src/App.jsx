@@ -739,6 +739,8 @@ export default function App() {
   const ctTimerRef = useRef(null);
   // Listing data extractor state
   const [ldUrl, setLdUrl] = useState("");
+  const [ldInputMode, setLdInputMode] = useState("url"); // "url" or "pdf"
+  const [ldPdfFile, setLdPdfFile] = useState(null); // { name, base64 }
   const [ldResults, setLdResults] = useState(null);
   const [ldLoading, setLdLoading] = useState(false);
   const [ldError, setLdError] = useState(null);
@@ -1339,8 +1341,10 @@ export default function App() {
   }, [ctCuckooTitle, ctCompetitorTitles]);
 
   // Listing data extractor
+  const LD_EXTRACT_FIELDS = "Extract these fields (use null for any field not found):\n- title: Full product title or product name\n- brand: Brand name\n- price: Current price (as string with currency symbol) if available\n- model_number: Model or item number\n- asin: ASIN (Amazon only)\n- upc: UPC/EAN if available\n- bullet_points: Array of feature bullet points or key features\n- description: Product description text\n- rating: Average star rating (number) if available\n- review_count: Number of reviews (number) if available\n- availability: In stock / Out of stock / etc.\n- seller: Sold by / seller name\n- category: Product category or breadcrumb\n- dimensions: Product dimensions if listed\n- weight: Product weight if listed\n- color: Color/variant\n- images: Array of image URLs if found\n- specifications: Object of any additional spec key-value pairs (e.g. wattage, capacity, material, voltage, cooking modes, inner pot type)\n- marketplace: Which marketplace or source this data is from (Amazon, Walmart, Target, Best Buy, PDF Manual, Brand Website, etc.)\n- url: The URL or filename of the source\n\nRespond ONLY with valid JSON matching this schema. Do NOT include markdown formatting or code fences. Include as much data as you can find.";
   const fetchListingData = useCallback(async () => {
-    if (ldLoading || !ldUrl.trim()) return;
+    const isPdf = ldInputMode === "pdf";
+    if (ldLoading || (!isPdf && !ldUrl.trim()) || (isPdf && !ldPdfFile)) return;
     setLdLoading(true); setLdError(null); setLdResults(null); setLdElapsed(0);
     const startTime = Date.now();
     ldTimerRef.current = setInterval(() => setLdElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
@@ -1349,36 +1353,45 @@ export default function App() {
     ldAbortRef.current = controller;
     const timeoutId = setTimeout(() => controller.abort("timeout"), 90000);
     try {
-      const ldSystem = "You are a product listing data extraction specialist. The user will provide a marketplace product URL. Use the web_search tool to look up the product page, then extract ALL available structured product data.\n\nExtract these fields (use null for any field not found):\n- title: Full product title\n- brand: Brand name\n- price: Current price (as string with currency symbol)\n- model_number: Model or item number\n- asin: ASIN (Amazon only)\n- upc: UPC/EAN if available\n- bullet_points: Array of feature bullet points\n- description: Product description text\n- rating: Average star rating (number)\n- review_count: Number of reviews (number)\n- availability: In stock / Out of stock / etc.\n- seller: Sold by / seller name\n- category: Product category or breadcrumb\n- dimensions: Product dimensions if listed\n- weight: Product weight if listed\n- color: Color/variant\n- images: Array of image URLs if found\n- specifications: Object of any additional spec key-value pairs (e.g. wattage, capacity, material)\n- marketplace: Which marketplace this listing is from (Amazon, Walmart, Target, Best Buy, etc.)\n- url: The URL that was searched\n\nRespond ONLY with valid JSON matching this schema. Do NOT include markdown formatting or code fences. Include as much data as you can find from the listing.";
-      const ldUserMsg = "Extract all product listing data from this URL: " + ldUrl.trim();
+      let ldSystem, userContent, tools;
+      if (isPdf) {
+        ldSystem = "You are a product data extraction specialist. The user will provide a PDF document (a product manual, spec sheet, or brochure). Read the entire document and extract ALL available structured product data.\n\n" + LD_EXTRACT_FIELDS;
+        userContent = [
+          { type: "document", source: { type: "base64", media_type: "application/pdf", data: ldPdfFile.base64 }, cache_control: { type: "ephemeral" } },
+          { type: "text", text: "Extract all product data from this PDF document (" + ldPdfFile.name + "). Look through every page for product specifications, features, model numbers, and technical details. Respond ONLY with valid JSON." }
+        ];
+        tools = undefined;
+      } else {
+        ldSystem = "You are a product listing data extraction specialist. The user will provide a marketplace product URL. Use the web_search tool to look up the product page, then extract ALL available structured product data.\n\n" + LD_EXTRACT_FIELDS;
+        userContent = "Extract all product listing data from this URL: " + ldUrl.trim();
+        tools = [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }];
+      }
+      const body = { model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0, system: ldSystem, messages: [{ role: "user", content: userContent }] };
+      if (tools) body.tools = tools;
       const res = await fetch("/api/messages", {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0,
-          system: ldSystem,
-          messages: [{ role: "user", content: ldUserMsg }],
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }]
-        })
+        body: JSON.stringify(body)
       });
       if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
       const data = await res.json();
       if (data.error) throw new Error(data.error.message || "API error");
       const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
-      if (!text) throw new Error("Empty response — the URL may not be accessible");
+      if (!text) throw new Error(isPdf ? "Empty response — the PDF may not contain extractable product data" : "Empty response — the URL may not be accessible");
       let parsed;
       try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
       catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Could not parse structured data from response"); }
-      parsed._url = ldUrl.trim();
+      parsed._url = isPdf ? ldPdfFile.name : ldUrl.trim();
+      parsed._source = isPdf ? "pdf" : "url";
       setLdResults(parsed);
     } catch (e) {
-      if (e.name === "AbortError") { if (controller.signal.reason === "timeout") setLdError("Request timed out (90s). The URL may be unreachable or blocked. Please retry."); }
+      if (e.name === "AbortError") { if (controller.signal.reason === "timeout") setLdError("Request timed out (90s). Please retry."); }
       else setLdError("Error: " + (e.message || "Something went wrong."));
     } finally {
       clearTimeout(timeoutId);
       if (ldTimerRef.current) { clearInterval(ldTimerRef.current); ldTimerRef.current = null; }
       setLdLoading(false); ldAbortRef.current = null;
     }
-  }, [ldUrl]);
+  }, [ldUrl, ldInputMode, ldPdfFile]);
 
   const optimize = useCallback(async () => {
     const title = titleRef.current;
@@ -2858,15 +2871,25 @@ export default function App() {
       {page === "listing_extractor" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
         <div style={{ marginBottom: 16 }}>
           <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
-            Enter a <strong>marketplace product URL</strong> to extract structured listing data. Supports Amazon, Walmart, Target, Best Buy, and other major marketplaces. The tool uses web search to retrieve and parse the product page.
+            Extract structured product data from a <strong>marketplace URL</strong> or a <strong>PDF manual/spec sheet</strong>. Supports Amazon, Walmart, Target, Best Buy, brand websites, and uploaded product documents.
           </p>
           <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
-            Extracted data can be copied field-by-field or exported as JSON/CSV
+            Extracted data can be copied field-by-field, exported as JSON/CSV, or compared against CUCKOO products
           </p>
         </div>
 
+        {/* Input mode toggle */}
+        <div style={{ display: "flex", gap: 0, marginBottom: 16 }}>
+          {[{ key: "url", label: "URL", icon: "\u{1F310}" }, { key: "pdf", label: "PDF Upload", icon: "\u{1F4C4}" }].map(m => (
+            <button key={m.key} onClick={() => { setLdInputMode(m.key); setLdError(null); }}
+              style={{ flex: 1, padding: "10px 16px", background: ldInputMode === m.key ? MAROON : "#fff", border: `1px solid ${ldInputMode === m.key ? MAROON : "#e8e5e0"}`, borderRadius: m.key === "url" ? "8px 0 0 8px" : "0 8px 8px 0", color: ldInputMode === m.key ? "#fff" : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "all .15s", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <span>{m.icon}</span>{m.label}
+            </button>
+          ))}
+        </div>
+
         {/* URL Input */}
-        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+        {ldInputMode === "url" && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Product URL</label>
           <input value={ldUrl} onChange={e => setLdUrl(e.target.value)} placeholder="https://www.amazon.com/dp/B0... or any marketplace product URL"
             style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
@@ -2876,19 +2899,63 @@ export default function App() {
             try { const h = new URL(ldUrl.trim()).hostname.replace("www.", ""); return <div style={{ marginTop: 6, fontSize: 10, color: "#aaa" }}>Marketplace: {h}</div>; }
             catch { return <div style={{ marginTop: 6, fontSize: 10, color: "#e57373" }}>Invalid URL format</div>; }
           })()}
-        </div>
+        </div>}
+
+        {/* PDF Upload */}
+        {ldInputMode === "pdf" && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Product Manual / Spec Sheet (PDF)</label>
+          <div style={{ border: "2px dashed #e8e5e0", borderRadius: 8, padding: 24, textAlign: "center", cursor: "pointer", transition: "border-color .15s" }}
+            onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = MAROON; }}
+            onDragLeave={e => { e.currentTarget.style.borderColor = "#e8e5e0"; }}
+            onDrop={e => {
+              e.preventDefault(); e.currentTarget.style.borderColor = "#e8e5e0";
+              const file = e.dataTransfer.files[0];
+              if (file && file.type === "application/pdf") {
+                if (file.size > 25 * 1024 * 1024) { setLdError("PDF must be under 25 MB"); return; }
+                const reader = new FileReader();
+                reader.onload = () => { const b64 = reader.result.split(",")[1]; setLdPdfFile({ name: file.name, base64: b64 }); setLdError(null); };
+                reader.readAsDataURL(file);
+              } else { setLdError("Please upload a PDF file"); }
+            }}
+            onClick={() => { const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".pdf"; inp.onchange = e => {
+              const file = e.target.files[0];
+              if (file) {
+                if (file.size > 25 * 1024 * 1024) { setLdError("PDF must be under 25 MB"); return; }
+                const reader = new FileReader();
+                reader.onload = () => { const b64 = reader.result.split(",")[1]; setLdPdfFile({ name: file.name, base64: b64 }); setLdError(null); };
+                reader.readAsDataURL(file);
+              }
+            }; inp.click(); }}>
+            {ldPdfFile ? (
+              <div>
+                <div style={{ fontSize: 24, marginBottom: 6 }}>{"\u{1F4C4}"}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a1a", fontFamily: "'IBM Plex Mono',monospace" }}>{ldPdfFile.name}</div>
+                <div style={{ fontSize: 10, color: "#aaa", marginTop: 4 }}>Click or drag to replace</div>
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize: 24, marginBottom: 6 }}>{"\u{1F4E4}"}</div>
+                <div style={{ fontSize: 12, color: "#888" }}>Click to select or drag & drop a PDF</div>
+                <div style={{ fontSize: 10, color: "#bbb", marginTop: 4 }}>Product manuals, spec sheets, brochures (max 25 MB)</div>
+              </div>
+            )}
+          </div>
+          {ldPdfFile && <button onClick={() => setLdPdfFile(null)} style={{ marginTop: 8, background: "none", border: "none", fontSize: 11, color: "#dc2626", cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>Remove file</button>}
+        </div>}
 
         {/* Extract Button */}
         {(() => {
-          let validUrl = false; try { new URL(ldUrl.trim()); validUrl = true; } catch {}
-          const dis = ldLoading || !ldUrl.trim() || !validUrl;
+          let ready = false;
+          if (ldInputMode === "url") { try { new URL(ldUrl.trim()); ready = true; } catch {} }
+          else { ready = !!ldPdfFile; }
+          const dis = ldLoading || !ready;
           return (<>
             <button className="cuckoo-btn" disabled={dis} onClick={fetchListingData}
               style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: dis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
               {ldLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
                 <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
-                Extracting listing data...
-              </span>) : dis ? "Enter a valid product URL" : "Extract Listing Data"}
+                {ldInputMode === "pdf" ? "Extracting from PDF..." : "Extracting listing data..."}
+              </span>) : dis ? (ldInputMode === "pdf" ? "Upload a PDF to extract" : "Enter a valid product URL") : (ldInputMode === "pdf" ? "Extract from PDF" : "Extract Listing Data")}
             </button>
             {ldLoading && <div style={{ textAlign: "center", fontSize: 10, color: "#aaa", marginBottom: 12 }}>{ldElapsed}s
               <button onClick={() => { if (ldAbortRef.current) ldAbortRef.current.abort(); setLdLoading(false); setLdError("Cancelled."); if (ldTimerRef.current) { clearInterval(ldTimerRef.current); ldTimerRef.current = null; } }}
@@ -3106,12 +3173,12 @@ export default function App() {
 
         {!ldResults && !ldLoading && !ldError && (
           <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 10, padding: 24, fontSize: 12, color: "#aaa", textAlign: "center" }}>
-            Enter a product URL above and click Extract to retrieve listing data
+            {ldInputMode === "pdf" ? "Upload a PDF manual or spec sheet above to extract product data" : "Enter a product URL above and click Extract to retrieve listing data"}
           </div>
         )}
 
         <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
-          <span style={{ fontSize: 10, color: "#ccc" }}>Data extracted via web search {"\u00B7"} Results depend on page accessibility {"\u00B7"} Some marketplaces may block automated access</span>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Data extracted via {ldInputMode === "pdf" ? "PDF document analysis" : "web search"} {"\u00B7"} {ldInputMode === "pdf" ? "Supports product manuals, spec sheets, and brochures" : "Results depend on page accessibility \u00B7 Some marketplaces may block automated access"}</span>
         </div>
       </div>}
 
