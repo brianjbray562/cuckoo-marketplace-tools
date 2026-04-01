@@ -746,6 +746,8 @@ export default function App() {
   const ldAbortRef = useRef(null);
   const ldTimerRef = useRef(null);
   const [ldCopied, setLdCopied] = useState(null);
+  const [ldCompareModel, setLdCompareModel] = useState("");
+  const [ldCompareSearch, setLdCompareSearch] = useState("");
   // Dark mode
   const [darkMode, setDarkMode] = useState(false);
   useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} })(); }, []);
@@ -3018,6 +3020,89 @@ export default function App() {
             </div>
           </div>);
         })()}
+
+        {/* Compare with CUCKOO Product */}
+        {ldResults && (
+          <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginTop: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Compare with CUCKOO Product</div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>
+              <input value={ldCompareSearch} onChange={e => setLdCompareSearch(e.target.value)} placeholder="Search CUCKOO models..."
+                style={{ flex: 1, padding: "8px 12px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 6, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", color: "#1a1a1a", boxSizing: "border-box" }}
+                onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+              {ldCompareModel && <button onClick={() => { setLdCompareModel(""); setLdCompareSearch(""); }} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "6px 12px", fontSize: 11, color: "#888", cursor: "pointer" }}>Clear</button>}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 140, overflowY: "auto", marginBottom: ldCompareModel ? 16 : 0 }}>
+              {Object.entries(PRODUCT_DB).filter(([sku, d]) => {
+                if (!ldCompareSearch.trim()) return true;
+                const q = ldCompareSearch.toLowerCase();
+                return sku.toLowerCase().includes(q) || d.type.toLowerCase().includes(q) || (d.cupSize || "").toLowerCase().includes(q) || (d.color || "").toLowerCase().includes(q);
+              }).map(([sku, d]) => {
+                const sel = ldCompareModel === sku;
+                return (
+                  <button key={sku} onClick={() => { setLdCompareModel(sel ? "" : sku); setLdCompareSearch(""); }}
+                    style={{ padding: "5px 10px", background: sel ? MAROON : "#fff", border: `1.5px solid ${sel ? MAROON : "#e0ddd8"}`, borderRadius: 6, cursor: "pointer", color: sel ? "#fff" : "#555", fontSize: 11, fontWeight: 500, fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s" }}>
+                    {sku} <span style={{ fontSize: 9, opacity: 0.7 }}>{d.type}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Side-by-side comparison table */}
+            {ldCompareModel && (() => {
+              const r = ldResults;
+              const cuckoo = PRODUCT_DB[ldCompareModel];
+              if (!cuckoo) return null;
+              const cuckooFeats = (cuckoo.features || []).join(", ");
+              const compRows = [
+                { label: "Title", extracted: r.title, cuckoo: ldCompareModel + " — " + cuckoo.type },
+                { label: "Brand", extracted: r.brand, cuckoo: "CUCKOO" },
+                { label: "Price", extracted: r.price, cuckoo: "—" },
+                { label: "Type", extracted: r.specifications?.Type || r.specifications?.type || "—", cuckoo: cuckoo.type },
+                { label: "Heating", extracted: r.specifications?.Heating || r.specifications?.["Heating Method"] || r.specifications?.heating || "—", cuckoo: cuckoo.heating || "—" },
+                { label: "Pressure", extracted: r.specifications?.Pressure || r.specifications?.pressure || "—", cuckoo: cuckoo.pressure ? "Yes" : "No" },
+                { label: "Cup Size", extracted: r.specifications?.["Cup Size"] || r.specifications?.Capacity || r.specifications?.capacity || "—", cuckoo: cuckoo.cupSize || "—" },
+                { label: "Color", extracted: r.color || "—", cuckoo: cuckoo.color || "—" },
+                { label: "Inner Pot", extracted: r.specifications?.["Inner Pot"] || r.specifications?.["Inner Pot Material"] || "—", cuckoo: cuckoo.innerPot || "—" },
+                { label: "Cooking Modes", extracted: r.specifications?.["Cooking Modes"] || r.specifications?.["Menu Options"] || "—", cuckoo: cuckoo.cookingModes ? (cuckoo.cookingModes + (cuckoo.otherMenuModes ? " (+" + cuckoo.otherMenuModes + " other)" : "")) : "—" },
+                { label: "Features", extracted: r.bullet_points ? r.bullet_points.slice(0, 3).join("; ") : "—", cuckoo: cuckooFeats || "—" },
+                { label: "Country of Manufacture", extracted: r.specifications?.["Country of Origin"] || r.specifications?.["Made In"] || "—", cuckoo: cuckoo.mfg || "—" },
+                { label: "Rating", extracted: r.rating != null ? r.rating + " / 5" : "—", cuckoo: "—" },
+                { label: "Reviews", extracted: r.review_count != null ? r.review_count.toLocaleString() : "—", cuckoo: "—" },
+                { label: "ASIN", extracted: r.asin || "—", cuckoo: cuckoo.asin || "—" },
+              ];
+              return (
+                <div style={{ border: "1px solid #e8e5e0", borderRadius: 10, overflow: "hidden" }}>
+                  {/* Table header */}
+                  <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr", borderBottom: "2px solid #e8e5e0" }}>
+                    <div style={{ padding: "12px 14px", background: "#faf9f7", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.06em" }}>Spec</div>
+                    <div style={{ padding: "12px 14px", background: "#faf9f7", borderLeft: "1px solid #f0eeeb", textAlign: "center" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>{r.brand || "Competitor"}</div>
+                      <div style={{ fontSize: 9, color: "#aaa" }}>{r.marketplace || "Extracted"}</div>
+                    </div>
+                    <div style={{ padding: "12px 14px", background: "rgba(107,28,35,0.04)", borderLeft: "1px solid #f0eeeb", textAlign: "center" }}>
+                      {PRODUCT_IMAGES[ldCompareModel] && <img src={PRODUCT_IMAGES[ldCompareModel]} alt={ldCompareModel} style={{ width: 48, height: 48, objectFit: "contain", marginBottom: 4, borderRadius: 4 }} />}
+                      <div style={{ fontSize: 11, fontWeight: 700, color: MAROON }}>{ldCompareModel}</div>
+                      <div style={{ fontSize: 9, color: "#aaa" }}>CUCKOO</div>
+                    </div>
+                  </div>
+                  {/* Data rows */}
+                  {compRows.map((row, i) => {
+                    const match = row.extracted !== "—" && row.cuckoo !== "—" && row.extracted.toLowerCase().replace(/[^a-z0-9]/g, "").includes(row.cuckoo.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8));
+                    return (
+                      <div key={row.label} style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr", borderBottom: "1px solid #f5f3f0", background: i % 2 === 0 ? "#fff" : "#fdfcfb" }}>
+                        <div style={{ padding: "8px 14px", fontSize: 11, fontWeight: 600, color: "#888" }}>{row.label}</div>
+                        <div style={{ padding: "8px 14px", borderLeft: "1px solid #f0eeeb", fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: row.extracted === "—" ? "#ccc" : "#555", lineHeight: 1.5 }}>{row.extracted}</div>
+                        <div style={{ padding: "8px 14px", borderLeft: "1px solid #f0eeeb", fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: row.cuckoo === "—" ? "#ccc" : MAROON, fontWeight: row.cuckoo !== "—" ? 600 : 400, lineHeight: 1.5, background: "rgba(107,28,35,0.02)" }}>{row.cuckoo}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {!ldCompareModel && <div style={{ fontSize: 11, color: "#bbb", textAlign: "center", padding: 8 }}>Select a CUCKOO model above to compare side by side</div>}
+          </div>
+        )}
 
         {!ldResults && !ldLoading && !ldError && (
           <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 10, padding: 24, fontSize: 12, color: "#aaa", textAlign: "center" }}>
