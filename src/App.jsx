@@ -737,6 +737,15 @@ export default function App() {
   const [ctElapsed, setCtElapsed] = useState(0);
   const ctAbortRef = useRef(null);
   const ctTimerRef = useRef(null);
+  // Listing data extractor state
+  const [ldUrl, setLdUrl] = useState("");
+  const [ldResults, setLdResults] = useState(null);
+  const [ldLoading, setLdLoading] = useState(false);
+  const [ldError, setLdError] = useState(null);
+  const [ldElapsed, setLdElapsed] = useState(0);
+  const ldAbortRef = useRef(null);
+  const ldTimerRef = useRef(null);
+  const [ldCopied, setLdCopied] = useState(null);
   // Dark mode
   const [darkMode, setDarkMode] = useState(false);
   useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} })(); }, []);
@@ -1327,6 +1336,48 @@ export default function App() {
     }
   }, [ctCuckooTitle, ctCompetitorTitles]);
 
+  // Listing data extractor
+  const fetchListingData = useCallback(async () => {
+    if (ldLoading || !ldUrl.trim()) return;
+    setLdLoading(true); setLdError(null); setLdResults(null); setLdElapsed(0);
+    const startTime = Date.now();
+    ldTimerRef.current = setInterval(() => setLdElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (ldAbortRef.current) ldAbortRef.current.abort();
+    const controller = new AbortController();
+    ldAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 90000);
+    try {
+      const ldSystem = "You are a product listing data extraction specialist. The user will provide a marketplace product URL. Use the web_search tool to look up the product page, then extract ALL available structured product data.\n\nExtract these fields (use null for any field not found):\n- title: Full product title\n- brand: Brand name\n- price: Current price (as string with currency symbol)\n- model_number: Model or item number\n- asin: ASIN (Amazon only)\n- upc: UPC/EAN if available\n- bullet_points: Array of feature bullet points\n- description: Product description text\n- rating: Average star rating (number)\n- review_count: Number of reviews (number)\n- availability: In stock / Out of stock / etc.\n- seller: Sold by / seller name\n- category: Product category or breadcrumb\n- dimensions: Product dimensions if listed\n- weight: Product weight if listed\n- color: Color/variant\n- images: Array of image URLs if found\n- specifications: Object of any additional spec key-value pairs (e.g. wattage, capacity, material)\n- marketplace: Which marketplace this listing is from (Amazon, Walmart, Target, Best Buy, etc.)\n- url: The URL that was searched\n\nRespond ONLY with valid JSON matching this schema. Do NOT include markdown formatting or code fences. Include as much data as you can find from the listing.";
+      const ldUserMsg = "Extract all product listing data from this URL: " + ldUrl.trim();
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0,
+          system: ldSystem,
+          messages: [{ role: "user", content: ldUserMsg }],
+          tools: [{ type: "web_search", name: "web_search", max_uses: 3 }]
+        })
+      });
+      if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
+      if (!text) throw new Error("Empty response — the URL may not be accessible");
+      let parsed;
+      try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
+      catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Could not parse structured data from response"); }
+      parsed._url = ldUrl.trim();
+      setLdResults(parsed);
+    } catch (e) {
+      if (e.name === "AbortError") { if (controller.signal.reason === "timeout") setLdError("Request timed out (90s). The URL may be unreachable or blocked. Please retry."); }
+      else setLdError("Error: " + (e.message || "Something went wrong."));
+    } finally {
+      clearTimeout(timeoutId);
+      if (ldTimerRef.current) { clearInterval(ldTimerRef.current); ldTimerRef.current = null; }
+      setLdLoading(false); ldAbortRef.current = null;
+    }
+  }, [ldUrl]);
+
   const optimize = useCallback(async () => {
     const title = titleRef.current;
     const sel = selectedRef.current;
@@ -1511,6 +1562,7 @@ export default function App() {
             ]},
             { group: "analyze", label: "Analyze", icon: "\u{1F4CA}", items: [
               { key: "competitor_analyzer", label: "Competitor Analyzer", icon: "\u{1F3C6}" },
+              { key: "listing_extractor", label: "Listing Extractor", icon: "\u{1F310}" },
             ]},
             { group: "reference", label: "Reference", icon: "\u{1F4D6}", items: [
               { key: "search_volume", label: "Search Volume", icon: "\u{1F4CA}" },
@@ -2797,6 +2849,184 @@ export default function App() {
 
         <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
           <span style={{ fontSize: 10, color: "#ccc" }}>Competitive analysis is directional {"\u00B7"} Combine with search volume data for best results</span>
+        </div>
+      </div>}
+
+      {/* LISTING DATA EXTRACTOR PAGE */}
+      {page === "listing_extractor" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Enter a <strong>marketplace product URL</strong> to extract structured listing data. Supports Amazon, Walmart, Target, Best Buy, and other major marketplaces. The tool uses web search to retrieve and parse the product page.
+          </p>
+          <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
+            Extracted data can be copied field-by-field or exported as JSON/CSV
+          </p>
+        </div>
+
+        {/* URL Input */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Product URL</label>
+          <input value={ldUrl} onChange={e => setLdUrl(e.target.value)} placeholder="https://www.amazon.com/dp/B0... or any marketplace product URL"
+            style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"}
+            onKeyDown={e => { if (e.key === "Enter" && ldUrl.trim() && !ldLoading) fetchListingData(); }} />
+          {ldUrl.trim() && (() => {
+            try { const h = new URL(ldUrl.trim()).hostname.replace("www.", ""); return <div style={{ marginTop: 6, fontSize: 10, color: "#aaa" }}>Marketplace: {h}</div>; }
+            catch { return <div style={{ marginTop: 6, fontSize: 10, color: "#e57373" }}>Invalid URL format</div>; }
+          })()}
+        </div>
+
+        {/* Extract Button */}
+        {(() => {
+          let validUrl = false; try { new URL(ldUrl.trim()); validUrl = true; } catch {}
+          const dis = ldLoading || !ldUrl.trim() || !validUrl;
+          return (<>
+            <button className="cuckoo-btn" disabled={dis} onClick={fetchListingData}
+              style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: dis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
+              {ldLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                Extracting listing data...
+              </span>) : dis ? "Enter a valid product URL" : "Extract Listing Data"}
+            </button>
+            {ldLoading && <div style={{ textAlign: "center", fontSize: 10, color: "#aaa", marginBottom: 12 }}>{ldElapsed}s
+              <button onClick={() => { if (ldAbortRef.current) ldAbortRef.current.abort(); setLdLoading(false); setLdError("Cancelled."); if (ldTimerRef.current) { clearInterval(ldTimerRef.current); ldTimerRef.current = null; } }}
+                style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer", marginLeft: 8 }}>Cancel</button>
+            </div>}
+          </>);
+        })()}
+
+        {/* Error */}
+        {ldError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 24, color: "#dc2626", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{ldError}</span>
+          <button onClick={fetchListingData} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Retry</button>
+        </div>}
+
+        {/* Results */}
+        {ldResults && (() => {
+          const r = ldResults;
+          const copyField = (label, value) => {
+            navigator.clipboard.writeText(String(value));
+            setLdCopied(label);
+            setTimeout(() => setLdCopied(null), 1500);
+          };
+          // Primary fields to show at the top
+          const primaryFields = [
+            { label: "Title", value: r.title },
+            { label: "Brand", value: r.brand },
+            { label: "Price", value: r.price },
+            { label: "Model Number", value: r.model_number },
+            { label: "ASIN", value: r.asin },
+            { label: "UPC", value: r.upc },
+            { label: "Rating", value: r.rating != null ? r.rating + " / 5" : null },
+            { label: "Reviews", value: r.review_count != null ? r.review_count.toLocaleString() : null },
+            { label: "Availability", value: r.availability },
+            { label: "Seller", value: r.seller },
+            { label: "Category", value: r.category },
+            { label: "Color", value: r.color },
+            { label: "Dimensions", value: r.dimensions },
+            { label: "Weight", value: r.weight },
+            { label: "Marketplace", value: r.marketplace },
+          ].filter(f => f.value != null && f.value !== "" && f.value !== "null");
+
+          return (<div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            {/* Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, paddingBottom: 16, borderBottom: "1px solid #f0eeeb" }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a", marginBottom: 4 }}>{r.title || "Product Listing"}</div>
+                <div style={{ fontSize: 11, color: "#aaa" }}>{r.marketplace ? r.marketplace + " listing" : ""}{r.asin ? " \u00B7 " + r.asin : ""}{r.brand ? " \u00B7 " + r.brand : ""}</div>
+              </div>
+              {r.price && <div style={{ fontSize: 22, fontWeight: 800, color: MAROON, fontFamily: "'IBM Plex Mono',monospace", flexShrink: 0 }}>{r.price}</div>}
+            </div>
+
+            {/* Primary fields grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 0, marginBottom: 20 }}>
+              {primaryFields.map((f, i) => (
+                <React.Fragment key={f.label}>
+                  <div style={{ padding: "8px 12px", fontSize: 11, fontWeight: 600, color: "#888", background: i % 2 === 0 ? "#faf9f7" : "#fff", borderBottom: "1px solid #f5f3f0" }}>{f.label}</div>
+                  <div style={{ padding: "8px 12px", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#1a1a1a", background: i % 2 === 0 ? "#faf9f7" : "#fff", borderBottom: "1px solid #f5f3f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>{String(f.value)}</span>
+                    <button onClick={() => copyField(f.label, f.value)} style={{ background: "none", border: "none", fontSize: 10, color: ldCopied === f.label ? "#16a34a" : "#ccc", cursor: "pointer", padding: "2px 6px", flexShrink: 0 }}>{ldCopied === f.label ? "\u2713 copied" : "copy"}</button>
+                  </div>
+                </React.Fragment>
+              ))}
+            </div>
+
+            {/* Bullet Points */}
+            {r.bullet_points && r.bullet_points.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Bullet Points ({r.bullet_points.length})</div>
+                  <button onClick={() => copyField("bullets", r.bullet_points.join("\n"))} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "4px 10px", fontSize: 10, color: ldCopied === "bullets" ? "#16a34a" : "#888", cursor: "pointer" }}>{ldCopied === "bullets" ? "\u2713 copied" : "Copy all"}</button>
+                </div>
+                {r.bullet_points.map((bp, i) => (
+                  <div key={i} style={{ padding: "8px 12px", fontSize: 12, color: "#555", lineHeight: 1.6, background: i % 2 === 0 ? "#faf9f7" : "#fff", borderRadius: 4, marginBottom: 2, display: "flex", gap: 8 }}>
+                    <span style={{ color: MAROON, fontWeight: 700, flexShrink: 0 }}>{"\u2022"}</span>
+                    <span>{bp}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Description */}
+            {r.description && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Description</div>
+                  <button onClick={() => copyField("description", r.description)} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "4px 10px", fontSize: 10, color: ldCopied === "description" ? "#16a34a" : "#888", cursor: "pointer" }}>{ldCopied === "description" ? "\u2713 copied" : "Copy"}</button>
+                </div>
+                <div style={{ padding: "12px 14px", background: "#faf9f7", borderRadius: 8, fontSize: 12, color: "#555", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{r.description}</div>
+              </div>
+            )}
+
+            {/* Specifications */}
+            {r.specifications && Object.keys(r.specifications).length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Specifications ({Object.keys(r.specifications).length})</div>
+                  <button onClick={() => copyField("specs", Object.entries(r.specifications).map(([k, v]) => k + ": " + v).join("\n"))} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "4px 10px", fontSize: 10, color: ldCopied === "specs" ? "#16a34a" : "#888", cursor: "pointer" }}>{ldCopied === "specs" ? "\u2713 copied" : "Copy all"}</button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 0 }}>
+                  {Object.entries(r.specifications).map(([key, val], i) => (
+                    <React.Fragment key={key}>
+                      <div style={{ padding: "6px 12px", fontSize: 11, fontWeight: 600, color: "#888", background: i % 2 === 0 ? "#faf9f7" : "#fff", borderBottom: "1px solid #f5f3f0" }}>{key}</div>
+                      <div style={{ padding: "6px 12px", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#1a1a1a", background: i % 2 === 0 ? "#faf9f7" : "#fff", borderBottom: "1px solid #f5f3f0" }}>{String(val)}</div>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Export buttons */}
+            <div style={{ display: "flex", gap: 8, paddingTop: 16, borderTop: "1px solid #f0eeeb" }}>
+              <button onClick={() => { const json = JSON.stringify(r, null, 2); navigator.clipboard.writeText(json); setLdCopied("json"); setTimeout(() => setLdCopied(null), 1500); }}
+                style={{ flex: 1, padding: 12, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 8, color: ldCopied === "json" ? "#16a34a" : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                {ldCopied === "json" ? "\u2713 Copied!" : "Copy as JSON"}
+              </button>
+              <button onClick={() => {
+                const fields = [...primaryFields];
+                if (r.bullet_points?.length) fields.push({ label: "Bullet Points", value: r.bullet_points.join(" | ") });
+                if (r.description) fields.push({ label: "Description", value: r.description });
+                if (r.specifications) Object.entries(r.specifications).forEach(([k, v]) => fields.push({ label: "Spec: " + k, value: v }));
+                const esc = s => '"' + String(s || "").replace(/"/g, '""') + '"';
+                const csv = "Field,Value\n" + fields.map(f => esc(f.label) + "," + esc(f.value)).join("\n");
+                const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+                const url = URL.createObjectURL(blob); const a = document.createElement("a");
+                a.href = url; a.download = "listing-data-" + (r.asin || r.model_number || "export") + ".csv"; a.click(); URL.revokeObjectURL(url);
+              }} style={{ flex: 1, padding: 12, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 8, color: "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                {"\u{1F4E5}"} Download CSV
+              </button>
+            </div>
+          </div>);
+        })()}
+
+        {!ldResults && !ldLoading && !ldError && (
+          <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 10, padding: 24, fontSize: 12, color: "#aaa", textAlign: "center" }}>
+            Enter a product URL above and click Extract to retrieve listing data
+          </div>
+        )}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Data extracted via web search {"\u00B7"} Results depend on page accessibility {"\u00B7"} Some marketplaces may block automated access</span>
         </div>
       </div>}
 
