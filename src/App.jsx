@@ -1355,7 +1355,7 @@ export default function App() {
           model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0,
           system: ldSystem,
           messages: [{ role: "user", content: ldUserMsg }],
-          tools: [{ type: "web_search", name: "web_search", max_uses: 3 }]
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }]
         })
       });
       if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
