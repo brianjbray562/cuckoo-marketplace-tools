@@ -3210,9 +3210,7 @@ export default function App() {
               // Fuzzy spec lookup: search for a value across multiple possible keys
               const specs = r.specifications || {};
               const specLookup = (...keys) => {
-                // First try exact matches on provided keys
                 for (const k of keys) { if (specs[k] != null && specs[k] !== "" && specs[k] !== "null") return String(specs[k]); }
-                // Then fuzzy match: check if any spec key contains one of our search terms
                 const specEntries = Object.entries(specs);
                 for (const k of keys) {
                   const lower = k.toLowerCase().replace(/[^a-z]/g, "");
@@ -3221,17 +3219,45 @@ export default function App() {
                 }
                 return "—";
               };
+              // Normalize extracted values
+              let rawType = specLookup("type", "Type", "Product Type", "Cooker Type");
+              let rawHeating = specLookup("heating", "Heating", "Heating Method", "Heating Type", "Heat", "Heating Technology");
+              // "Fuzzy Logic" is not a type — it's Micom; not a heating method — it's Heating Plate
+              if (rawType !== "—" && rawType.toLowerCase().includes("fuzzy logic")) rawType = rawType.replace(/fuzzy logic/i, "Micom").replace(/^\s*,\s*|\s*,\s*$/g, "").trim() || "Micom";
+              if (rawHeating !== "—" && rawHeating.toLowerCase().includes("fuzzy logic")) rawHeating = "Heating Plate";
+              // Default heating to Heating Plate unless specifically noted as Induction
+              if (rawHeating === "—" || rawHeating.toLowerCase() === "fuzzy logic") rawHeating = "Heating Plate";
+              // Normalize pressure: false/no/null → "No", true/yes → "Yes"
+              let rawPressure = specLookup("pressure", "Pressure", "Pressure Cooking");
+              if (rawPressure === "—" || rawPressure === "false" || rawPressure.toLowerCase() === "no" || rawPressure === "null") rawPressure = "No";
+              else if (rawPressure === "true" || rawPressure.toLowerCase() === "yes") rawPressure = "Yes";
+              // Cup size: ensure "Uncooked" or "Cooked" is specified
+              let rawCupSize = specLookup("cup_size", "Cup Size", "Capacity", "Size", "Cooking Capacity");
+              if (rawCupSize !== "—" && !/(uncooked|cooked)/i.test(rawCupSize)) rawCupSize += " (Uncooked)";
+              // Cooking modes: always show mode names if available
+              let rawCookingModes = specLookup("cooking_modes", "Cooking Modes", "Menu Options", "Menu Settings", "Cooking Programs", "Preset Programs");
+              const rawModeNames = specLookup("cooking_mode_names", "Cooking Mode Names", "Menu Names", "Program Names", "Mode Names");
+              if (rawModeNames !== "—") rawCookingModes = rawCookingModes !== "—" ? rawCookingModes + " — " + rawModeNames : rawModeNames;
+              // CUCKOO cooking modes with names
+              let cuckooCookingModes = "—";
+              if (cuckoo.cookingModes) {
+                cuckooCookingModes = cuckoo.cookingModes + (cuckoo.otherMenuModes ? " (+" + cuckoo.otherMenuModes + " other)" : "");
+                if (cuckoo.cookingModeNames) {
+                  const names = typeof cuckoo.cookingModeNames === "string" ? cuckoo.cookingModeNames : cuckoo.cookingModeNames.join(", ");
+                  cuckooCookingModes += " — " + names;
+                }
+              }
               const compRows = [
                 { label: "Title", extracted: r.title || "—", cuckoo: ldCompareModel + " — " + cuckoo.type },
                 { label: "Brand", extracted: r.brand || "—", cuckoo: "CUCKOO" },
                 { label: "Price", extracted: r.price || "—", cuckoo: "—" },
-                { label: "Type", extracted: specLookup("type", "Type", "Product Type", "Cooker Type"), cuckoo: cuckoo.type },
-                { label: "Heating", extracted: specLookup("heating", "Heating", "Heating Method", "Heating Type", "Heat", "Heating Technology"), cuckoo: cuckoo.heating || "—" },
-                { label: "Pressure", extracted: specLookup("pressure", "Pressure", "Pressure Cooking"), cuckoo: cuckoo.pressure ? "Yes" : "No" },
-                { label: "Cup Size", extracted: specLookup("cup_size", "Cup Size", "Capacity", "Size", "Cooking Capacity"), cuckoo: cuckoo.cupSize || "—" },
-                { label: "Color", extracted: r.color || specLookup("color", "Color", "Colour", "Finish") , cuckoo: cuckoo.color || "—" },
+                { label: "Type", extracted: rawType, cuckoo: cuckoo.type },
+                { label: "Heating", extracted: rawHeating, cuckoo: cuckoo.heating || "—" },
+                { label: "Pressure", extracted: rawPressure, cuckoo: cuckoo.pressure ? "Yes" : "No" },
+                { label: "Cup Size", extracted: rawCupSize, cuckoo: cuckoo.cupSize || "—" },
+                { label: "Color", extracted: r.color || specLookup("color", "Color", "Colour", "Finish"), cuckoo: cuckoo.color || "—" },
                 { label: "Inner Pot", extracted: specLookup("inner_pot", "Inner Pot", "Inner Pot Material", "Inner Bowl", "Cooking Pan", "Nonstick"), cuckoo: cuckoo.innerPot || "—" },
-                { label: "Cooking Modes", extracted: specLookup("cooking_modes", "Cooking Modes", "Menu Options", "Menu Settings", "Cooking Programs", "Preset Programs"), cuckoo: cuckoo.cookingModes ? (cuckoo.cookingModes + (cuckoo.otherMenuModes ? " (+" + cuckoo.otherMenuModes + " other)" : "")) : "—" },
+                { label: "Cooking Modes", extracted: rawCookingModes, cuckoo: cuckooCookingModes },
                 { label: "Features", extracted: specLookup("features", "Features", "Key Features") !== "—" ? specLookup("features", "Features", "Key Features") : (r.bullet_points ? r.bullet_points.slice(0, 3).join("; ") : "—"), cuckoo: cuckooFeats || "—" },
                 { label: "Country of Manufacture", extracted: specLookup("country_of_manufacture", "Country of Origin", "Made In", "Country of Manufacture", "Manufactured In", "Origin"), cuckoo: cuckoo.mfg || "—" },
                 { label: "Wattage", extracted: specLookup("wattage", "Wattage", "Power", "Power Consumption", "Watts"), cuckoo: "—" },
