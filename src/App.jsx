@@ -1529,12 +1529,13 @@ function AppInner() {
     const timeoutId = setTimeout(() => controller.abort("timeout"), 60000);
     try {
       const asin = product.asin;
-      const sysPrompt = "You are a product data lookup specialist. Look up the Amazon listing for the given ASIN and extract price, rating, review count, and wattage/power specs. Respond ONLY with valid JSON: {\"price\":\"$XX.XX or null\",\"rating\":4.5 or null,\"review_count\":1234 or null,\"wattage\":\"XXW or null\",\"availability\":\"string or null\"}";
-      const userMsg = "Look up Amazon ASIN: " + asin + " (CUCKOO " + sku + "). Extract the current price, star rating, review count, and wattage from the listing. Respond ONLY with valid JSON.";
+      const amazonUrl = "https://www.amazon.com/dp/" + asin;
+      const sysPrompt = "You are a product data extraction specialist. The user will give you an Amazon product URL. Use the web_search tool to search for this exact product on Amazon and extract the following data. You MUST provide actual values from the listing — do not return null if the data exists on the page.\n\nExtract:\n- price: The current selling price as a string (e.g. \"$299.99\")\n- rating: The average star rating as a number (e.g. 4.5)\n- review_count: The number of customer reviews as a number (e.g. 1234)\n- wattage: The wattage or power consumption from the product specs (e.g. \"1090W\")\n- availability: Stock status (e.g. \"In Stock\")\n\nRespond ONLY with valid JSON: {\"price\":\"...\",\"rating\":...,\"review_count\":...,\"wattage\":\"...\",\"availability\":\"...\"}";
+      const userMsg = "Search for this Amazon product and extract the price, rating, review count, and wattage:\n\nURL: " + amazonUrl + "\nASIN: " + asin + "\nProduct: CUCKOO " + sku + " " + (product.type || "") + " Rice Cooker\n\nSearch Amazon for this product. Return the actual listing data. Respond ONLY with valid JSON.";
       const messages = [{ role: "user", content: userMsg }];
-      const baseBody = { model: "claude-sonnet-4-20250514", max_tokens: 500, temperature: 0, system: sysPrompt, tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }] };
+      const baseBody = { model: "claude-sonnet-4-20250514", max_tokens: 500, temperature: 0, system: sysPrompt, tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }] };
       let allText = "";
-      for (let turn = 0; turn < 4; turn++) {
+      for (let turn = 0; turn < 6; turn++) {
         const res = await fetch("/api/messages", {
           method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
           body: JSON.stringify({ ...baseBody, messages })
@@ -1547,13 +1548,21 @@ function AppInner() {
         if (data.stop_reason !== "tool_use") break;
         messages.push({ role: "assistant", content: data.content });
         const toolResults = data.content.filter(b => b.type === "tool_use").map(b => ({
-          type: "tool_result", tool_use_id: b.id, content: "Search completed. Provide the JSON output."
+          type: "tool_result", tool_use_id: b.id, content: "Search completed. Now extract the price, rating, review count, and wattage from the results and respond with valid JSON."
         }));
         messages.push({ role: "user", content: toolResults });
       }
-      const parsed = parseJsonResponse(allText);
+      let parsed = parseJsonResponse(allText);
+      if (!parsed) {
+        // Fallback: try to repair
+        const repairRes = await fetch("/api/messages", {
+          method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+          body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 300, temperature: 0, system: "Fix this into valid JSON. Return ONLY the corrected JSON.", messages: [{ role: "user", content: allText.slice(0, 3000) }] })
+        });
+        if (repairRes.ok) { const rd = await repairRes.json(); parsed = parseJsonResponse(extractTextFromContent(rd.content)); }
+      }
       if (!parsed) throw new Error("Could not parse Amazon data");
-      setLdCuckooAmazon({ sku, loading: false, error: null, price: parsed.price, rating: parsed.rating, review_count: parsed.review_count, wattage: parsed.wattage, availability: parsed.availability });
+      setLdCuckooAmazon({ sku, loading: false, error: null, price: parsed.price || null, rating: parsed.rating ?? null, review_count: parsed.review_count ?? null, wattage: parsed.wattage || null, availability: parsed.availability || null });
     } catch (e) {
       setLdCuckooAmazon(prev => ({ ...prev, loading: false, error: e.name === "AbortError" ? "Timed out" : (e.message || "Failed to fetch") }));
     } finally { clearTimeout(timeoutId); }
@@ -3368,7 +3377,7 @@ function AppInner() {
               // CUCKOO Amazon data (price, rating, wattage) fetched via web search
               const ca = ldCuckooAmazon && ldCuckooAmazon.sku === ldCompareModel && !ldCuckooAmazon.loading ? ldCuckooAmazon : null;
               const caLoading = ldCuckooAmazon && ldCuckooAmazon.sku === ldCompareModel && ldCuckooAmazon.loading;
-              const caLabel = (val, fallback) => caLoading ? "Loading..." : (ca && val ? val : fallback);
+              const caLabel = (val, fallback) => caLoading ? "Loading..." : (ca && val != null && val !== "" && val !== "null" ? String(val) : fallback);
               const compRows = [
                 { label: "Title", extracted: r.title || "—", cuckoo: ldCompareModel + " — " + cuckoo.type },
                 { label: "Brand", extracted: r.brand || "—", cuckoo: "CUCKOO" },
@@ -3399,7 +3408,7 @@ function AppInner() {
                     <div style={{ padding: "12px 14px", background: "rgba(107,28,35,0.04)", borderLeft: "1px solid #f0eeeb", textAlign: "center" }}>
                       {PRODUCT_IMAGES[ldCompareModel] && <img src={PRODUCT_IMAGES[ldCompareModel]} alt={ldCompareModel} style={{ width: 48, height: 48, objectFit: "contain", marginBottom: 4, borderRadius: 4 }} />}
                       <div style={{ fontSize: 11, fontWeight: 700, color: MAROON }}>{ldCompareModel}</div>
-                      <div style={{ fontSize: 9, color: "#aaa" }}>CUCKOO {caLoading ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 4 }}><span style={{ width: 8, height: 8, border: "1.5px solid rgba(107,28,35,0.3)", borderTopColor: MAROON, borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />fetching Amazon data...</span> : ca ? <span style={{ color: "#16a34a" }}>{"\u2713"} Amazon data loaded</span> : ""}</div>
+                      <div style={{ fontSize: 9, color: "#aaa" }}>CUCKOO {caLoading ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 4 }}><span style={{ width: 8, height: 8, border: "1.5px solid rgba(107,28,35,0.3)", borderTopColor: MAROON, borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />fetching Amazon data...</span> : ca ? <span style={{ color: "#16a34a" }}>{"\u2713"} Amazon data loaded</span> : ldCuckooAmazon?.error ? <span style={{ color: "#dc2626" }}>{ldCuckooAmazon.error} <button onClick={() => fetchCuckooAmazonData(ldCompareModel)} style={{ background: "none", border: "none", color: MAROON, fontSize: 9, fontWeight: 700, cursor: "pointer", textDecoration: "underline", padding: 0 }}>Retry</button></span> : cuckoo.asin ? <button onClick={() => fetchCuckooAmazonData(ldCompareModel)} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 4, padding: "1px 8px", fontSize: 9, color: "#888", cursor: "pointer" }}>Fetch Amazon data</button> : ""}</div>
                     </div>
                   </div>
                   {/* Data rows */}
