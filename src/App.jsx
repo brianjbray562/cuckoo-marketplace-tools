@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo, memo } from "react";
+import React, { useState, useCallback, useRef, useEffect, useMemo, memo } from "react";
 
 const MAROON = "#6B1C23";
 
