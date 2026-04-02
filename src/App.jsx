@@ -661,7 +661,90 @@ function calcRankingJuice(title, searchData) {
   return { score: matches.reduce((sum, m) => sum + m.volume, 0), matches };
 }
 
-export default function App() {
+// --- SHARED UTILITIES ---
+
+// Shared JSON response parser: 3-tier strategy used by all API handlers.
+// 1. Direct parse (clean JSON)
+// 2. Brace-depth extraction (JSON embedded in text)
+// 3. Returns null if unparseable (caller decides: retry, repair, or error)
+function parseJsonResponse(rawText) {
+  if (!rawText || !rawText.trim()) return null;
+  const clean = rawText.replace(/```json|```/g, "").trim();
+  // Tier 1: direct parse
+  try { return JSON.parse(clean); } catch(e) {}
+  // Tier 2: extract outermost JSON object by brace matching
+  const start = clean.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0, end = -1;
+  for (let i = start; i < clean.length; i++) {
+    if (clean[i] === "{") depth++;
+    else if (clean[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end === -1) return null;
+  try { return JSON.parse(clean.slice(start, end + 1)); } catch(e) {}
+  return null;
+}
+
+// Collect text blocks from an API response content array
+function extractTextFromContent(content) {
+  if (!content || !Array.isArray(content)) return "";
+  return content.filter(b => b.type === "text").map(b => b.text).filter(Boolean).join("\n");
+}
+
+// Format API/network errors into user-friendly messages
+function formatApiError(err) {
+  if (!err) return "An unknown error occurred.";
+  const msg = err.message || String(err);
+  if (err.name === "AbortError") {
+    return err.signal?.reason === "timeout" || msg.includes("timeout")
+      ? "Request timed out. The API may be slow — please retry."
+      : "Request was cancelled.";
+  }
+  if (msg.includes("API returned 4")) return "The API rejected the request. Please try again or simplify your input.";
+  if (msg.includes("API returned 5")) return "The API is temporarily unavailable. Please retry in a moment.";
+  if (msg.includes("API returned")) return "API error — please retry. Details: " + msg.slice(0, 150);
+  if (msg.includes("Could not parse") || msg.includes("Invalid JSON") || msg.includes("Empty response")) return "The AI returned an unexpected format. Please retry — this is usually transient.";
+  if (msg.includes("NetworkError") || msg.includes("Failed to fetch")) return "Network error — check your connection and retry.";
+  return "Error: " + msg.slice(0, 200);
+}
+
+// Shared title rules constant (referenced by both SYSTEM_PROMPT and listing audit)
+const CUCKOO_RULES_SUMMARY = "RULE 1 — Every cup capacity MUST have \"Uncooked\" or \"Cooked\" (e.g. \"6-Cup Uncooked\"). Hyphen required.\n" +
+  "RULE 2 — Order: CUCKOO [Tech] Rice Cooker [Cup Size], [Features], [Color] ([Model]). No \"& Warmer\".\n" +
+  "RULE 3 — Model numbers in parentheses, placed LAST. Remove entirely if over char limit.\n" +
+  "RULE 4 — Flowing titles, not keyword lists. \"with\" connects features, \"&\" within groups, 3-4 commas max.\n" +
+  "RULE 5 — ONLY use features from (a) the original title or (b) VERIFIED PRODUCT DATA from the internal database. Never invent.";
+
+const KEYWORD_RESTRICTIONS = "- 'small'/'mini'/'compact': only for 3-cup or smaller\n" +
+  "- 'pressure': only for CRP- models\n" +
+  "- 'induction': only for IH models\n" +
+  "- 'Korean'/'Korean Rice Cooker': only if verified made in Korea\n" +
+  "- 'Stainless Steel': only if inner pot IS stainless steel\n" +
+  "- 'low carb': only if product has that feature";
+
+// Error boundary component — prevents white screen on render errors
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement("div", { style: { padding: 40, textAlign: "center", fontFamily: "'Outfit',sans-serif" } },
+        React.createElement("div", { style: { fontSize: 48, marginBottom: 16 } }, "\u26A0\uFE0F"),
+        React.createElement("h2", { style: { color: "#6B1C23", marginBottom: 8 } }, "Something went wrong"),
+        React.createElement("p", { style: { color: "#666", marginBottom: 16, fontSize: 13 } }, this.state.error?.message || "An unexpected error occurred."),
+        React.createElement("button", {
+          onClick: () => this.setState({ hasError: false, error: null }),
+          style: { padding: "10px 24px", background: "#6B1C23", color: "#fff", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" }
+        }, "Reload App")
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// --- APP COMPONENT ---
+
+function AppInner() {
   const [page, setPage] = useState("title_optimizer"); // "title_optimizer" or "backend_keywords"
   const isMac = useMemo(() => typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform), []);
   const [amazonTitle, setAmazonTitle] = useState("");
@@ -1134,14 +1217,10 @@ export default function App() {
       }
       setBkResults(parsed);
     } catch (e) {
-      if (e.name === "AbortError") {
-        if (bkAbort.signal.reason === "timeout") {
-          setBkError("Request timed out (30s). The API may be slow — please retry.");
-        }
-        // user-cancelled: cancelBkGeneration already set the error message
-      } else {
-        setBkError("Error: " + (e.message || "Something went wrong. Please retry."));
+      if (e.name !== "AbortError" || bkAbort.signal.reason === "timeout") {
+        setBkError(formatApiError(e));
       }
+      // user-cancelled: cancelBkGeneration already set the error message
     } finally {
       clearTimeout(timeoutId);
       if (bkTimerRef.current) { clearInterval(bkTimerRef.current); bkTimerRef.current = null; }
@@ -1177,15 +1256,13 @@ export default function App() {
       if (data.error) throw new Error(data.error.message || "API error");
       const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
       if (!text) throw new Error("Empty response");
-      let parsed;
-      try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
-      catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Could not parse response"); }
+      const parsed = parseJsonResponse(text);
+      if (!parsed) throw new Error("Could not parse response");
       parsed._productVerified = !!product;
       parsed._productSku = product?.sku || null;
       setBpResults(parsed);
     } catch (e) {
-      if (e.name === "AbortError") { if (controller.signal.reason === "timeout") setBpError("Request timed out (60s). Please retry."); }
-      else setBpError("Error: " + (e.message || "Something went wrong."));
+      setBpError(formatApiError(e));
     } finally {
       clearTimeout(timeoutId);
       if (bpTimerRef.current) { clearInterval(bpTimerRef.current); bpTimerRef.current = null; }
@@ -1284,13 +1361,11 @@ export default function App() {
       if (data.error) throw new Error(data.error.message || "API error");
       const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
       if (!text) throw new Error("Empty response");
-      let parsed;
-      try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
-      catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Could not parse response"); }
+      const parsed = parseJsonResponse(text);
+      if (!parsed) throw new Error("Could not parse response");
       setAuditResults(parsed);
     } catch (e) {
-      if (e.name === "AbortError") { if (controller.signal.reason === "timeout") setAuditError("Request timed out (60s). Please retry."); }
-      else setAuditError("Error: " + (e.message || "Something went wrong."));
+      setAuditError(formatApiError(e));
     } finally {
       clearTimeout(timeoutId);
       if (auditTimerRef.current) { clearInterval(auditTimerRef.current); auditTimerRef.current = null; }
@@ -1321,9 +1396,8 @@ export default function App() {
       if (data.error) throw new Error(data.error.message || "API error");
       const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
       if (!text) throw new Error("Empty response");
-      let parsed;
-      try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
-      catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Could not parse response"); }
+      const parsed = parseJsonResponse(text);
+      if (!parsed) throw new Error("Could not parse response");
       // Client-side Ranking Juice calculation from search volume data
       const svData = liveSearchData;
       parsed._rankingJuice = {};
@@ -1331,8 +1405,7 @@ export default function App() {
       parsed._rankingJuice.competitors = competitors.map(t => calcRankingJuice(t, svData));
       setCtResults(parsed);
     } catch (e) {
-      if (e.name === "AbortError") { if (controller.signal.reason === "timeout") setCtError("Request timed out (60s). Please retry."); }
-      else setCtError("Error: " + (e.message || "Something went wrong."));
+      setCtError(formatApiError(e));
     } finally {
       clearTimeout(timeoutId);
       if (ctTimerRef.current) { clearInterval(ctTimerRef.current); ctTimerRef.current = null; }
@@ -1356,7 +1429,9 @@ export default function App() {
       let ldSystem, userContent, tools;
       if (isPdf) {
         ldSystem = "You are a product data extraction specialist. The user will provide the extracted text content from a PDF product manual, spec sheet, or brochure. Analyze the text and extract ALL available structured product data.\n\n" + LD_EXTRACT_FIELDS;
-        userContent = "The following text was extracted from a PDF document (" + ldPdfFile.name + "). Extract all product data from it. Look for product specifications, features, model numbers, and technical details.\n\nRespond ONLY with valid JSON.\n\n--- PDF CONTENT ---\n" + ldPdfFile.text.slice(0, 80000);
+        const pdfText = ldPdfFile.text.slice(0, 80000);
+        const wasTruncated = ldPdfFile.text.length > 80000;
+        userContent = "The following text was extracted from a PDF document (" + ldPdfFile.name + ")." + (wasTruncated ? " NOTE: The document was large and has been truncated to the first ~80,000 characters." : "") + " Extract all product data from it. Look for product specifications, features, model numbers, and technical details.\n\nRespond ONLY with valid JSON.\n\n--- PDF CONTENT ---\n" + pdfText;
         tools = undefined;
       } else {
         ldSystem = "You are a product listing data extraction specialist. The user will provide a marketplace product URL. Use the web_search tool to look up the product page, then extract ALL available structured product data.\n\n" + LD_EXTRACT_FIELDS;
@@ -1381,10 +1456,13 @@ export default function App() {
         allText += textParts.join("\n");
         // If stop_reason is not tool_use, we're done
         if (data.stop_reason !== "tool_use") break;
-        // Otherwise, add assistant response and tool results to continue the conversation
+        // Continue conversation: pass back assistant content and acknowledge tool use
         messages.push({ role: "assistant", content: data.content });
-        const toolResults = data.content.filter(b => b.type === "tool_use").map(b => ({
-          type: "tool_result", tool_use_id: b.id, content: "Tool executed by server."
+        // Extract any server-side tool results from the response, or acknowledge tool execution
+        const toolUseBlocks = data.content.filter(b => b.type === "tool_use");
+        const toolResults = toolUseBlocks.map(b => ({
+          type: "tool_result", tool_use_id: b.id,
+          content: "Search completed. Please analyze the results and provide the structured JSON output."
         }));
         messages.push({ role: "user", content: toolResults });
       }
@@ -3576,5 +3654,10 @@ export default function App() {
       )}
     </div>
   );
+}
+
+// Wrap in ErrorBoundary to prevent white-screen crashes
+export default function App() {
+  return React.createElement(ErrorBoundary, null, React.createElement(AppInner));
 }
 
