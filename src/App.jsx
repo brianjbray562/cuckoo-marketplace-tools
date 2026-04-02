@@ -1341,7 +1341,7 @@ export default function App() {
   }, [ctCuckooTitle, ctCompetitorTitles]);
 
   // Listing data extractor
-  const LD_EXTRACT_FIELDS = "Extract these fields (use null for any field not found):\n- title: Full product title or product name\n- brand: Brand name\n- price: Current price (as string with currency symbol) if available\n- model_number: Model or item number\n- asin: ASIN (Amazon only)\n- upc: UPC/EAN if available\n- bullet_points: Array of feature bullet points or key features\n- description: Product description text\n- rating: Average star rating (number) if available\n- review_count: Number of reviews (number) if available\n- availability: In stock / Out of stock / etc.\n- seller: Sold by / seller name\n- category: Product category or breadcrumb\n- dimensions: Product dimensions if listed\n- weight: Product weight if listed\n- color: Color/variant\n- images: Array of image URLs if found\n- specifications: Object of any additional spec key-value pairs (e.g. wattage, capacity, material, voltage, cooking modes, inner pot type)\n- marketplace: Which marketplace or source this data is from (Amazon, Walmart, Target, Best Buy, PDF Manual, Brand Website, etc.)\n- url: The URL or filename of the source\n\nRespond ONLY with valid JSON matching this schema. Do NOT include markdown formatting or code fences. Include as much data as you can find.";
+  const LD_EXTRACT_FIELDS = "Extract these fields (use null for any field not found):\n- title: Full product title or product name\n- brand: Brand name\n- price: Current price (as string with currency symbol) if available\n- model_number: Model or item number\n- asin: ASIN (Amazon only)\n- upc: UPC/EAN if available\n- bullet_points: Array of feature bullet points or key features\n- description: Product description text\n- rating: Average star rating (number) if available\n- review_count: Number of reviews (number) if available\n- availability: In stock / Out of stock / etc.\n- seller: Sold by / seller name\n- category: Product category or breadcrumb\n- dimensions: Product dimensions if listed\n- weight: Product weight if listed\n- color: Color/variant\n- images: Array of image URLs if found\n- specifications: Object of ALL technical spec key-value pairs found. IMPORTANT: Always use these EXACT keys when the data is available (in addition to any other specs found): \"type\" (product type e.g. Micom, IH, Pressure IH), \"heating\" (heating method e.g. Induction Heating, Fuzzy Logic), \"pressure\" (has pressure cooking: true/false), \"cup_size\" (capacity e.g. \"6 Cup\", \"10 Cup\"), \"inner_pot\" (inner pot material/coating), \"cooking_modes\" (number of cooking modes/menu settings), \"cooking_mode_names\" (list of mode names if available), \"features\" (key features like Voice Guide, Auto Clean, Turbo Mode, Steam Tray, Preset Timer), \"country_of_manufacture\" (where it's made), \"wattage\" (power consumption), \"voltage\" (voltage rating), \"material\" (body material)\n- marketplace: Which marketplace or source this data is from (Amazon, Walmart, Target, Best Buy, PDF Manual, Brand Website, etc.)\n- url: The URL or filename of the source\n\nRespond ONLY with valid JSON matching this schema. Do NOT include markdown formatting or code fences. Include as much data as you can find.";
   const fetchListingData = useCallback(async () => {
     const isPdf = ldInputMode === "pdf";
     if (ldLoading || (!isPdf && !ldUrl.trim()) || (isPdf && !ldPdfFile)) return;
@@ -3207,19 +3207,34 @@ export default function App() {
               const cuckoo = PRODUCT_DB[ldCompareModel];
               if (!cuckoo) return null;
               const cuckooFeats = (cuckoo.features || []).join(", ");
+              // Fuzzy spec lookup: search for a value across multiple possible keys
+              const specs = r.specifications || {};
+              const specLookup = (...keys) => {
+                // First try exact matches on provided keys
+                for (const k of keys) { if (specs[k] != null && specs[k] !== "" && specs[k] !== "null") return String(specs[k]); }
+                // Then fuzzy match: check if any spec key contains one of our search terms
+                const specEntries = Object.entries(specs);
+                for (const k of keys) {
+                  const lower = k.toLowerCase().replace(/[^a-z]/g, "");
+                  const found = specEntries.find(([sk]) => sk.toLowerCase().replace(/[^a-z]/g, "").includes(lower) || lower.includes(sk.toLowerCase().replace(/[^a-z]/g, "")));
+                  if (found && found[1] != null && found[1] !== "" && found[1] !== "null") return String(found[1]);
+                }
+                return "—";
+              };
               const compRows = [
-                { label: "Title", extracted: r.title, cuckoo: ldCompareModel + " — " + cuckoo.type },
-                { label: "Brand", extracted: r.brand, cuckoo: "CUCKOO" },
-                { label: "Price", extracted: r.price, cuckoo: "—" },
-                { label: "Type", extracted: r.specifications?.Type || r.specifications?.type || "—", cuckoo: cuckoo.type },
-                { label: "Heating", extracted: r.specifications?.Heating || r.specifications?.["Heating Method"] || r.specifications?.heating || "—", cuckoo: cuckoo.heating || "—" },
-                { label: "Pressure", extracted: r.specifications?.Pressure || r.specifications?.pressure || "—", cuckoo: cuckoo.pressure ? "Yes" : "No" },
-                { label: "Cup Size", extracted: r.specifications?.["Cup Size"] || r.specifications?.Capacity || r.specifications?.capacity || "—", cuckoo: cuckoo.cupSize || "—" },
-                { label: "Color", extracted: r.color || "—", cuckoo: cuckoo.color || "—" },
-                { label: "Inner Pot", extracted: r.specifications?.["Inner Pot"] || r.specifications?.["Inner Pot Material"] || "—", cuckoo: cuckoo.innerPot || "—" },
-                { label: "Cooking Modes", extracted: r.specifications?.["Cooking Modes"] || r.specifications?.["Menu Options"] || "—", cuckoo: cuckoo.cookingModes ? (cuckoo.cookingModes + (cuckoo.otherMenuModes ? " (+" + cuckoo.otherMenuModes + " other)" : "")) : "—" },
-                { label: "Features", extracted: r.bullet_points ? r.bullet_points.slice(0, 3).join("; ") : "—", cuckoo: cuckooFeats || "—" },
-                { label: "Country of Manufacture", extracted: r.specifications?.["Country of Origin"] || r.specifications?.["Made In"] || "—", cuckoo: cuckoo.mfg || "—" },
+                { label: "Title", extracted: r.title || "—", cuckoo: ldCompareModel + " — " + cuckoo.type },
+                { label: "Brand", extracted: r.brand || "—", cuckoo: "CUCKOO" },
+                { label: "Price", extracted: r.price || "—", cuckoo: "—" },
+                { label: "Type", extracted: specLookup("type", "Type", "Product Type", "Cooker Type"), cuckoo: cuckoo.type },
+                { label: "Heating", extracted: specLookup("heating", "Heating", "Heating Method", "Heating Type", "Heat", "Heating Technology"), cuckoo: cuckoo.heating || "—" },
+                { label: "Pressure", extracted: specLookup("pressure", "Pressure", "Pressure Cooking"), cuckoo: cuckoo.pressure ? "Yes" : "No" },
+                { label: "Cup Size", extracted: specLookup("cup_size", "Cup Size", "Capacity", "Size", "Cooking Capacity"), cuckoo: cuckoo.cupSize || "—" },
+                { label: "Color", extracted: r.color || specLookup("color", "Color", "Colour", "Finish") , cuckoo: cuckoo.color || "—" },
+                { label: "Inner Pot", extracted: specLookup("inner_pot", "Inner Pot", "Inner Pot Material", "Inner Bowl", "Cooking Pan", "Nonstick"), cuckoo: cuckoo.innerPot || "—" },
+                { label: "Cooking Modes", extracted: specLookup("cooking_modes", "Cooking Modes", "Menu Options", "Menu Settings", "Cooking Programs", "Preset Programs"), cuckoo: cuckoo.cookingModes ? (cuckoo.cookingModes + (cuckoo.otherMenuModes ? " (+" + cuckoo.otherMenuModes + " other)" : "")) : "—" },
+                { label: "Features", extracted: specLookup("features", "Features", "Key Features") !== "—" ? specLookup("features", "Features", "Key Features") : (r.bullet_points ? r.bullet_points.slice(0, 3).join("; ") : "—"), cuckoo: cuckooFeats || "—" },
+                { label: "Country of Manufacture", extracted: specLookup("country_of_manufacture", "Country of Origin", "Made In", "Country of Manufacture", "Manufactured In", "Origin"), cuckoo: cuckoo.mfg || "—" },
+                { label: "Wattage", extracted: specLookup("wattage", "Wattage", "Power", "Power Consumption", "Watts"), cuckoo: "—" },
                 { label: "Rating", extracted: r.rating != null ? r.rating + " / 5" : "—", cuckoo: "—" },
                 { label: "Reviews", extracted: r.review_count != null ? r.review_count.toLocaleString() : "—", cuckoo: "—" },
                 { label: "ASIN", extracted: r.asin || "—", cuckoo: cuckoo.asin || "—" },
