@@ -833,7 +833,6 @@ function AppInner() {
   const [ldCopied, setLdCopied] = useState(null);
   const [ldCompareModel, setLdCompareModel] = useState("");
   const [ldCompareSearch, setLdCompareSearch] = useState("");
-  const [ldCuckooAmazon, setLdCuckooAmazon] = useState(null); // { sku, price, rating, review_count, wattage, loading, error }
   // Dark mode
   const [darkMode, setDarkMode] = useState(false);
   useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} })(); }, []);
@@ -1521,53 +1520,6 @@ function AppInner() {
   }, [ldUrl, ldInputMode, ldPdfFile]);
 
   // Fetch CUCKOO product Amazon data (price, rating, wattage) for comparison
-  const fetchCuckooAmazonData = useCallback(async (sku) => {
-    const product = PRODUCT_DB[sku];
-    if (!product?.asin) { setLdCuckooAmazon({ sku, error: "No ASIN in database", loading: false }); return; }
-    setLdCuckooAmazon({ sku, loading: true, error: null });
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort("timeout"), 60000);
-    try {
-      const asin = product.asin;
-      const amazonUrl = "https://www.amazon.com/dp/" + asin;
-      const sysPrompt = "You are a product data extraction specialist. The user will give you an Amazon product URL. Use the web_search tool to search for this exact product on Amazon and extract the following data. You MUST provide actual values from the listing — do not return null if the data exists on the page.\n\nExtract:\n- price: The current selling price as a string (e.g. \"$299.99\")\n- rating: The average star rating as a number (e.g. 4.5)\n- review_count: The number of customer reviews as a number (e.g. 1234)\n- wattage: The wattage or power consumption from the product specs (e.g. \"1090W\")\n- availability: Stock status (e.g. \"In Stock\")\n\nRespond ONLY with valid JSON: {\"price\":\"...\",\"rating\":...,\"review_count\":...,\"wattage\":\"...\",\"availability\":\"...\"}";
-      const userMsg = "Search for this Amazon product and extract the price, rating, review count, and wattage:\n\nURL: " + amazonUrl + "\nASIN: " + asin + "\nProduct: CUCKOO " + sku + " " + (product.type || "") + " Rice Cooker\n\nSearch Amazon for this product. Return the actual listing data. Respond ONLY with valid JSON.";
-      const messages = [{ role: "user", content: userMsg }];
-      const baseBody = { model: "claude-sonnet-4-20250514", max_tokens: 500, temperature: 0, system: sysPrompt, tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }] };
-      let allText = "";
-      for (let turn = 0; turn < 6; turn++) {
-        const res = await fetch("/api/messages", {
-          method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
-          body: JSON.stringify({ ...baseBody, messages })
-        });
-        if (!res.ok) throw new Error("API returned " + res.status);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error.message || "API error");
-        const textParts = data.content?.filter(b => b.type === "text").map(b => b.text) || [];
-        allText += textParts.join("\n");
-        if (data.stop_reason !== "tool_use") break;
-        messages.push({ role: "assistant", content: data.content });
-        const toolResults = data.content.filter(b => b.type === "tool_use").map(b => ({
-          type: "tool_result", tool_use_id: b.id, content: "Search completed. Now extract the price, rating, review count, and wattage from the results and respond with valid JSON."
-        }));
-        messages.push({ role: "user", content: toolResults });
-      }
-      let parsed = parseJsonResponse(allText);
-      if (!parsed) {
-        // Fallback: try to repair
-        const repairRes = await fetch("/api/messages", {
-          method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
-          body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 300, temperature: 0, system: "Fix this into valid JSON. Return ONLY the corrected JSON.", messages: [{ role: "user", content: allText.slice(0, 3000) }] })
-        });
-        if (repairRes.ok) { const rd = await repairRes.json(); parsed = parseJsonResponse(extractTextFromContent(rd.content)); }
-      }
-      if (!parsed) throw new Error("Could not parse Amazon data");
-      setLdCuckooAmazon({ sku, loading: false, error: null, price: parsed.price || null, rating: parsed.rating ?? null, review_count: parsed.review_count ?? null, wattage: parsed.wattage || null, availability: parsed.availability || null });
-    } catch (e) {
-      setLdCuckooAmazon(prev => ({ ...prev, loading: false, error: e.name === "AbortError" ? "Timed out" : (e.message || "Failed to fetch") }));
-    } finally { clearTimeout(timeoutId); }
-  }, []);
-
   const optimize = useCallback(async () => {
     const title = titleRef.current;
     const sel = selectedRef.current;
@@ -3310,7 +3262,7 @@ function AppInner() {
               <input value={ldCompareSearch} onChange={e => setLdCompareSearch(e.target.value)} placeholder="Search CUCKOO models..."
                 style={{ flex: 1, padding: "8px 12px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 6, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", color: "#1a1a1a", boxSizing: "border-box" }}
                 onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
-              {ldCompareModel && <button onClick={() => { setLdCompareModel(""); setLdCompareSearch(""); setLdCuckooAmazon(null); }} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "6px 12px", fontSize: 11, color: "#888", cursor: "pointer" }}>Clear</button>}
+              {ldCompareModel && <button onClick={() => { setLdCompareModel(""); setLdCompareSearch(""); }} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "6px 12px", fontSize: 11, color: "#888", cursor: "pointer" }}>Clear</button>}
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 140, overflowY: "auto", marginBottom: ldCompareModel ? 16 : 0 }}>
               {Object.entries(PRODUCT_DB).filter(([sku, d]) => {
@@ -3320,7 +3272,7 @@ function AppInner() {
               }).map(([sku, d]) => {
                 const sel = ldCompareModel === sku;
                 return (
-                  <button key={sku} onClick={() => { const newSku = sel ? "" : sku; setLdCompareModel(newSku); setLdCompareSearch(""); if (newSku && (!ldCuckooAmazon || ldCuckooAmazon.sku !== newSku)) fetchCuckooAmazonData(newSku); }}
+                  <button key={sku} onClick={() => { setLdCompareModel(sel ? "" : sku); setLdCompareSearch(""); }}
                     style={{ padding: "5px 10px", background: sel ? MAROON : "#fff", border: `1.5px solid ${sel ? MAROON : "#e0ddd8"}`, borderRadius: 6, cursor: "pointer", color: sel ? "#fff" : "#555", fontSize: 11, fontWeight: 500, fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s" }}>
                     {sku} <span style={{ fontSize: 9, opacity: 0.7 }}>{d.type}</span>
                   </button>
@@ -3374,14 +3326,10 @@ function AppInner() {
                   cuckooCookingModes += " — " + names;
                 }
               }
-              // CUCKOO Amazon data (price, rating, wattage) fetched via web search
-              const ca = ldCuckooAmazon && ldCuckooAmazon.sku === ldCompareModel && !ldCuckooAmazon.loading ? ldCuckooAmazon : null;
-              const caLoading = ldCuckooAmazon && ldCuckooAmazon.sku === ldCompareModel && ldCuckooAmazon.loading;
-              const caLabel = (val, fallback) => caLoading ? "Loading..." : (ca && val != null && val !== "" && val !== "null" ? String(val) : fallback);
               const compRows = [
                 { label: "Title", extracted: r.title || "—", cuckoo: ldCompareModel + " — " + cuckoo.type },
                 { label: "Brand", extracted: r.brand || "—", cuckoo: "CUCKOO" },
-                { label: "Price", extracted: r.price || "—", cuckoo: caLabel(ca?.price, "—") },
+                { label: "Price", extracted: r.price || "—", cuckoo: cuckoo.price || "—" },
                 { label: "Type", extracted: rawType, cuckoo: cuckoo.type },
                 { label: "Heating", extracted: rawHeating, cuckoo: cuckoo.heating || "—" },
                 { label: "Pressure", extracted: rawPressure, cuckoo: cuckoo.pressure ? "Yes" : "No" },
@@ -3391,9 +3339,11 @@ function AppInner() {
                 { label: "Cooking Modes", extracted: rawCookingModes, cuckoo: cuckooCookingModes },
                 { label: "Features", extracted: specLookup("features", "Features", "Key Features") !== "—" ? specLookup("features", "Features", "Key Features") : (r.bullet_points ? r.bullet_points.slice(0, 3).join("; ") : "—"), cuckoo: cuckooFeats || "—" },
                 { label: "Country of Manufacture", extracted: specLookup("country_of_manufacture", "Country of Origin", "Made In", "Country of Manufacture", "Manufactured In", "Origin"), cuckoo: cuckoo.mfg || "—" },
-                { label: "Wattage", extracted: specLookup("wattage", "Wattage", "Power", "Power Consumption", "Watts"), cuckoo: caLabel(ca?.wattage, "—") },
-                { label: "Rating", extracted: r.rating != null ? r.rating + " / 5" : "—", cuckoo: caLabel(ca?.rating != null ? ca.rating + " / 5" : null, "—") },
-                { label: "Reviews", extracted: r.review_count != null ? r.review_count.toLocaleString() : "—", cuckoo: caLabel(ca?.review_count != null ? ca.review_count.toLocaleString() : null, "—") },
+                { label: "Dimensions", extracted: specLookup("dimensions", "Dimensions", "Product Dimensions", "Item Dimensions"), cuckoo: cuckoo.dimensions || "—" },
+                { label: "Weight", extracted: specLookup("weight", "Weight", "Item Weight", "Product Weight"), cuckoo: cuckoo.weight || "—" },
+                { label: "Wattage", extracted: specLookup("wattage", "Wattage", "Power", "Power Consumption", "Watts"), cuckoo: cuckoo.wattage || "—" },
+                { label: "Rating", extracted: r.rating != null ? r.rating + " / 5" : "—", cuckoo: "—" },
+                { label: "Reviews", extracted: r.review_count != null ? r.review_count.toLocaleString() : "—", cuckoo: "—" },
                 { label: "ASIN", extracted: r.asin || "—", cuckoo: cuckoo.asin || "—" },
               ];
               return (
@@ -3408,7 +3358,7 @@ function AppInner() {
                     <div style={{ padding: "12px 14px", background: "rgba(107,28,35,0.04)", borderLeft: "1px solid #f0eeeb", textAlign: "center" }}>
                       {PRODUCT_IMAGES[ldCompareModel] && <img src={PRODUCT_IMAGES[ldCompareModel]} alt={ldCompareModel} style={{ width: 48, height: 48, objectFit: "contain", marginBottom: 4, borderRadius: 4 }} />}
                       <div style={{ fontSize: 11, fontWeight: 700, color: MAROON }}>{ldCompareModel}</div>
-                      <div style={{ fontSize: 9, color: "#aaa" }}>CUCKOO {caLoading ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 4 }}><span style={{ width: 8, height: 8, border: "1.5px solid rgba(107,28,35,0.3)", borderTopColor: MAROON, borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />fetching Amazon data...</span> : ca ? <span style={{ color: "#16a34a" }}>{"\u2713"} Amazon data loaded</span> : ldCuckooAmazon?.error ? <span style={{ color: "#dc2626" }}>{ldCuckooAmazon.error} <button onClick={() => fetchCuckooAmazonData(ldCompareModel)} style={{ background: "none", border: "none", color: MAROON, fontSize: 9, fontWeight: 700, cursor: "pointer", textDecoration: "underline", padding: 0 }}>Retry</button></span> : cuckoo.asin ? <button onClick={() => fetchCuckooAmazonData(ldCompareModel)} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 4, padding: "1px 8px", fontSize: 9, color: "#888", cursor: "pointer" }}>Fetch Amazon data</button> : ""}</div>
+                      <div style={{ fontSize: 9, color: "#aaa" }}>CUCKOO</div>
                     </div>
                   </div>
                   {/* Data rows */}
