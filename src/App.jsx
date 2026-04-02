@@ -833,6 +833,27 @@ function AppInner() {
   const [ldCopied, setLdCopied] = useState(null);
   const [ldCompareModel, setLdCompareModel] = useState("");
   const [ldCompareSearch, setLdCompareSearch] = useState("");
+  // Listing Workspace state
+  const [wsModel, setWsModel] = useState("");
+  const [wsMarketplaces, setWsMarketplaces] = useState(["amazon","walmart","target","bestbuy","wayfair","kohls","macys","bloomingdales","tiktokshop","weee"]);
+  const [wsResults, setWsResults] = useState(null); // { titles, bullets, keywords, audit }
+  const [wsLoading, setWsLoading] = useState(null); // null | "titles" | "bullets" | "keywords" | "audit"
+  const [wsError, setWsError] = useState(null);
+  const [wsElapsed, setWsElapsed] = useState(0);
+  const wsAbortRef = useRef(null);
+  const wsTimerRef = useRef(null);
+  // Review Analyzer state
+  const [raModel, setRaModel] = useState("");
+  const [raResults, setRaResults] = useState(null);
+  const [raLoading, setRaLoading] = useState(false);
+  const [raError, setRaError] = useState(null);
+  const [raElapsed, setRaElapsed] = useState(0);
+  const raAbortRef = useRef(null);
+  const raTimerRef = useRef(null);
+  // Compliance Checker state
+  const [ccModel, setCcModel] = useState("");
+  const [ccTitle, setCcTitle] = useState("");
+  const [ccResults, setCcResults] = useState(null);
   // Dark mode
   const [darkMode, setDarkMode] = useState(false);
   useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} })(); }, []);
@@ -1519,7 +1540,133 @@ function AppInner() {
     }
   }, [ldUrl, ldInputMode, ldPdfFile]);
 
-  // Fetch CUCKOO product Amazon data (price, rating, wattage) for comparison
+  // --- LISTING WORKSPACE: Generate full listing (titles + bullets + keywords + audit) in one flow ---
+  const generateFullListing = useCallback(async () => {
+    if (!wsModel.trim() || wsLoading) return;
+    const product = lookupProduct(wsModel, liveProductDbRef.current);
+    if (!product) { setWsError("Model not found in database"); return; }
+    const productCtx = formatProductContext(product);
+    setWsResults(null); setWsError(null); setWsElapsed(0);
+    const startTime = Date.now();
+    wsTimerRef.current = setInterval(() => setWsElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (wsAbortRef.current) wsAbortRef.current.abort();
+    const controller = new AbortController();
+    wsAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 180000);
+    const callApi = async (system, userMsg, maxTokens, temp) => {
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, temperature: temp, system, messages: [{ role: "user", content: userMsg }] })
+      });
+      if (!res.ok) throw new Error("API returned " + res.status);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = extractTextFromContent(data.content);
+      const parsed = parseJsonResponse(text);
+      if (!parsed) throw new Error("Could not parse response");
+      return parsed;
+    };
+    try {
+      // Step 1: Titles
+      setWsLoading("titles");
+      const catRules = CATEGORY_RULES[categoryRef.current] || CATEGORY_RULES.rice_cooker;
+      const gl = wsMarketplaces.map(k => MARKETPLACES[k]?.guidelines || "").join("\n---\n");
+      const titleMsg = `Model number: "${wsModel.trim()}"\nThis is a CUCKOO product model number. Create an optimized Amazon title from scratch.\n\n${productCtx}\n1. Use the VERIFIED PRODUCT DATA above as your ONLY source.\n2. Create a fully optimized Amazon title that maximizes the 200-character limit.\n3. Put this title in amazon_audit.suggested_title. Score it.\n4. Then convert for these marketplaces: ${wsMarketplaces.join(", ")}\n\nGuidelines:\n${gl}\nRespond ONLY with valid JSON.`;
+      const titles = await callApi(SYSTEM_PROMPT + catRules, titleMsg, 1500, 0.3);
+      const amazonTitle = titles.amazon_audit?.suggested_title || titles.conversions?.amazon?.title || "";
+      setWsResults(prev => ({ ...prev, titles, _amazonTitle: amazonTitle, _product: product }));
+
+      // Step 2: Bullets
+      setWsLoading("bullets");
+      const bpSys = "You are a senior ecommerce copywriter at CUCKOO Electronics America. Generate 5 bullet points for an Amazon product listing. Each bullet should start with a CAPITALIZED benefit phrase (2-4 words), followed by a colon and descriptive text. Only use verified product data — never invent features.\nRespond ONLY with valid JSON: {\"bullets\":[{\"heading\":\"...\",\"text\":\"...\"}]}";
+      const bpMsg = "Generate 5 bullet points for CUCKOO " + wsModel.trim() + " on Amazon:\n\n" + productCtx + (amazonTitle ? "\n\nLISTING TITLE (align bullets with):\n\"" + amazonTitle + "\"" : "") + "\nRespond ONLY with valid JSON.";
+      const bullets = await callApi(bpSys, bpMsg, 1500, 0.3);
+      setWsResults(prev => ({ ...prev, bullets }));
+
+      // Step 3: Backend Keywords
+      setWsLoading("keywords");
+      const bulletText = bullets.bullets?.map(b => b.heading + ": " + b.text).join("\n") || "";
+      const bkSys = "Amazon backend keyword specialist for CUCKOO Electronics America. Generate hidden search terms (500 byte max). Prioritize competitor brand names, alternate language terms, synonym phrases not in the title or bullets. Space-separated only, no punctuation, no words already in title or bullets, no ASINs or promo phrases.\nRespond ONLY with valid JSON: {\"keywords\":\"space-separated string\",\"byte_count\":0,\"strategy\":[\"brief explanation\"]}";
+      const bkMsg = "Generate backend keywords for CUCKOO " + wsModel.trim() + ":\n\n" + productCtx + (amazonTitle ? "\n\nCURRENT TITLE (exclude these words):\n\"" + amazonTitle + "\"" : "") + (bulletText ? "\n\nCURRENT BULLETS (exclude these words):\n" + bulletText : "") + "\nRespond ONLY with valid JSON.";
+      let keywords = await callApi(bkSys, bkMsg, 800, 0.3);
+      keywords.byte_count = new TextEncoder().encode(keywords.keywords || "").length;
+      if (keywords.byte_count > 500) {
+        const words = (keywords.keywords || "").split(" ");
+        const enc = new TextEncoder();
+        while (words.length > 1 && enc.encode(words.join(" ")).length > 500) words.pop();
+        keywords.keywords = words.join(" ");
+        keywords.byte_count = enc.encode(keywords.keywords).length;
+      }
+      setWsResults(prev => ({ ...prev, keywords }));
+
+      // Step 4: Audit
+      setWsLoading("audit");
+      const auditSys = "You are an Amazon listing optimization expert for CUCKOO Electronics America. Score this listing across 7 categories (1-10 each): title_seo, keyword_coverage, bullet_quality, backend_keywords, brand_compliance, competitiveness, completeness. Provide overall_score as weighted average. For any category below 8, provide a concrete recommended rewrite.\nRespond ONLY with valid JSON: {\"overall_score\":0,\"categories\":{\"title_seo\":{\"score\":0,\"notes\":\"\"},\"keyword_coverage\":{\"score\":0,\"notes\":\"\"},\"bullet_quality\":{\"score\":0,\"notes\":\"\"},\"backend_keywords\":{\"score\":0,\"notes\":\"\"},\"brand_compliance\":{\"score\":0,\"notes\":\"\"},\"competitiveness\":{\"score\":0,\"notes\":\"\"},\"completeness\":{\"score\":0,\"notes\":\"\"}},\"recommendations\":[]}";
+      const auditMsg = "Audit this Amazon listing:\nTitle: " + amazonTitle + "\nBullet Points:\n" + bulletText + "\nBackend Keywords:\n" + (keywords.keywords || "") + "\n\n" + productCtx + "\nRespond ONLY with valid JSON.";
+      const audit = await callApi(auditSys, auditMsg, 2000, 0);
+      setWsResults(prev => ({ ...prev, audit }));
+      setWsLoading(null);
+    } catch (e) {
+      setWsError(formatApiError(e));
+      setWsLoading(null);
+    } finally {
+      clearTimeout(timeoutId);
+      if (wsTimerRef.current) { clearInterval(wsTimerRef.current); wsTimerRef.current = null; }
+      wsAbortRef.current = null;
+    }
+  }, [wsModel, wsMarketplaces]);
+
+  // --- REVIEW ANALYZER: Analyze reviews for a product ---
+  const analyzeReviews = useCallback(async () => {
+    if (!raModel.trim() || raLoading) return;
+    setRaLoading(true); setRaError(null); setRaResults(null); setRaElapsed(0);
+    const startTime = Date.now();
+    raTimerRef.current = setInterval(() => setRaElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (raAbortRef.current) raAbortRef.current.abort();
+    const controller = new AbortController();
+    raAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 90000);
+    try {
+      // Load reviews from embedded data or fetch from file
+      let allReviews;
+      try { allReviews = (await import("../data/reviews.json")).default || []; }
+      catch { allReviews = []; }
+      if (!allReviews.length) throw new Error("Review database not available");
+      // Find reviews matching the model (fuzzy match on SKU field which may contain multiple SKUs separated by +)
+      const q = raModel.trim().toUpperCase();
+      const reviews = allReviews.filter(r => r.sku && r.sku.toUpperCase().split(/\s*\+\s*/).some(s => s.trim().startsWith(q) || q.startsWith(s.trim().replace(/[- ]/g, ""))));
+      if (!reviews.length) throw new Error("No reviews found for " + raModel.trim() + ". Available SKUs with reviews: " + [...new Set(allReviews.map(r => r.sku))].slice(0, 10).join(", "));
+      // Build review summary for AI analysis (limit to recent 200 reviews to fit in context)
+      const sorted = reviews.sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 200);
+      const avgRating = (reviews.reduce((s, r) => s + (r.rating || 0), 0) / reviews.length).toFixed(1);
+      const ratingDist = {};
+      reviews.forEach(r => { ratingDist[r.rating] = (ratingDist[r.rating] || 0) + 1; });
+      const reviewText = sorted.map(r => `[${r.rating}★] ${r.title}\n${r.body}`).join("\n---\n");
+      const raSys = "You are a customer insights analyst for CUCKOO Electronics America. Analyze product reviews and extract actionable insights for the ecommerce team.\n\nRespond ONLY with valid JSON: {\"summary\":{\"total_reviews\":0,\"avg_rating\":0,\"sentiment\":\"positive/mixed/negative\"},\"themes\":{\"positive\":[{\"theme\":\"...\",\"count\":0,\"example_quotes\":[\"...\"]}],\"negative\":[{\"theme\":\"...\",\"count\":0,\"example_quotes\":[\"...\"],\"suggestion\":\"...\"}],\"questions\":[{\"theme\":\"...\",\"count\":0,\"example_quotes\":[\"...\"]}]},\"keyword_opportunities\":[{\"keyword\":\"...\",\"reason\":\"...\"}],\"bullet_suggestions\":[{\"heading\":\"...\",\"text\":\"...\",\"based_on\":\"...\"}],\"competitor_mentions\":[{\"brand\":\"...\",\"context\":\"...\"}],\"urgent_issues\":[{\"issue\":\"...\",\"frequency\":\"...\",\"impact\":\"...\"}]}";
+      const raMsg = "Analyze these " + reviews.length + " customer reviews for CUCKOO " + raModel.trim() + " (avg rating: " + avgRating + "/5):\n\nRating distribution: " + JSON.stringify(ratingDist) + "\n\n" + reviewText.slice(0, 50000) + "\n\nProvide actionable insights. Respond ONLY with valid JSON.";
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0.2, system: raSys, messages: [{ role: "user", content: raMsg }] })
+      });
+      if (!res.ok) throw new Error("API returned " + res.status);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = extractTextFromContent(data.content);
+      const parsed = parseJsonResponse(text);
+      if (!parsed) throw new Error("Could not parse analysis");
+      parsed._reviewCount = reviews.length;
+      parsed._avgRating = avgRating;
+      parsed._ratingDist = ratingDist;
+      setRaResults(parsed);
+    } catch (e) {
+      setRaError(formatApiError(e));
+    } finally {
+      clearTimeout(timeoutId);
+      if (raTimerRef.current) { clearInterval(raTimerRef.current); raTimerRef.current = null; }
+      setRaLoading(false); raAbortRef.current = null;
+    }
+  }, [raModel]);
+
   const optimize = useCallback(async () => {
     const title = titleRef.current;
     const sel = selectedRef.current;
@@ -1697,6 +1844,7 @@ function AppInner() {
           <nav ref={navGroupRef} className="nav-scroll" role="tablist" aria-label="Tool navigation" style={{ flex: 1, display: "flex", gap: 0 }}>
           {[
             { group: "generate", label: "Generate", icon: "\u270F\uFE0F", items: [
+              { key: "listing_workspace", label: "Listing Workspace", icon: "\u{1F680}" },
               { key: "title_optimizer", label: "Marketplace Titles", icon: "\u270F\uFE0F" },
               { key: "bullet_points", label: "Bullet Points", icon: "\u{1F4DD}" },
               { key: "backend_keywords", label: "Backend Keywords", icon: "\u{1F50D}" },
@@ -1705,6 +1853,8 @@ function AppInner() {
             { group: "analyze", label: "Analyze", icon: "\u{1F4CA}", items: [
               { key: "competitor_analyzer", label: "Competitor Analyzer", icon: "\u{1F3C6}" },
               { key: "listing_extractor", label: "Listing Extractor", icon: "\u{1F310}" },
+              { key: "review_analyzer", label: "Review Analyzer", icon: "\u{2B50}" },
+              { key: "compliance_checker", label: "Compliance Checker", icon: "\u2705" },
             ]},
             { group: "reference", label: "Reference", icon: "\u{1F4D6}", items: [
               { key: "search_volume", label: "Search Volume", icon: "\u{1F4CA}" },
@@ -1837,6 +1987,146 @@ function AppInner() {
               {"\u{1F4E5}"} Search Volume Data ({liveSearchData.length} keywords)
             </button>
           </div>
+        </div>
+      </div>}
+
+      {/* LISTING WORKSPACE PAGE */}
+      {page === "listing_workspace" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Generate a <strong>complete listing package</strong> for any CUCKOO product in one flow — marketplace titles, bullet points, backend keywords, and an audit score. Enter a model number and click Generate.
+          </p>
+        </div>
+
+        {/* Model Input */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>CUCKOO Model Number</label>
+          <input value={wsModel} onChange={e => setWsModel(e.target.value)} placeholder="e.g. CRP-LHTR0609FW"
+            style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 14, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"}
+            onKeyDown={e => { if (e.key === "Enter" && wsModel.trim() && !wsLoading) generateFullListing(); }} />
+          {wsModel.trim() && lookupProduct(wsModel, liveProductDbRef.current) && <div style={{ marginTop: 6, fontSize: 10, color: "#16a34a" }}>{"\u2713"} Found in database: {lookupProduct(wsModel, liveProductDbRef.current)?.type} — {lookupProduct(wsModel, liveProductDbRef.current)?.cupSize}</div>}
+          {wsModel.trim() && !lookupProduct(wsModel, liveProductDbRef.current) && <div style={{ marginTop: 6, fontSize: 10, color: "#e57373" }}>Model not found in database</div>}
+        </div>
+
+        {/* Generate Button */}
+        {(() => {
+          const ready = wsModel.trim() && lookupProduct(wsModel, liveProductDbRef.current) && !wsLoading;
+          const steps = ["titles", "bullets", "keywords", "audit"];
+          const stepLabels = { titles: "Generating titles...", bullets: "Generating bullet points...", keywords: "Generating backend keywords...", audit: "Running audit..." };
+          const currentStep = wsLoading ? steps.indexOf(wsLoading) + 1 : 0;
+          return (<>
+            <button disabled={!ready && !wsLoading} onClick={generateFullListing}
+              style={{ width: "100%", padding: 16, background: !ready && !wsLoading ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: !ready && !wsLoading ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: !ready && !wsLoading ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: !ready && !wsLoading ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
+              {wsLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                {stepLabels[wsLoading]} (Step {currentStep}/4)
+              </span>) : "Generate Full Listing"}
+            </button>
+            {wsLoading && <div style={{ textAlign: "center", marginBottom: 12 }}>
+              <div style={{ height: 4, background: "#e8e5e0", borderRadius: 2, overflow: "hidden", marginBottom: 6 }}><div style={{ width: `${(currentStep / 4) * 100}%`, height: "100%", background: MAROON, borderRadius: 2, transition: "width .4s ease" }} /></div>
+              <span style={{ fontSize: 10, color: "#aaa" }}>{wsElapsed}s</span>
+              <button onClick={() => { if (wsAbortRef.current) wsAbortRef.current.abort(); setWsLoading(null); setWsError("Cancelled."); if (wsTimerRef.current) { clearInterval(wsTimerRef.current); wsTimerRef.current = null; } }}
+                style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer", marginLeft: 8 }}>Cancel</button>
+            </div>}
+          </>);
+        })()}
+
+        {wsError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 16, color: "#dc2626", fontSize: 13 }}>{wsError}</div>}
+
+        {/* Results */}
+        {wsResults && (<div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Audit Score Header */}
+          {wsResults.audit && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)", display: "flex", alignItems: "center", gap: 20 }}>
+            <div style={{ width: 64, height: 64, borderRadius: "50%", border: `4px solid ${(wsResults.audit.overall_score || 0) >= 8 ? "#16a34a" : (wsResults.audit.overall_score || 0) >= 5 ? "#d97706" : "#dc2626"}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <span style={{ fontSize: 22, fontWeight: 800, color: (wsResults.audit.overall_score || 0) >= 8 ? "#16a34a" : (wsResults.audit.overall_score || 0) >= 5 ? "#d97706" : "#dc2626", fontFamily: "'IBM Plex Mono',monospace" }}>{wsResults.audit.overall_score || "—"}</span>
+            </div>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a" }}>Listing Quality Score</div>
+              <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{wsResults._product?.sku} — {wsResults._product?.type} {wsResults._product?.cupSize}</div>
+            </div>
+          </div>}
+
+          {/* Amazon Title */}
+          {wsResults._amazonTitle && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Amazon Title ({wsResults._amazonTitle.length} chars)</div>
+              <button onClick={() => { navigator.clipboard.writeText(wsResults._amazonTitle); setToast("Copied"); setTimeout(() => setToast(null), 1500); }} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "4px 10px", fontSize: 10, color: "#888", cursor: "pointer" }}>Copy</button>
+            </div>
+            <div style={{ fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", color: "#1a1a1a", lineHeight: 1.6 }}>{wsResults._amazonTitle}</div>
+          </div>}
+
+          {/* Marketplace Titles */}
+          {wsResults.titles?.conversions && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Marketplace Titles ({Object.keys(wsResults.titles.conversions).length})</div>
+            {Object.entries(wsResults.titles.conversions).map(([key, val]) => (
+              <div key={key} style={{ padding: "10px 0", borderBottom: "1px solid #f5f3f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: MARKETPLACES[key]?.accent || "#888", textTransform: "uppercase" }}>{MARKETPLACES[key]?.name || key}</span>
+                  <span style={{ fontSize: 10, color: "#ccc", marginLeft: 8 }}>{val.char_count || val.title?.length || 0} chars</span>
+                  <div style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#555", marginTop: 4, lineHeight: 1.5 }}>{val.title}</div>
+                </div>
+                <button onClick={() => { navigator.clipboard.writeText(val.title); setToast("Copied"); setTimeout(() => setToast(null), 1500); }} style={{ background: "none", border: "none", fontSize: 10, color: "#ccc", cursor: "pointer", flexShrink: 0 }}>copy</button>
+              </div>
+            ))}
+          </div>}
+
+          {/* Bullet Points */}
+          {wsResults.bullets?.bullets && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Bullet Points ({wsResults.bullets.bullets.length})</div>
+              <button onClick={() => { const txt = wsResults.bullets.bullets.map(b => b.heading + ": " + b.text).join("\n\n"); navigator.clipboard.writeText(txt); setToast("Copied all bullets"); setTimeout(() => setToast(null), 1500); }} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "4px 10px", fontSize: 10, color: "#888", cursor: "pointer" }}>Copy all</button>
+            </div>
+            {wsResults.bullets.bullets.map((b, i) => (
+              <div key={i} style={{ padding: "8px 0", borderBottom: i < wsResults.bullets.bullets.length - 1 ? "1px solid #f5f3f0" : "none" }}>
+                <span style={{ fontWeight: 700, color: MAROON, fontSize: 12 }}>{b.heading}:</span>
+                <span style={{ fontSize: 12, color: "#555", marginLeft: 6 }}>{b.text}</span>
+              </div>
+            ))}
+          </div>}
+
+          {/* Backend Keywords */}
+          {wsResults.keywords?.keywords && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Backend Keywords ({wsResults.keywords.byte_count}/500 bytes)</div>
+              <button onClick={() => { navigator.clipboard.writeText(wsResults.keywords.keywords); setToast("Copied keywords"); setTimeout(() => setToast(null), 1500); }} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "4px 10px", fontSize: 10, color: "#888", cursor: "pointer" }}>Copy</button>
+            </div>
+            <div style={{ padding: "10px 14px", background: "#faf9f7", borderRadius: 8, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#555", lineHeight: 1.7 }}>{wsResults.keywords.keywords}</div>
+          </div>}
+
+          {/* Audit Categories */}
+          {wsResults.audit?.categories && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Audit Breakdown</div>
+            {Object.entries(wsResults.audit.categories).map(([key, val]) => (
+              <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 0", borderBottom: "1px solid #f5f3f0" }}>
+                <span style={{ fontSize: 16, fontWeight: 800, fontFamily: "'IBM Plex Mono',monospace", width: 32, textAlign: "center", color: (val.score || 0) >= 8 ? "#16a34a" : (val.score || 0) >= 5 ? "#d97706" : "#dc2626" }}>{val.score}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#555", textTransform: "capitalize" }}>{key.replace(/_/g, " ")}</div>
+                  {val.notes && <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>{val.notes}</div>}
+                </div>
+              </div>
+            ))}
+          </div>}
+
+          {/* Export */}
+          <button onClick={() => {
+            const ws = wsResults;
+            const lines = ["CUCKOO Listing Package — " + (ws._product?.sku || wsModel)];
+            lines.push("\n=== AMAZON TITLE ===\n" + (ws._amazonTitle || ""));
+            if (ws.titles?.conversions) { lines.push("\n=== MARKETPLACE TITLES ==="); Object.entries(ws.titles.conversions).forEach(([k, v]) => lines.push(k.toUpperCase() + " (" + (v.char_count || "") + " chars): " + v.title)); }
+            if (ws.bullets?.bullets) { lines.push("\n=== BULLET POINTS ==="); ws.bullets.bullets.forEach((b, i) => lines.push((i+1) + ". " + b.heading + ": " + b.text)); }
+            if (ws.keywords?.keywords) lines.push("\n=== BACKEND KEYWORDS (" + ws.keywords.byte_count + "/500 bytes) ===\n" + ws.keywords.keywords);
+            if (ws.audit) lines.push("\n=== AUDIT SCORE: " + (ws.audit.overall_score || "—") + "/10 ===");
+            navigator.clipboard.writeText(lines.join("\n"));
+            setToast("Full listing copied to clipboard");
+            setTimeout(() => setToast(null), 2000);
+          }} style={{ width: "100%", padding: 14, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, color: "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+            {"\u{1F4CB}"} Copy Full Listing Package
+          </button>
+        </div>)}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Generates titles for {wsMarketplaces.length} marketplaces + bullets + keywords + audit in one flow</span>
         </div>
       </div>}
 
@@ -3388,6 +3678,230 @@ function AppInner() {
 
         <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
           <span style={{ fontSize: 10, color: "#ccc" }}>Data extracted via {ldInputMode === "pdf" ? "PDF document analysis" : "web search"} {"\u00B7"} {ldInputMode === "pdf" ? "Supports product manuals, spec sheets, and brochures" : "Results depend on page accessibility \u00B7 Some marketplaces may block automated access"}</span>
+        </div>
+      </div>}
+
+      {/* REVIEW ANALYZER PAGE */}
+      {page === "review_analyzer" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Analyze <strong>customer reviews</strong> for any CUCKOO product. Surfaces themes, keyword opportunities, bullet point suggestions, competitor mentions, and urgent issues from your review database.
+          </p>
+          <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
+            3,514 reviews across 33 products in database
+          </p>
+        </div>
+
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Product Model or SKU</label>
+          <input value={raModel} onChange={e => setRaModel(e.target.value)} placeholder="e.g. CRP-LHTR0609FW or CR-0671V"
+            style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 14, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"}
+            onKeyDown={e => { if (e.key === "Enter" && raModel.trim() && !raLoading) analyzeReviews(); }} />
+        </div>
+
+        {(() => {
+          const dis = raLoading || !raModel.trim();
+          return (<>
+            <button disabled={dis} onClick={analyzeReviews}
+              style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: dis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
+              {raLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                Analyzing reviews...
+              </span>) : "Analyze Reviews"}
+            </button>
+            {raLoading && <div style={{ textAlign: "center", fontSize: 10, color: "#aaa", marginBottom: 12 }}>{raElapsed}s
+              <button onClick={() => { if (raAbortRef.current) raAbortRef.current.abort(); setRaLoading(false); setRaError("Cancelled."); if (raTimerRef.current) { clearInterval(raTimerRef.current); raTimerRef.current = null; } }}
+                style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer", marginLeft: 8 }}>Cancel</button>
+            </div>}
+          </>);
+        })()}
+
+        {raError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 16, color: "#dc2626", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{raError}</span>
+          <button onClick={analyzeReviews} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Retry</button>
+        </div>}
+
+        {raResults && (<div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Summary Header */}
+          <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)", display: "flex", alignItems: "center", gap: 20 }}>
+            <div style={{ width: 64, height: 64, borderRadius: "50%", border: `4px solid ${parseFloat(raResults._avgRating) >= 4 ? "#16a34a" : parseFloat(raResults._avgRating) >= 3 ? "#d97706" : "#dc2626"}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <span style={{ fontSize: 20, fontWeight: 800, color: parseFloat(raResults._avgRating) >= 4 ? "#16a34a" : parseFloat(raResults._avgRating) >= 3 ? "#d97706" : "#dc2626", fontFamily: "'IBM Plex Mono',monospace" }}>{raResults._avgRating}{"\u2605"}</span>
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a" }}>{raResults._reviewCount} Reviews Analyzed</div>
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                {[5,4,3,2,1].map(s => <div key={s} style={{ fontSize: 10, color: "#888" }}>{s}{"\u2605"}: {raResults._ratingDist?.[s] || 0}</div>)}
+              </div>
+            </div>
+          </div>
+
+          {/* Positive Themes */}
+          {raResults.themes?.positive?.length > 0 && <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 12, padding: 20 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#16a34a", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Positive Themes</div>
+            {raResults.themes.positive.map((t, i) => (
+              <div key={i} style={{ padding: "8px 0", borderBottom: i < raResults.themes.positive.length - 1 ? "1px solid #dcfce7" : "none" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#166534" }}>{"\u2713"} {t.theme} {t.count ? <span style={{ fontSize: 10, color: "#86efac", fontWeight: 400 }}>({t.count} mentions)</span> : ""}</div>
+                {t.example_quotes?.map((q, j) => <div key={j} style={{ fontSize: 11, color: "#4ade80", marginTop: 4, fontStyle: "italic", paddingLeft: 16 }}>"{q}"</div>)}
+              </div>
+            ))}
+          </div>}
+
+          {/* Negative Themes / Issues */}
+          {raResults.themes?.negative?.length > 0 && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: 20 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#dc2626", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Negative Themes</div>
+            {raResults.themes.negative.map((t, i) => (
+              <div key={i} style={{ padding: "8px 0", borderBottom: i < raResults.themes.negative.length - 1 ? "1px solid #fecaca" : "none" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#991b1b" }}>{"\u2717"} {t.theme} {t.count ? <span style={{ fontSize: 10, color: "#f87171", fontWeight: 400 }}>({t.count} mentions)</span> : ""}</div>
+                {t.suggestion && <div style={{ fontSize: 11, color: "#b91c1c", marginTop: 4, paddingLeft: 16 }}>Suggestion: {t.suggestion}</div>}
+                {t.example_quotes?.map((q, j) => <div key={j} style={{ fontSize: 11, color: "#ef4444", marginTop: 2, fontStyle: "italic", paddingLeft: 16 }}>"{q}"</div>)}
+              </div>
+            ))}
+          </div>}
+
+          {/* Keyword Opportunities */}
+          {raResults.keyword_opportunities?.length > 0 && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Keyword Opportunities from Reviews</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {raResults.keyword_opportunities.map((kw, i) => (
+                <span key={i} style={{ padding: "4px 10px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 6, fontSize: 11, color: "#555", fontFamily: "'IBM Plex Mono',monospace" }} title={kw.reason}>{kw.keyword}</span>
+              ))}
+            </div>
+          </div>}
+
+          {/* Bullet Point Suggestions */}
+          {raResults.bullet_suggestions?.length > 0 && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Bullet Point Suggestions (from customer language)</div>
+            {raResults.bullet_suggestions.map((b, i) => (
+              <div key={i} style={{ padding: "8px 0", borderBottom: i < raResults.bullet_suggestions.length - 1 ? "1px solid #f5f3f0" : "none" }}>
+                <span style={{ fontWeight: 700, color: MAROON, fontSize: 12 }}>{b.heading}:</span>
+                <span style={{ fontSize: 12, color: "#555", marginLeft: 6 }}>{b.text}</span>
+                {b.based_on && <div style={{ fontSize: 10, color: "#bbb", marginTop: 2, paddingLeft: 16 }}>Based on: {b.based_on}</div>}
+              </div>
+            ))}
+          </div>}
+
+          {/* Urgent Issues */}
+          {raResults.urgent_issues?.length > 0 && <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: 20 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Urgent Issues</div>
+            {raResults.urgent_issues.map((iss, i) => (
+              <div key={i} style={{ padding: "6px 0", fontSize: 12, color: "#78350f" }}>{"\u26A0\uFE0F"} <strong>{iss.issue}</strong> — {iss.frequency} {iss.impact ? <span style={{ color: "#b45309" }}>({iss.impact})</span> : ""}</div>
+            ))}
+          </div>}
+
+          {/* Competitor Mentions */}
+          {raResults.competitor_mentions?.length > 0 && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Competitor Mentions in Reviews</div>
+            {raResults.competitor_mentions.map((cm, i) => (
+              <div key={i} style={{ padding: "4px 0", fontSize: 12, color: "#555" }}><strong>{cm.brand}</strong>: {cm.context}</div>
+            ))}
+          </div>}
+        </div>)}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Review analysis powered by AI {"\u00B7"} Based on verified customer reviews from Amazon</span>
+        </div>
+      </div>}
+
+      {/* COMPLIANCE CHECKER PAGE */}
+      {page === "compliance_checker" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Check a product title against <strong>all 10 marketplace rules</strong> at once. Enter a model number and title to see compliance status per marketplace with specific violations and fixes.
+          </p>
+        </div>
+
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Model Number (for keyword restriction checks)</label>
+            <input value={ccModel} onChange={e => { setCcModel(e.target.value); setCcResults(null); }} placeholder="e.g. CRP-LHTR0609FW"
+              style={{ width: "100%", padding: "8px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Title to Check</label>
+            <input value={ccTitle} onChange={e => { setCcTitle(e.target.value); setCcResults(null); }} placeholder="Paste any marketplace title here..."
+              style={{ width: "100%", padding: "8px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {ccTitle.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{ccTitle.trim().length} characters</div>}
+          </div>
+        </div>
+
+        <button disabled={!ccTitle.trim()} onClick={() => {
+          const title = ccTitle.trim();
+          const product = ccModel.trim() ? lookupProduct(ccModel, liveProductDbRef.current) : null;
+          const checks = {};
+          Object.entries(MARKETPLACES).forEach(([key, mp]) => {
+            const limit = CHAR_LIMITS[key];
+            const issues = [];
+            const pass = [];
+            // Character limit check
+            if (title.length > limit) issues.push("Over " + limit + " char limit (" + title.length + " chars)");
+            else pass.push("Within " + limit + " char limit (" + title.length + ")");
+            // Title case check
+            if (title === title.toUpperCase()) issues.push("ALL CAPS — most marketplaces require Title Case");
+            // Brand check
+            if (!title.toUpperCase().startsWith("CUCKOO")) issues.push("Title doesn't start with CUCKOO");
+            else pass.push("Brand CUCKOO leads");
+            // Cup count check
+            if (hasBadCupCount(title)) issues.push("Cup count missing Uncooked/Cooked qualifier");
+            else if (/\d+-?Cup/i.test(title)) pass.push("Cup count has qualifier");
+            // Prohibited characters
+            if (/[!$?_{}^]/.test(title)) issues.push("Contains prohibited characters (!, $, ?, _, {, }, ^)");
+            else pass.push("No prohibited characters");
+            // & Warmer check
+            if (/&\s*Warmer/i.test(title)) issues.push("Contains '& Warmer' — not allowed per CUCKOO rules");
+            // Keyword restrictions (if product known)
+            if (product) {
+              if (/\bsmall\b|\bmini\b|\bcompact\b/i.test(title)) {
+                const cups = parseInt(product.cupSize) || 99;
+                if (cups > 3) issues.push("Uses 'small/mini/compact' but product is " + product.cupSize);
+              }
+              if (/\bpressure\b/i.test(title) && !product.pressure) issues.push("Uses 'pressure' but product is not a pressure cooker");
+              if (/\binduction\b/i.test(title) && !product.heating?.includes("Induction")) issues.push("Uses 'induction' but product doesn't have induction heating");
+              if (/\bkorean\b/i.test(title) && product.mfg !== "South Korea") issues.push("Uses 'Korean' but product is made in " + (product.mfg || "unknown origin"));
+              if (/\bstainless\s*steel\b/i.test(title) && product.innerPot && !product.innerPot.toLowerCase().includes("stainless")) issues.push("Uses 'Stainless Steel' but inner pot is " + product.innerPot);
+            }
+            // Model number format
+            if (/\([A-Z]{2,3}-[A-Z0-9]+\)\s*$/.test(title)) pass.push("Model number in parentheses at end");
+            checks[key] = { name: mp.name, limit, charCount: title.length, issues, pass, compliant: issues.length === 0 };
+          });
+          setCcResults(checks);
+        }}
+          style={{ width: "100%", padding: 16, background: !ccTitle.trim() ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: !ccTitle.trim() ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: !ccTitle.trim() ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: !ccTitle.trim() ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 16 }}>
+          Check All Marketplaces
+        </button>
+
+        {ccResults && (<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* Summary bar */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <div style={{ flex: 1, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "10px 14px", textAlign: "center" }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "#16a34a" }}>{Object.values(ccResults).filter(c => c.compliant).length}</div>
+              <div style={{ fontSize: 10, color: "#16a34a" }}>Compliant</div>
+            </div>
+            <div style={{ flex: 1, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "10px 14px", textAlign: "center" }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "#dc2626" }}>{Object.values(ccResults).filter(c => !c.compliant).length}</div>
+              <div style={{ fontSize: 10, color: "#dc2626" }}>Issues</div>
+            </div>
+          </div>
+          {/* Per-marketplace results */}
+          {Object.entries(ccResults).map(([key, c]) => (
+            <div key={key} style={{ background: "#fff", border: `1px solid ${c.compliant ? "#bbf7d0" : "#fecaca"}`, borderRadius: 10, padding: "14px 18px", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: c.issues.length > 0 ? 8 : 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: MARKETPLACES[key]?.accent || "#555" }}>{c.name}</span>
+                  <span style={{ fontSize: 10, color: "#aaa" }}>{c.charCount}/{c.limit} chars</span>
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: c.compliant ? "#16a34a" : "#dc2626" }}>{c.compliant ? "\u2713 Pass" : c.issues.length + " issue" + (c.issues.length > 1 ? "s" : "")}</span>
+              </div>
+              {c.issues.map((iss, i) => <div key={i} style={{ fontSize: 11, color: "#dc2626", padding: "2px 0", display: "flex", gap: 6 }}>{"\u2717"} {iss}</div>)}
+              {c.pass.map((p, i) => <div key={i} style={{ fontSize: 11, color: "#16a34a", padding: "2px 0", display: "flex", gap: 6 }}>{"\u2713"} {p}</div>)}
+            </div>
+          ))}
+        </div>)}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Client-side rule checking {"\u00B7"} No API calls {"\u00B7"} Instant results</span>
         </div>
       </div>}
 
