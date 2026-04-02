@@ -3024,7 +3024,19 @@ export default function App() {
 
         {/* Results */}
         {ldResults && (() => {
-          const r = ldResults;
+          try {
+          // Normalize fields to expected types to prevent render crashes
+          const r = { ...ldResults };
+          if (r.bullet_points && !Array.isArray(r.bullet_points)) r.bullet_points = typeof r.bullet_points === "string" ? r.bullet_points.split("\n").filter(Boolean) : [];
+          if (r.specifications && (typeof r.specifications !== "object" || Array.isArray(r.specifications))) r.specifications = {};
+          if (r.specifications) { for (const [k, v] of Object.entries(r.specifications)) { if (typeof v === "object" && v !== null) r.specifications[k] = JSON.stringify(v); } }
+          if (r.review_count != null && typeof r.review_count === "string") { const n = parseInt(r.review_count.replace(/[^0-9]/g, "")); r.review_count = isNaN(n) ? null : n; }
+          if (r.rating != null && typeof r.rating === "string") { const n = parseFloat(r.rating); r.rating = isNaN(n) ? null : n; }
+          if (r.images && !Array.isArray(r.images)) r.images = [];
+          // Stringify any object values in primary fields
+          for (const key of ["title", "brand", "price", "model_number", "asin", "upc", "availability", "seller", "category", "color", "dimensions", "weight", "marketplace"]) {
+            if (r[key] && typeof r[key] === "object") r[key] = JSON.stringify(r[key]);
+          }
           const copyField = (label, value) => {
             navigator.clipboard.writeText(String(value));
             setLdCopied(label);
@@ -3138,6 +3150,7 @@ export default function App() {
               </button>
             </div>
           </div>);
+          } catch(renderErr) { return <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, color: "#dc2626", fontSize: 13 }}>Error displaying results: {renderErr.message}. <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(ldResults, null, 2)); setLdCopied("json"); setTimeout(() => setLdCopied(null), 1500); }} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", marginLeft: 8 }}>{ldCopied === "json" ? "\u2713 Copied" : "Copy raw JSON"}</button></div>; }
         })()}
 
         {/* Compare with CUCKOO Product */}
