@@ -1392,19 +1392,41 @@ export default function App() {
       if (!text) throw new Error(isPdf ? "Empty response — the PDF may not contain extractable product data" : "Empty response — the URL may not be accessible");
       let parsed;
       const cleanText = text.replace(/```json|```/g, "").trim();
+      // Helper: extract JSON object substring by brace matching
+      const extractJson = (s) => {
+        const start = s.indexOf("{");
+        if (start === -1) return null;
+        let depth = 0, end = -1;
+        for (let i = start; i < s.length; i++) {
+          if (s[i] === "{") depth++;
+          else if (s[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+        }
+        return end === -1 ? null : s.slice(start, end + 1);
+      };
+      // Try direct parse, then extract JSON substring, then repair via API
       try { parsed = JSON.parse(cleanText); }
       catch(e) {
-        // Find the outermost JSON object by matching braces
-        const start = cleanText.indexOf("{");
-        if (start === -1) throw new Error("No JSON found in response. Raw: " + cleanText.slice(0, 300));
-        let depth = 0, end = -1;
-        for (let i = start; i < cleanText.length; i++) {
-          if (cleanText[i] === "{") depth++;
-          else if (cleanText[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+        const jsonStr = extractJson(cleanText);
+        if (jsonStr) { try { parsed = JSON.parse(jsonStr); } catch(e2) {} }
+        if (!parsed) {
+          // Fallback: ask the model to repair the malformed JSON
+          const rawSnippet = (jsonStr || cleanText).slice(0, 6000);
+          const repairRes = await fetch("/api/messages", {
+            method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0,
+              system: "You are a JSON repair tool. The user will provide malformed JSON text. Fix it into valid JSON and return ONLY the corrected JSON object. Do not add commentary or markdown formatting.",
+              messages: [{ role: "user", content: "Fix this malformed JSON into valid JSON. Return ONLY the corrected JSON:\n\n" + rawSnippet }]
+            })
+          });
+          if (repairRes.ok) {
+            const repairData = await repairRes.json();
+            const repairText = repairData.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n").replace(/```json|```/g, "").trim();
+            try { parsed = JSON.parse(repairText); }
+            catch(e3) { const rj = extractJson(repairText); if (rj) parsed = JSON.parse(rj); }
+          }
+          if (!parsed) throw new Error("Could not parse response. Raw: " + rawSnippet.slice(0, 300));
         }
-        if (end === -1) throw new Error("Incomplete JSON in response. Raw: " + cleanText.slice(0, 300));
-        try { parsed = JSON.parse(cleanText.slice(start, end + 1)); }
-        catch(e2) { throw new Error("Invalid JSON in response. Raw: " + cleanText.slice(start, start + 300)); }
       }
       parsed._url = isPdf ? ldPdfFile.name : ldUrl.trim();
       parsed._source = isPdf ? "pdf" : "url";
