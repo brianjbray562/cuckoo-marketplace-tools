@@ -1363,16 +1363,32 @@ export default function App() {
         userContent = "Extract all product listing data from this URL: " + ldUrl.trim();
         tools = [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }];
       }
-      const body = { model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0, system: ldSystem, messages: [{ role: "user", content: userContent }] };
-      if (tools) body.tools = tools;
-      const res = await fetch("/api/messages", {
-        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
-        body: JSON.stringify(body)
-      });
-      if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message || "API error");
-      const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
+      const messages = [{ role: "user", content: userContent }];
+      const baseBody = { model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0, system: ldSystem };
+      if (tools) baseBody.tools = tools;
+      // Multi-turn loop: handle tool_use responses (web_search may require multiple turns)
+      let allText = "";
+      for (let turn = 0; turn < 6; turn++) {
+        const res = await fetch("/api/messages", {
+          method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+          body: JSON.stringify({ ...baseBody, messages })
+        });
+        if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message || "API error");
+        // Collect text blocks
+        const textParts = data.content?.filter(b => b.type === "text").map(b => b.text) || [];
+        allText += textParts.join("\n");
+        // If stop_reason is not tool_use, we're done
+        if (data.stop_reason !== "tool_use") break;
+        // Otherwise, add assistant response and tool results to continue the conversation
+        messages.push({ role: "assistant", content: data.content });
+        const toolResults = data.content.filter(b => b.type === "tool_use").map(b => ({
+          type: "tool_result", tool_use_id: b.id, content: "Tool executed by server."
+        }));
+        messages.push({ role: "user", content: toolResults });
+      }
+      const text = allText.trim();
       if (!text) throw new Error(isPdf ? "Empty response — the PDF may not contain extractable product data" : "Empty response — the URL may not be accessible");
       let parsed;
       const cleanText = text.replace(/```json|```/g, "").trim();
@@ -1380,15 +1396,15 @@ export default function App() {
       catch(e) {
         // Find the outermost JSON object by matching braces
         const start = cleanText.indexOf("{");
-        if (start === -1) throw new Error("Could not parse structured data from response");
+        if (start === -1) throw new Error("No JSON found in response. Raw: " + cleanText.slice(0, 300));
         let depth = 0, end = -1;
         for (let i = start; i < cleanText.length; i++) {
           if (cleanText[i] === "{") depth++;
           else if (cleanText[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
         }
-        if (end === -1) throw new Error("Could not parse structured data from response");
+        if (end === -1) throw new Error("Incomplete JSON in response. Raw: " + cleanText.slice(0, 300));
         try { parsed = JSON.parse(cleanText.slice(start, end + 1)); }
-        catch(e2) { throw new Error("Could not parse structured data from response"); }
+        catch(e2) { throw new Error("Invalid JSON in response. Raw: " + cleanText.slice(start, start + 300)); }
       }
       parsed._url = isPdf ? ldPdfFile.name : ldUrl.trim();
       parsed._source = isPdf ? "pdf" : "url";
