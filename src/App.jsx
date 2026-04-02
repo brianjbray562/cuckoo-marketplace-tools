@@ -1375,8 +1375,21 @@ export default function App() {
       const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
       if (!text) throw new Error(isPdf ? "Empty response — the PDF may not contain extractable product data" : "Empty response — the URL may not be accessible");
       let parsed;
-      try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
-      catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Could not parse structured data from response"); }
+      const cleanText = text.replace(/```json|```/g, "").trim();
+      try { parsed = JSON.parse(cleanText); }
+      catch(e) {
+        // Find the outermost JSON object by matching braces
+        const start = cleanText.indexOf("{");
+        if (start === -1) throw new Error("Could not parse structured data from response");
+        let depth = 0, end = -1;
+        for (let i = start; i < cleanText.length; i++) {
+          if (cleanText[i] === "{") depth++;
+          else if (cleanText[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+        }
+        if (end === -1) throw new Error("Could not parse structured data from response");
+        try { parsed = JSON.parse(cleanText.slice(start, end + 1)); }
+        catch(e2) { throw new Error("Could not parse structured data from response"); }
+      }
       parsed._url = isPdf ? ldPdfFile.name : ldUrl.trim();
       parsed._source = isPdf ? "pdf" : "url";
       setLdResults(parsed);
