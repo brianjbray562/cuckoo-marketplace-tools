@@ -740,7 +740,7 @@ export default function App() {
   // Listing data extractor state
   const [ldUrl, setLdUrl] = useState("");
   const [ldInputMode, setLdInputMode] = useState("url"); // "url" or "pdf"
-  const [ldPdfFile, setLdPdfFile] = useState(null); // { name, base64 }
+  const [ldPdfFile, setLdPdfFile] = useState(null); // { name, text } — text extracted client-side via pdf.js
   const [ldResults, setLdResults] = useState(null);
   const [ldLoading, setLdLoading] = useState(false);
   const [ldError, setLdError] = useState(null);
@@ -1355,11 +1355,8 @@ export default function App() {
     try {
       let ldSystem, userContent, tools;
       if (isPdf) {
-        ldSystem = "You are a product data extraction specialist. The user will provide a PDF document (a product manual, spec sheet, or brochure). Read the entire document and extract ALL available structured product data.\n\n" + LD_EXTRACT_FIELDS;
-        userContent = [
-          { type: "document", source: { type: "base64", media_type: "application/pdf", data: ldPdfFile.base64 }, cache_control: { type: "ephemeral" } },
-          { type: "text", text: "Extract all product data from this PDF document (" + ldPdfFile.name + "). Look through every page for product specifications, features, model numbers, and technical details. Respond ONLY with valid JSON." }
-        ];
+        ldSystem = "You are a product data extraction specialist. The user will provide the extracted text content from a PDF product manual, spec sheet, or brochure. Analyze the text and extract ALL available structured product data.\n\n" + LD_EXTRACT_FIELDS;
+        userContent = "The following text was extracted from a PDF document (" + ldPdfFile.name + "). Extract all product data from it. Look for product specifications, features, model numbers, and technical details.\n\nRespond ONLY with valid JSON.\n\n--- PDF CONTENT ---\n" + ldPdfFile.text.slice(0, 80000);
         tools = undefined;
       } else {
         ldSystem = "You are a product listing data extraction specialist. The user will provide a marketplace product URL. Use the web_search tool to look up the product page, then extract ALL available structured product data.\n\n" + LD_EXTRACT_FIELDS;
@@ -2912,25 +2909,51 @@ export default function App() {
               const file = e.dataTransfer.files[0];
               if (file && file.type === "application/pdf") {
                 if (file.size > 25 * 1024 * 1024) { setLdError("PDF must be under 25 MB"); return; }
-                const reader = new FileReader();
-                reader.onload = () => { const b64 = reader.result.split(",")[1]; setLdPdfFile({ name: file.name, base64: b64 }); setLdError(null); };
-                reader.readAsDataURL(file);
+                (async () => {
+                  try {
+                    const pdfjsLib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/+esm");
+                    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs";
+                    const buf = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+                    let text = "";
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                      const pg = await pdf.getPage(i);
+                      const tc = await pg.getTextContent();
+                      text += tc.items.map(it => it.str).join(" ") + "\n";
+                    }
+                    setLdPdfFile({ name: file.name, text: text.trim(), pages: pdf.numPages });
+                    setLdError(null);
+                  } catch (err) { setLdError("Failed to read PDF: " + err.message); }
+                })();
               } else { setLdError("Please upload a PDF file"); }
             }}
             onClick={() => { const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".pdf"; inp.onchange = e => {
               const file = e.target.files[0];
               if (file) {
                 if (file.size > 25 * 1024 * 1024) { setLdError("PDF must be under 25 MB"); return; }
-                const reader = new FileReader();
-                reader.onload = () => { const b64 = reader.result.split(",")[1]; setLdPdfFile({ name: file.name, base64: b64 }); setLdError(null); };
-                reader.readAsDataURL(file);
+                (async () => {
+                  try {
+                    const pdfjsLib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/+esm");
+                    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs";
+                    const buf = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+                    let text = "";
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                      const pg = await pdf.getPage(i);
+                      const tc = await pg.getTextContent();
+                      text += tc.items.map(it => it.str).join(" ") + "\n";
+                    }
+                    setLdPdfFile({ name: file.name, text: text.trim(), pages: pdf.numPages });
+                    setLdError(null);
+                  } catch (err) { setLdError("Failed to read PDF: " + err.message); }
+                })();
               }
             }; inp.click(); }}>
             {ldPdfFile ? (
               <div>
                 <div style={{ fontSize: 24, marginBottom: 6 }}>{"\u{1F4C4}"}</div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a1a", fontFamily: "'IBM Plex Mono',monospace" }}>{ldPdfFile.name}</div>
-                <div style={{ fontSize: 10, color: "#aaa", marginTop: 4 }}>Click or drag to replace</div>
+                <div style={{ fontSize: 10, color: "#aaa", marginTop: 4 }}>{ldPdfFile.pages ? ldPdfFile.pages + " page" + (ldPdfFile.pages !== 1 ? "s" : "") + " \u00B7 " : ""}Click or drag to replace</div>
               </div>
             ) : (
               <div>
