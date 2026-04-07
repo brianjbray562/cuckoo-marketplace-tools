@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo, memo } from "
 
 const MAROON = "#6B1C23";
 
-const CHAR_LIMITS = { amazon: 200, walmart: 75, target: 100, bestbuy: 150, wayfair: 100, kohls: 150, macys: 150, bloomingdales: 120, tiktokshop: 200, weee: 120 };
+const CHAR_LIMITS = { amazon: 200, walmart: 75, target: 100, bestbuy: 120, wayfair: 150, kohls: 150, macys: 150, bloomingdales: 120, tiktokshop: 200, weee: 120 };
 
 const MARKETPLACES = {
   amazon: { name: "Amazon", badge: "amz", accent: "#FF9900", confidence: "official", confidenceLabel: "Official Docs",
@@ -41,9 +41,10 @@ const MARKETPLACES = {
       { title: "Best Buy \u2014 Marketplace Program Policies (Official, Apr 2025)", url: "https://partners.bestbuy.com/documents/d/guest/04012025v001-marketplace-program-policies" },
       { title: "Best Buy \u2014 Marketplace Standard Terms (Official, Apr 2025)", url: "https://partners.bestbuy.com/documents/d/guest/04012025v001-marketplace-standard-terms" },
       { title: "Best Buy Corporate \u2014 Digital Marketplace Launch Announcement (Aug 2025)", url: "https://corporate.bestbuy.com/2025/marketplace/" },
-      { title: "ChannelEngine \u2014 Best Buy US Marketplace Guide", url: "https://support.channelengine.com/hc/en-us/articles/31873642736925" },
+      { title: "ChannelEngine \u2014 Best Buy US Marketplace Guide (120-char title limit)", url: "https://support.channelengine.com/hc/en-us/articles/31873642736925" },
+      { title: "eDesk \u2014 Best Buy's Mirakl-Powered Marketplace (2026)", url: "https://www.edesk.com/blog/mirakl-best-buy-marketplace/" },
     ],
-    guidelines: "Best Buy: 100-150 chars recommended. Title Case.\n- Format: Brand + Product Line + Model + Key Spec + Product Type.\n- Tech-savvy audience: include model numbers, key specs (wattage, capacity, heating type). No promo.\n- Keywords: 'Rice Cooker', 'Induction Heating' (IH models only), 'Pressure Rice Cooker' (CRP- only), 'Micom'. Lean into tech descriptors. Do NOT use 'Fuzzy Logic' in titles."
+    guidelines: "Best Buy: 120 chars max (Mirakl platform). Title Case.\n- Format: Brand + Product Line + Model + Key Spec + Product Type.\n- Tech-savvy audience: include model numbers, key specs (wattage, capacity, heating type). No promo.\n- Keywords: 'Rice Cooker', 'Induction Heating' (IH models only), 'Pressure Rice Cooker' (CRP- only), 'Micom'. Lean into tech descriptors. Do NOT use 'Fuzzy Logic' in titles."
   },
   wayfair: { name: "Wayfair", badge: "WF", accent: "#7B2D8E", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -51,8 +52,9 @@ const MARKETPLACES = {
       { title: "Wayfair \u2014 Adding Assortment (Official Seller Portal)", url: "https://sell.wayfair.com/start-adding-assortment" },
       { title: "Linnworks \u2014 Wayfair Marketplace: A Seller\u2019s Guide to Success", url: "https://www.linnworks.com/blog/wayfair-marketplace-ultimate-sellers-guide/" },
       { title: "Priceva \u2014 Selling on Wayfair in 2025: Complete Guide", url: "https://priceva.com/blog/How-to-Sell-on-wayfair-marketplace" },
+      { title: "Salsify \u2014 How to Sell on Wayfair (150-char max, sentence case)", url: "https://www.salsify.com/blog/what-does-it-take-to-win-on-wayfair-and-overstock" },
     ],
-    guidelines: "Wayfair: ~100 chars recommended.\n- Include: Brand, Product Type, Key Features, Capacity, Color/Finish.\n- Home-focused, style-conscious tone. Material/finish details valued.\n- Keywords: 'Rice Cooker', 'Countertop', 'Kitchen Appliance'."
+    guidelines: "Wayfair: 150 chars max. IMPORTANT: Sentence case (NOT Title Case) — only capitalize the first word and proper nouns.\n- Include: Brand, Product Type, Key Features, Capacity, Color/Finish.\n- Home-focused, style-conscious tone. Material/finish details and lifestyle language valued.\n- Keywords: 'rice cooker', 'countertop', 'kitchen appliance'. Style descriptors welcome (e.g. 'modern', 'compact')."
   },
   kohls: { name: "Kohl's", badge: "K", accent: "#5C2D91", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
