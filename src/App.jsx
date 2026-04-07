@@ -858,6 +858,16 @@ function AppInner() {
   const [wsElapsed, setWsElapsed] = useState(0);
   const wsAbortRef = useRef(null);
   const wsTimerRef = useRef(null);
+  // Bulk Export state
+  const [beModels, setBeModels] = useState([]);
+  const [beSearch, setBeSearch] = useState("");
+  const [beResults, setBeResults] = useState([]); // array of { sku, titles, bullets, keywords, audit, error }
+  const [beLoading, setBeLoading] = useState(false);
+  const [beProgress, setBeProgress] = useState({ current: 0, total: 0, sku: "", step: "" });
+  const [beError, setBeError] = useState(null);
+  const [beElapsed, setBeElapsed] = useState(0);
+  const beAbortRef = useRef(null);
+  const beTimerRef = useRef(null);
   // Review Analyzer state
   const [raModel, setRaModel] = useState("");
   const [raResults, setRaResults] = useState(null);
@@ -1632,6 +1642,99 @@ function AppInner() {
     }
   }, [wsModel, wsMarketplaces]);
 
+  // --- BULK EXPORT: Generate full listings for multiple products ---
+  const generateBulkExport = useCallback(async () => {
+    if (!beModels.length || beLoading) return;
+    setBeLoading(true); setBeError(null); setBeResults([]); setBeElapsed(0);
+    const startTime = Date.now();
+    beTimerRef.current = setInterval(() => setBeElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (beAbortRef.current) beAbortRef.current.abort();
+    const controller = new AbortController();
+    beAbortRef.current = controller;
+    const allMpKeys = Object.keys(MARKETPLACES);
+    const catRules = CATEGORY_RULES.rice_cooker;
+    const callApi = async (system, userMsg, maxTokens, temp) => {
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, temperature: temp, system, messages: [{ role: "user", content: userMsg }] })
+      });
+      if (!res.ok) throw new Error("API " + res.status);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = extractTextFromContent(data.content);
+      return parseJsonResponse(text);
+    };
+    const results = [];
+    for (let i = 0; i < beModels.length; i++) {
+      const sku = beModels[i];
+      const product = PRODUCT_DB[sku];
+      if (!product) { results.push({ sku, error: "Not in database" }); continue; }
+      const productCtx = formatProductContext({ sku, ...product });
+      try {
+        // Titles
+        setBeProgress({ current: i + 1, total: beModels.length, sku, step: "titles" });
+        const gl = allMpKeys.map(k => MARKETPLACES[k]?.guidelines || "").join("\n---\n");
+        const titleMsg = `Model number: "${sku}"\nCreate optimized titles.\n\n${productCtx}\n1. Use VERIFIED PRODUCT DATA as ONLY source.\n2. Create Amazon title maximizing 200 chars.\n3. Convert for: ${allMpKeys.join(", ")}\nGuidelines:\n${gl}\nRespond ONLY with valid JSON.`;
+        const titles = await callApi(SYSTEM_PROMPT + catRules, titleMsg, 1500, 0.3);
+        if (!titles) throw new Error("Title parse failed");
+        const amazonTitle = titles.amazon_audit?.suggested_title || titles.conversions?.amazon?.title || "";
+        // Bullets
+        setBeProgress({ current: i + 1, total: beModels.length, sku, step: "bullets" });
+        const bpSys = "You are a senior ecommerce copywriter at CUCKOO Electronics America. Generate 5 bullet points for an Amazon listing. Each bullet: CAPITALIZED HEADING followed by colon and text. Only use verified product data.\nRespond ONLY with valid JSON: {\"bullets\":[{\"heading\":\"...\",\"text\":\"...\"}]}";
+        const bpMsg = "Generate 5 bullets for CUCKOO " + sku + " on Amazon:\n" + productCtx + (amazonTitle ? "\nTitle: \"" + amazonTitle + "\"" : "") + "\nRespond ONLY with valid JSON.";
+        const bullets = await callApi(bpSys, bpMsg, 1500, 0.3);
+        // Keywords
+        setBeProgress({ current: i + 1, total: beModels.length, sku, step: "keywords" });
+        const bulletText = bullets?.bullets?.map(b => b.heading + ": " + b.text).join("\n") || "";
+        const bkSys = "Amazon backend keyword specialist for CUCKOO. Generate search terms (500 byte max). Space-separated, no punctuation, no words in title/bullets.\nRespond ONLY with valid JSON: {\"keywords\":\"...\",\"byte_count\":0}";
+        const bkMsg = "Backend keywords for CUCKOO " + sku + ":\n" + productCtx + (amazonTitle ? "\nTitle: \"" + amazonTitle + "\"" : "") + (bulletText ? "\nBullets:\n" + bulletText : "") + "\nRespond ONLY with valid JSON.";
+        let keywords = await callApi(bkSys, bkMsg, 800, 0.3);
+        if (keywords?.keywords) {
+          const enc = new TextEncoder();
+          keywords.byte_count = enc.encode(keywords.keywords).length;
+          if (keywords.byte_count > 500) { const w = keywords.keywords.split(" "); while (w.length > 1 && enc.encode(w.join(" ")).length > 500) w.pop(); keywords.keywords = w.join(" "); keywords.byte_count = enc.encode(keywords.keywords).length; }
+        }
+        results.push({ sku, titles, bullets, keywords, amazonTitle, error: null });
+        setBeResults([...results]);
+      } catch (e) {
+        if (e.name === "AbortError") { setBeError("Cancelled at " + sku); break; }
+        results.push({ sku, error: e.message || "Failed" });
+        setBeResults([...results]);
+      }
+    }
+    if (beTimerRef.current) { clearInterval(beTimerRef.current); beTimerRef.current = null; }
+    setBeLoading(false); beAbortRef.current = null;
+    setBeProgress({ current: beModels.length, total: beModels.length, sku: "Done", step: "complete" });
+  }, [beModels]);
+
+  // Bulk export to XLSX
+  const exportBulkXlsx = useCallback(async () => {
+    if (!beResults.length) return;
+    const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs");
+    const mpKeys = Object.keys(MARKETPLACES);
+    const rows = beResults.filter(r => !r.error).map(r => {
+      const row = { SKU: r.sku, "Product Type": PRODUCT_DB[r.sku]?.type || "", "Cup Size": PRODUCT_DB[r.sku]?.cupSize || "" };
+      // Amazon suggested title
+      row["Amazon Title (Suggested)"] = r.amazonTitle || "";
+      row["Amazon Chars"] = (r.amazonTitle || "").length;
+      // Marketplace titles
+      mpKeys.forEach(k => {
+        const t = r.titles?.conversions?.[k];
+        if (t) { row[MARKETPLACES[k].name + " Title"] = t.title || ""; row[MARKETPLACES[k].name + " Chars"] = t.char_count || (t.title || "").length; }
+      });
+      // Bullets
+      (r.bullets?.bullets || []).forEach((b, i) => { row["Bullet " + (i + 1)] = b.heading + ": " + b.text; });
+      // Keywords
+      row["Backend Keywords"] = r.keywords?.keywords || "";
+      row["Keywords Bytes"] = r.keywords?.byte_count || 0;
+      return row;
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Listings");
+    XLSX.writeFile(wb, "cuckoo-bulk-listings-" + new Date().toISOString().slice(0, 10) + ".xlsx");
+  }, [beResults]);
+
   // --- REVIEW ANALYZER: Analyze reviews for a product ---
   const analyzeReviews = useCallback(async () => {
     if (!raModel.trim() || raLoading) return;
@@ -1861,6 +1964,7 @@ function AppInner() {
           {[
             { group: "generate", label: "Generate", icon: "\u270F\uFE0F", items: [
               { key: "listing_workspace", label: "Listing Workspace", icon: "\u{1F680}" },
+              { key: "bulk_export", label: "Bulk Export", icon: "\u{1F4E6}" },
               { key: "title_optimizer", label: "Marketplace Titles", icon: "\u270F\uFE0F" },
               { key: "bullet_points", label: "Bullet Points", icon: "\u{1F4DD}" },
               { key: "backend_keywords", label: "Backend Keywords", icon: "\u{1F50D}" },
@@ -2143,6 +2247,136 @@ function AppInner() {
 
         <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
           <span style={{ fontSize: 10, color: "#ccc" }}>Generates titles for {wsMarketplaces.length} marketplaces + bullets + keywords + audit in one flow</span>
+        </div>
+      </div>}
+
+      {/* BULK EXPORT PAGE */}
+      {page === "bulk_export" && <div style={{ maxWidth: 1060, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Select products and generate <strong>optimized titles, bullet points, and backend keywords</strong> for all 10 marketplaces at once. Export as an XLSX spreadsheet ready for upload.
+          </p>
+          <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
+            {Object.keys(PRODUCT_DB).length} models available {"\u00B7"} Generates titles + bullets + keywords per product
+          </p>
+        </div>
+
+        {/* Product selector */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "16px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Select Products <span style={{ color: "#ccc", fontWeight: 400 }}>({beModels.length} selected)</span></label>
+            <div style={{ display: "flex", gap: 8 }}>
+              {beModels.length > 0 && <button onClick={() => setBeModels([])} style={{ background: "none", border: "none", fontSize: 11, color: MAROON, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>Clear all</button>}
+              <button onClick={() => setBeModels(Object.keys(PRODUCT_DB))} style={{ background: "none", border: "none", fontSize: 11, color: MAROON, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>Select all</button>
+            </div>
+          </div>
+          <input value={beSearch} onChange={e => setBeSearch(e.target.value)} placeholder="Search models..."
+            style={{ width: "100%", padding: "8px 12px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 6, fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", color: "#1a1a1a", boxSizing: "border-box", marginBottom: 10 }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 200, overflowY: "auto" }}>
+            {Object.entries(PRODUCT_DB).filter(([sku, d]) => {
+              if (!beSearch.trim()) return true;
+              const q = beSearch.toLowerCase();
+              return sku.toLowerCase().includes(q) || d.type.toLowerCase().includes(q) || (d.cupSize || "").toLowerCase().includes(q);
+            }).map(([sku, d]) => {
+              const sel = beModels.includes(sku);
+              return (
+                <button key={sku} onClick={() => setBeModels(prev => sel ? prev.filter(m => m !== sku) : [...prev, sku])}
+                  style={{ padding: "5px 10px", background: sel ? MAROON : "#fff", border: `1.5px solid ${sel ? MAROON : "#e0ddd8"}`, borderRadius: 6, cursor: "pointer", color: sel ? "#fff" : "#555", fontSize: 11, fontWeight: 500, fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s" }}>
+                  {sku} <span style={{ fontSize: 9, opacity: 0.7 }}>{d.type}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Generate Button */}
+        {(() => {
+          const dis = beLoading || !beModels.length;
+          return (<>
+            <button disabled={dis} onClick={generateBulkExport}
+              style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: dis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
+              {beLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                {beProgress.sku} — {beProgress.step} ({beProgress.current}/{beProgress.total})
+              </span>) : "Generate All Listings (" + beModels.length + " products \u00D7 10 marketplaces)"}
+            </button>
+            {beLoading && <div style={{ marginBottom: 12 }}>
+              <div style={{ height: 4, background: "#e8e5e0", borderRadius: 2, overflow: "hidden", marginBottom: 6 }}><div style={{ width: `${(beProgress.current / Math.max(beProgress.total, 1)) * 100}%`, height: "100%", background: MAROON, borderRadius: 2, transition: "width .4s ease" }} /></div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#aaa" }}>
+                <span>{beElapsed}s elapsed</span>
+                <button onClick={() => { if (beAbortRef.current) beAbortRef.current.abort(); }} style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer" }}>Cancel</button>
+              </div>
+            </div>}
+          </>);
+        })()}
+
+        {beError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 16, color: "#dc2626", fontSize: 13 }}>{beError}</div>}
+
+        {/* Results summary + Export */}
+        {beResults.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)", marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Results ({beResults.filter(r => !r.error).length} succeeded, {beResults.filter(r => r.error).length} failed)</div>
+                <button onClick={exportBulkXlsx} style={{ padding: "8px 20px", background: MAROON, border: "none", borderRadius: 8, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 2px 8px rgba(107,28,35,0.2)" }}>
+                  {"\u{1F4E5}"} Download XLSX
+                </button>
+              </div>
+              {/* Per-product status */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
+                {beResults.map(r => (
+                  <div key={r.sku} style={{ padding: "10px 14px", background: r.error ? "#fef2f2" : "#f0fdf4", border: `1px solid ${r.error ? "#fecaca" : "#bbf7d0"}`, borderRadius: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", color: r.error ? "#dc2626" : "#166534" }}>{r.sku}</div>
+                    <div style={{ fontSize: 10, color: r.error ? "#dc2626" : "#16a34a", marginTop: 2 }}>
+                      {r.error ? r.error : (
+                        (r.titles?.conversions ? Object.keys(r.titles.conversions).length + " titles" : "") +
+                        (r.bullets?.bullets ? " \u00B7 " + r.bullets.bullets.length + " bullets" : "") +
+                        (r.keywords?.keywords ? " \u00B7 " + r.keywords.byte_count + "B keywords" : "")
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Preview first successful result */}
+            {(() => {
+              const first = beResults.find(r => !r.error);
+              if (!first) return null;
+              return (
+                <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Preview: {first.sku}</div>
+                  {first.amazonTitle && <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "#888", marginBottom: 4 }}>Amazon Title ({first.amazonTitle.length} chars)</div>
+                    <div style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#1a1a1a", lineHeight: 1.6, padding: "8px 12px", background: "#faf9f7", borderRadius: 6 }}>{first.amazonTitle}</div>
+                  </div>}
+                  {first.titles?.conversions && <div style={{ marginBottom: 12 }}>
+                    {Object.entries(first.titles.conversions).slice(0, 3).map(([k, v]) => (
+                      <div key={k} style={{ fontSize: 11, color: "#666", padding: "4px 0" }}>
+                        <span style={{ fontWeight: 700, color: MARKETPLACES[k]?.accent || "#888", fontSize: 10, textTransform: "uppercase" }}>{MARKETPLACES[k]?.name || k}</span>
+                        <span style={{ color: "#ccc", marginLeft: 6 }}>{(v.title || "").length} chars</span>
+                        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "#555", marginTop: 2 }}>{v.title}</div>
+                      </div>
+                    ))}
+                    {Object.keys(first.titles.conversions).length > 3 && <div style={{ fontSize: 10, color: "#bbb", marginTop: 4 }}>+ {Object.keys(first.titles.conversions).length - 3} more marketplaces in XLSX</div>}
+                  </div>}
+                  {first.bullets?.bullets && <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "#888", marginBottom: 4 }}>Bullets ({first.bullets.bullets.length})</div>
+                    {first.bullets.bullets.slice(0, 2).map((b, i) => <div key={i} style={{ fontSize: 11, color: "#555", padding: "2px 0" }}><strong style={{ color: MAROON }}>{b.heading}:</strong> {b.text?.slice(0, 80)}...</div>)}
+                  </div>}
+                  {first.keywords?.keywords && <div>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "#888", marginBottom: 4 }}>Keywords ({first.keywords.byte_count}/500 bytes)</div>
+                    <div style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: "#888", padding: "6px 10px", background: "#faf9f7", borderRadius: 4 }}>{first.keywords.keywords.slice(0, 120)}...</div>
+                  </div>}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Generates titles + bullets + keywords per product {"\u00B7"} ~45-90 seconds per product {"\u00B7"} Export as XLSX</span>
         </div>
       </div>}
 
