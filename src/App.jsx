@@ -14,7 +14,7 @@ const MARKETPLACES = {
       { title: "Ecomtent \u2014 Amazon 2025 Title Requirements & COSMO/RUFUS Context", url: "https://www.ecomtent.ai/blog-page/amazons-2025-title-requirements-what-sellers-need-to-know" },
       { title: "Amalytix \u2014 Amazon Product Title Guidelines (with Title Checker Tool)", url: "https://www.amalytix.com/en/knowledge/seo/amazon-product-title/" },
     ],
-    guidelines: "Amazon Title Optimization (SEO-First):\n- Hard limit: 200 chars. USE the full limit. Title Case.\n- Prohibited: !, $, ?, _, {, }, ^. Same word max twice. No promo phrases.\n- Brand CUCKOO first. Numerals for numbers. Pipes | and dashes - OK.\n\nAMAZON KEYWORD DATA (exact-match these when product matches):\nHIGH: rice cooker, cuckoo rice cooker, rice maker, stainless steel rice cooker, japanese rice cooker, korean rice cooker, rice steamer\nMEDIUM: pressure rice cooker, rice warmer, induction rice cooker, induction heating rice cooker, cuckoo pressure rice cooker\nSIZE: rice cooker 6 cup, rice cooker 10 cup, rice cooker 4 cup, 3 cup rice cooker\nFEATURE: nonstick inner pot, stainless steel inner pot, keep warm, delay timer, fuzzy logic, steamer basket, multi cooker\nPrioritize high-volume. Exact-match as many as possible while readable."
+    guidelines: "Amazon Title Optimization (SEO-First):\n- Hard limit: 200 chars. USE the full limit. Title Case.\n- Prohibited: !, $, ?, _, {, }, ^. Same word max twice. No promo phrases.\n- Brand CUCKOO first. Numerals for numbers. Pipes | and dashes - OK.\n\nAMAZON KEYWORD DATA (exact-match these when product matches — obey KEYWORD RESTRICTIONS):\nHIGH: rice cooker, cuckoo rice cooker, rice maker, stainless steel rice cooker (only if SS inner pot), japanese rice cooker, korean rice cooker (only if made in Korea), rice steamer\nMEDIUM: pressure rice cooker (only CRP- models), rice warmer, induction rice cooker (only IH models), induction heating rice cooker (only IH models), cuckoo pressure rice cooker (only CRP- models)\nSIZE: rice cooker 6 cup, rice cooker 10 cup, rice cooker 4 cup, 3 cup rice cooker\nFEATURE: nonstick inner pot, stainless steel inner pot (only if SS), keep warm, delay timer, steamer basket, multi cooker\nPrioritize high-volume. Exact-match as many as possible while readable. NEVER include keywords that violate KEYWORD RESTRICTIONS."
   },
   walmart: { name: "Walmart", badge: "W", accent: "#0071CE", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -34,7 +34,7 @@ const MARKETPLACES = {
       { title: "ChannelEngine \u2014 Target Plus: Marketplace Guide (Jan 2026)", url: "https://www.channelengine.com/en/blog/selling-on-target-plus" },
       { title: "eComClips \u2014 Sell on Target Plus with ChannelAdvisor (Title Requirements)", url: "https://ecomclips.com/blog/sell-on-target-plus-marketplace-target-with-channeladvisor/" },
     ],
-    guidelines: "Target: 100 chars (hard limit 150, min 21). Title Case.\n- Format: Brand + Item Type + Key Feature + Size/Color. Retail-ready, not SEO-stuffed.\n- No promo, pricing, or shipping. Clean shelf-tag tone.\n- Keywords: 'Rice Cooker', 'Rice Maker', 'Nonstick'. Material/finish callouts valued. 2-3 descriptors max."
+    guidelines: "Target: 100 chars recommended (hard limit 150, minimum 21 chars). Title Case.\n- Format: Brand + Item Type + Key Feature + Size/Color. Retail-ready, not SEO-stuffed.\n- No promo, pricing, or shipping info. Clean shelf-tag tone like a store label.\n- Keywords: 'Rice Cooker', 'Rice Maker', 'Nonstick'. Material/finish callouts valued. 2-3 descriptors max."
   },
   bestbuy: { name: "Best Buy", badge: "BB", accent: "#0046BE", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
@@ -43,7 +43,7 @@ const MARKETPLACES = {
       { title: "Best Buy Corporate \u2014 Digital Marketplace Launch Announcement (Aug 2025)", url: "https://corporate.bestbuy.com/2025/marketplace/" },
       { title: "ChannelEngine \u2014 Best Buy US Marketplace Guide", url: "https://support.channelengine.com/hc/en-us/articles/31873642736925" },
     ],
-    guidelines: "Best Buy: 100-150 chars recommended. Title Case.\n- Format: Brand + Product Line + Model + Key Spec + Product Type.\n- Tech-savvy audience: include model numbers, key specs. No promo.\n- Keywords: 'Rice Cooker', 'Induction Heating', 'Pressure Rice Cooker', 'Fuzzy Logic'. Lean into tech descriptors."
+    guidelines: "Best Buy: 100-150 chars recommended. Title Case.\n- Format: Brand + Product Line + Model + Key Spec + Product Type.\n- Tech-savvy audience: include model numbers, key specs (wattage, capacity, heating type). No promo.\n- Keywords: 'Rice Cooker', 'Induction Heating' (IH models only), 'Pressure Rice Cooker' (CRP- only), 'Micom'. Lean into tech descriptors. Do NOT use 'Fuzzy Logic' in titles."
   },
   wayfair: { name: "Wayfair", badge: "WF", accent: "#7B2D8E", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -57,21 +57,25 @@ const MARKETPLACES = {
   kohls: { name: "Kohl's", badge: "K", accent: "#5C2D91", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
       { title: "Kohl's \u2014 Marketplace Certified Partners", url: "https://www.kohls.com/feature/certifiedpartners.jsp" },
+      { title: "Mirakl \u2014 Marketplace Listing Best Practices", url: "https://www.mirakl.com/resources/marketplace-listing-best-practices" },
+      { title: "Pattern \u2014 How to Sell on Kohl's Marketplace (2025)", url: "https://pattern.com/blog/kohls-marketplace/" },
     ],
-    guidelines: "Kohl's: ~100-150 chars (Mirakl platform).\n- Format: Brand + Product Name + Key Feature + Size/Color. Department-store-ready.\n- No promo, ALL CAPS, or special chars. Brand prominent.\n- Keywords: 'Rice Cooker', 'Rice Maker', 'Nonstick'. Clean descriptors, not SEO phrases."
+    guidelines: "Kohl's: 150 chars max (Mirakl platform). Title Case.\n- Format: Brand + Product Name + Key Feature + Size/Color. Department-store-ready.\n- No promo, ALL CAPS, or special chars. Brand prominent.\n- Audience: family/home shoppers. Clean, accessible descriptors — not technical SEO phrases.\n- Keywords: 'Rice Cooker', 'Rice Maker', 'Nonstick'. Highlight ease of use and practicality."
   },
   macys: { name: "Macy's", badge: "M", accent: "#E21A2C", confidence: "partial", confidenceLabel: "Partial Docs",
     sources: [
       { title: "Macy's Marketplace \u2014 FAQ & Requirements", url: "https://marketplace.macys.com/faq.html" },
       { title: "ChannelEngine \u2014 Macy's Guide", url: "https://support.channelengine.com/hc/en-us/articles/9000052801053" },
     ],
-    guidelines: "Macy's: Title Case. Mirakl-powered.\n- Format: Brand + Product Name + Collection/Line + Key Detail.\n- Department-store tone. Material/quality callouts valued. No promo.\n- CUCKOO already sold at Macy's — align with existing naming.\n- Keywords: 'Rice Cooker', 'Nonstick Inner Pot'. Lead with quality signals."
+    guidelines: "Macy's: ~150 chars recommended (Mirakl platform). Title Case.\n- Format: Brand + Product Name + Collection/Line + Key Detail.\n- Department-store tone. Material/quality callouts valued. No promo.\n- CUCKOO already sold at Macy's — align with existing naming conventions.\n- Keywords: 'Rice Cooker', 'Nonstick Inner Pot'. Lead with quality/material signals, not SEO phrases."
   },
   bloomingdales: { name: "Bloomingdale's", badge: "B", accent: "#1a1a1a", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
-      { title: "Macy's Marketplace FAQ (shared platform)", url: "https://marketplace.macys.com/faq.html" },
+      { title: "Macy's Marketplace FAQ (shared Mirakl platform)", url: "https://marketplace.macys.com/faq.html" },
+      { title: "Mirakl \u2014 Marketplace Listing Best Practices", url: "https://www.mirakl.com/resources/marketplace-listing-best-practices" },
+      { title: "ChannelEngine \u2014 Bloomingdale's Marketplace Guide", url: "https://support.channelengine.com/hc/en-us/articles/9000052801053" },
     ],
-    guidelines: "Bloomingdale's: ~100-120 chars. Shares Macy's Mirakl platform.\n- Format: Brand + Collection/Line + Product Name + Material/Detail.\n- Premium luxury tone. Brand leads. Minimal elegant language.\n- Keywords: 'Rice Cooker', 'Induction Heating'. Premium tech/material callouts. Quality over quantity."
+    guidelines: "Bloomingdale's: 120 chars max. Shares Macy's Mirakl platform.\n- Format: Brand + Collection/Line + Product Name + Material/Detail.\n- Premium luxury tone. Minimal, elegant language. Brand leads.\n- Audience: luxury shoppers. Emphasize craftsmanship, materials, technology as premium signals.\n- Keywords: 'Rice Cooker', 'Induction Heating' (IH only). Quality over quantity. No keyword stuffing."
   },
   tiktokshop: { name: "TikTok Shop", badge: "TT", accent: "#010101", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -87,8 +91,9 @@ const MARKETPLACES = {
     sources: [
       { title: "Weee! \u2014 Sell on Weee!", url: "https://www.sayweee.com/company/sell-on-weee" },
       { title: "Weee! \u2014 Global+ Seller Onboarding", url: "https://www.sayweee.com/en/company/vendor/onboarding" },
+      { title: "Weee! \u2014 About: Asian & Hispanic Grocery Delivery", url: "https://www.sayweee.com/en/about" },
     ],
-    guidelines: "Weee!: ~80-120 chars. Asian grocery/goods platform for Asian-American shoppers.\n- Clean, descriptive: capacity, material, color. No promo. CUCKOO well-recognized.\n- Community-focused tone, cultural relevance matters.\n- Keywords: 'Rice Cooker', 'Pressure Rice Cooker', 'Nonstick Inner Pot'. 'Korean Rice Cooker' strong for this audience (only if made in Korea per keyword restrictions)."
+    guidelines: "Weee!: 120 chars max. Asian & Hispanic grocery/goods platform for Asian-American shoppers.\n- Clean, descriptive: capacity, material, color. No promo. CUCKOO is well-recognized in this community.\n- Tone: community-focused, culturally relevant. Highlight Korean heritage (only if made in Korea).\n- Audience understands rice cooker technology — can mention pressure, IH, cup sizes directly.\n- Keywords: 'Rice Cooker', 'Pressure Rice Cooker' (CRP- only), 'Nonstick Inner Pot', 'Korean Rice Cooker' (only if made in Korea per keyword restrictions)."
   }
 };
 
@@ -102,7 +107,7 @@ P2 (NEVER DROP): Technology/type (include dual technologies when both present)
 P3 (drop first): Model number in parentheses
 
 RULE 1 — Every cup capacity MUST have "Uncooked" or "Cooked" (e.g. "6-Cup Uncooked"). Hyphen required. NEVER bare "6-Cup" without qualifier. Default Uncooked. Include both if known (e.g. "6-Cup Uncooked / 12-Cup Cooked").
-RULE 2 — Order: CUCKOO [Tech] Rice Cooker [Cup Size], [Features], [Color] ([Model]). No "& Warmer". Cup size AFTER "Rice Cooker". Dual tech (Twin Pressure + Induction Heating): BOTH must appear after CUCKOO in every title — drop model number before dropping tech. Types: Micom, Basic, Twin Pressure, Induction Heating Pressure, Electric Heating Pressure, HP. When auditing originals, don't flag for not frontloading dual tech.
+RULE 2 — Order: CUCKOO [Tech] Rice Cooker [Cup Size], [Features], [Color] ([Model]). No "& Warmer". Cup size AFTER "Rice Cooker". Dual tech (Twin Pressure + Induction Heating): BOTH must appear after CUCKOO in every title — drop model number before dropping tech. Valid types: Basic, Micom, Pressure, Twin Pressure, Induction Heating Pressure, Electric Heating Pressure, Twin Pressure + Induction. Do NOT use "Fuzzy Logic" as a type — use "Micom" instead. When auditing originals, don't flag for not frontloading dual tech.
 RULE 3 — Model numbers in parentheses, placed LAST. Remove entirely if over char limit — first thing to sacrifice.
 RULE 4 — Flowing titles, not keyword lists. "with" connects features, "&" within groups, 3-4 commas max. Ref: "CUCKOO Twin Pressure Rice Cooker 6-Cup Uncooked / 12-Cup Cooked with Induction Heating Technology, 20 Menu Modes with Voice Guide, Versatile Rice Maker Multi-Cooker & Pressure Cooker (CRP-LHTR0609FW)"
 RULE 5 — ONLY use features from (a) the original title or (b) VERIFIED PRODUCT DATA from the internal database. Never invent. If title is sparse, enrich from database.
@@ -114,12 +119,13 @@ KEYWORD RESTRICTIONS (all marketplaces):
 - 'Korean'/'Korean Rice Cooker': only if verified made in Korea
 - 'Stainless Steel': only if inner pot IS stainless steel
 - 'low carb': only if product has that feature
+- 'Fuzzy Logic': do NOT use as a product type or heating method. It is a microprocessor control algorithm. Use 'Micom' for the product type instead. Only acceptable in bullet points or descriptions, never in titles.
 
 EXAMPLE:
 Input: "CUCKOO CRP-P0609S 6 Cup Electric Heating Pressure Rice Cooker with Nonstick Inner Pot, Black"
-Amazon (200): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked / 12-Cup Cooked Rice Maker with Nonstick Inner Pot, Fuzzy Logic, Keep Warm, Steamer Basket, Black (CRP-P0609S)"
+Amazon (200): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked / 12-Cup Cooked Rice Maker with Nonstick Inner Pot, Auto Clean, Voice Guide, 12 Cooking Modes, Turbo Mode, Black (CRP-P0609S)"
 Walmart (75): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked, Nonstick, Black"
-Target (100): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked with Nonstick Inner Pot, Keep Warm, Black"
+Target (100): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked with Nonstick Inner Pot, Voice Guide, Black"
 
 TASK:
 1. Sparse titles: enrich from VERIFIED PRODUCT DATA.
@@ -127,14 +133,22 @@ TASK:
 3. Generate per marketplace guidelines + CUCKOO rules.
 4. Amazon: maximize 200 chars with all features. Others: efficient within limits, match marketplace tone. No keyword-stuffing non-Amazon.
 5. ALWAYS provide suggested_title in amazon_audit.
-6. SELF-CHECK: verify every title for Uncooked/Cooked, parenthesized model numbers, no invented features, no banned terms per keyword restrictions, no "& Warmer".
+6. SELF-CHECK before responding — verify EVERY title against ALL of these:
+   a) Every cup count has "Uncooked" or "Cooked" qualifier
+   b) Model number in parentheses at end (or omitted if over limit)
+   c) NO features or specs that are NOT in the product database — cross-check each feature you mention
+   d) NO keyword restriction violations (pressure/induction/Korean/Stainless Steel/small only where allowed)
+   e) NO "& Warmer" anywhere
+   f) NO "Fuzzy Logic" in any title
+   g) Every title is within its marketplace character limit
+   h) Title Case used consistently
 
 Respond ONLY in valid JSON:
 {"amazon_audit":{"score":<1-10>,"strengths":["..."],"improvements":["..."],"suggested_title":"always provide"},"conversions":{"<key>":{"title":"...","char_count":<n>,"changes":["..."]}}}`;
 
 // Category-specific rules appended to system prompt
 const CATEGORY_RULES = {
-  rice_cooker: `\nPRODUCT CATEGORY: Rice Cooker\nApply ALL CUCKOO TITLE RULES above. For Amazon: prioritize exact-matching high-volume keyword phrases within 200 chars. 'Rice Maker' and 'Rice Warmer' are high-volume synonyms — include naturally. See KEYWORD RESTRICTIONS in system prompt for all restrictions.`,
+  rice_cooker: `\nPRODUCT CATEGORY: Rice Cooker\nApply ALL CUCKOO TITLE RULES above. For Amazon: prioritize exact-matching high-volume keyword phrases within 200 chars. 'Rice Maker' and 'Rice Warmer' are high-volume synonyms — include naturally. NEVER use 'Fuzzy Logic' in any title — use 'Micom' for the product type instead. ONLY include features that exist in the VERIFIED PRODUCT DATA. See KEYWORD RESTRICTIONS in system prompt for all restrictions.`,
   water_purifier: `\nPRODUCT CATEGORY: Water Purifier\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Purifier Line/Type] [Product Type] [Key Feature/Stage Count] [extras]\nCommon keywords: Water Purifier, Filtration, Reverse Osmosis, Alkaline, Mineral, Countertop, Under-Sink, Filter, Stage, Tankless, Self-Cleaning.`,
   air_purifier: `\nPRODUCT CATEGORY: Air Purifier\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Product Line] Air Purifier [Coverage Area] [Key Feature] [extras]\nCommon keywords: Air Purifier, HEPA, True HEPA, Activated Carbon, Coverage, Sq Ft, Smart Sensor, Auto Mode, Sleep Mode, Allergen, Dust, Odor.`,
   bidet: `\nPRODUCT CATEGORY: Bidet\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Product Line] Bidet [Seat Type] [Key Features] [extras]\nCommon keywords: Bidet, Bidet Seat, Elongated, Round, Heated Seat, Warm Water, Air Dryer, Deodorizer, Self-Cleaning Nozzle, Adjustable.`,
