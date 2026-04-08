@@ -1660,7 +1660,7 @@ function AppInner() {
           method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
           body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, temperature: temp, system, messages: [{ role: "user", content: userMsg }] })
         });
-        if (res.status === 429) { await delay(Math.pow(2, attempt + 1) * 2000); continue; }
+        if (res.status === 429 || res.status === 502 || res.status === 503) { await delay(Math.pow(2, attempt + 1) * 2000); continue; }
         if (!res.ok) throw new Error("API " + res.status);
         const data = await res.json();
         if (data.error) throw new Error(data.error.message || "API error");
