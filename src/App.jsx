@@ -1653,19 +1653,26 @@ function AppInner() {
     beAbortRef.current = controller;
     const allMpKeys = Object.keys(MARKETPLACES);
     const catRules = CATEGORY_RULES.rice_cooker;
+    const delay = ms => new Promise(r => setTimeout(r, ms));
     const callApi = async (system, userMsg, maxTokens, temp) => {
-      const res = await fetch("/api/messages", {
-        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, temperature: temp, system, messages: [{ role: "user", content: userMsg }] })
-      });
-      if (!res.ok) throw new Error("API " + res.status);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message || "API error");
-      const text = extractTextFromContent(data.content);
-      return parseJsonResponse(text);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const res = await fetch("/api/messages", {
+          method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+          body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, temperature: temp, system, messages: [{ role: "user", content: userMsg }] })
+        });
+        if (res.status === 429) { await delay(Math.pow(2, attempt + 1) * 2000); continue; }
+        if (!res.ok) throw new Error("API " + res.status);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message || "API error");
+        const text = extractTextFromContent(data.content);
+        return parseJsonResponse(text);
+      }
+      throw new Error("Rate limited after 3 retries");
     };
     const results = [];
     for (let i = 0; i < beModels.length; i++) {
+      // Pause between products to avoid rate limiting
+      if (i > 0) await delay(2000);
       const sku = beModels[i];
       const product = PRODUCT_DB[sku];
       if (!product) { results.push({ sku, error: "Not in database" }); continue; }
