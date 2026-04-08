@@ -864,6 +864,36 @@ function validateListingOutput(titles, bullets, keywords, product) {
   return { warnings, bulletCharCounts };
 }
 
+// --- MODEL NUMBER POST-PROCESSING ---
+
+// Ensure model number appears in every marketplace title unless it would exceed the hard char limit.
+// Mutates the conversions object in place. Recalculates char_count from final text.
+function ensureModelNumberInTitles(conversions, sku) {
+  if (!conversions || !sku) return;
+  const suffix = " (" + sku + ")";
+  for (const key of Object.keys(conversions)) {
+    const conv = conversions[key];
+    if (!conv?.title) continue;
+    const title = conv.title.trim();
+    // Check if model number is already present (case-insensitive)
+    if (title.toUpperCase().includes(sku.toUpperCase())) {
+      conv.title = title;
+      conv.char_count = title.length;
+      continue;
+    }
+    // Try appending — only if within hard char limit
+    const limit = CHAR_LIMITS[key];
+    const withModel = title + suffix;
+    if (!limit || withModel.length <= limit) {
+      conv.title = withModel;
+      conv.char_count = withModel.length;
+    } else {
+      conv.title = title;
+      conv.char_count = title.length;
+    }
+  }
+}
+
 // --- APP COMPONENT ---
 
 function AppInner() {
@@ -1223,11 +1253,20 @@ function AppInner() {
         setBulkProgress({ current: i + 1, total: titles.length });
         try {
           const merged = await callApi(titles[i], sel);
-          // Trim titles and client-side char count override
+          // Trim titles, append model number where it fits, recalculate char counts
           if (merged.conversions) {
             for (const key of Object.keys(merged.conversions)) {
               if (merged.conversions[key]?.title) {
                 merged.conversions[key].title = merged.conversions[key].title.trim();
+              }
+            }
+            const bulkProduct = lookupProduct(titles[i], liveProductDbRef.current);
+            const bulkSku = bulkProduct?.sku || titles[i].trim();
+            if (bulkSku && /^CR[A-Z]?-/i.test(bulkSku)) {
+              ensureModelNumberInTitles(merged.conversions, bulkSku);
+            }
+            for (const key of Object.keys(merged.conversions)) {
+              if (merged.conversions[key]?.title) {
                 merged.conversions[key].char_count = merged.conversions[key].title.length;
               }
             }
@@ -1705,6 +1744,12 @@ function AppInner() {
       const gl = wsMarketplaces.map(k => MARKETPLACES[k]?.guidelines || "").join("\n---\n");
       const titleMsg = `Model number: "${wsModel.trim()}"\nThis is a CUCKOO product model number. Create an optimized Amazon title from scratch.\n\n${productCtx}\n1. Use the VERIFIED PRODUCT DATA above as your ONLY source.\n2. Create a fully optimized Amazon title that maximizes the 200-character limit.\n3. Put this title in amazon_audit.suggested_title. Score it.\n4. Then convert for these marketplaces: ${wsMarketplaces.join(", ")}\n\nGuidelines:\n${gl}\nRespond ONLY with valid JSON.`;
       const titles = await callApi(SYSTEM_PROMPT + catRules, titleMsg, 1500, 0.3);
+      // Post-process: ensure model number in every title where it fits
+      if (titles.conversions) {
+        for (const key of Object.keys(titles.conversions)) { if (titles.conversions[key]?.title) titles.conversions[key].title = titles.conversions[key].title.trim(); }
+        ensureModelNumberInTitles(titles.conversions, product.sku);
+        for (const key of Object.keys(titles.conversions)) { if (titles.conversions[key]?.title) titles.conversions[key].char_count = titles.conversions[key].title.length; }
+      }
       const amazonTitle = titles.amazon_audit?.suggested_title || titles.conversions?.amazon?.title || "";
       setWsResults(prev => ({ ...prev, titles, _amazonTitle: amazonTitle, _product: product }));
 
@@ -1794,6 +1839,12 @@ function AppInner() {
         const titleMsg = `Model number: "${sku}"\nCreate optimized titles.\n\n${productCtx}\n1. Use VERIFIED PRODUCT DATA as ONLY source.\n2. Create Amazon title maximizing 200 chars.\n3. Convert for: ${allMpKeys.join(", ")}\nGuidelines:\n${gl}\nRespond ONLY with valid JSON.`;
         const titles = await callApi(SYSTEM_PROMPT + catRules, titleMsg, 1500, 0.3);
         if (!titles) throw new Error("Title parse failed");
+        // Post-process: ensure model number in every title where it fits
+        if (titles.conversions) {
+          for (const k of Object.keys(titles.conversions)) { if (titles.conversions[k]?.title) titles.conversions[k].title = titles.conversions[k].title.trim(); }
+          ensureModelNumberInTitles(titles.conversions, sku);
+          for (const k of Object.keys(titles.conversions)) { if (titles.conversions[k]?.title) titles.conversions[k].char_count = titles.conversions[k].title.length; }
+        }
         const amazonTitle = titles.amazon_audit?.suggested_title || titles.conversions?.amazon?.title || "";
         // Bullets
         setBeProgress({ current: i + 1, total: beModels.length, sku, step: "bullets" });
@@ -1969,6 +2020,16 @@ function AppInner() {
         for (const key of Object.keys(merged.conversions)) {
           if (merged.conversions[key]?.title) {
             merged.conversions[key].title = merged.conversions[key].title.trim();
+          }
+        }
+        // Post-process: ensure model number in every title where it fits
+        const sku = productMatch?.sku || title.trim();
+        if (sku && /^CR[A-Z]?-/.test(sku.toUpperCase())) {
+          ensureModelNumberInTitles(merged.conversions, sku);
+        }
+        // Final char_count from post-processed title
+        for (const key of Object.keys(merged.conversions)) {
+          if (merged.conversions[key]?.title) {
             merged.conversions[key].char_count = merged.conversions[key].title.length;
           }
         }
