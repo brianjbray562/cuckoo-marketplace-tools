@@ -758,6 +758,112 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// --- PRODUCT TIER CLASSIFICATION ---
+
+// Classify a product into basic / mid / premium based on DB fields
+function classifyProductTier(product) {
+  if (!product) return "basic";
+  const type = (product.type || "").toLowerCase();
+  const heating = (product.heating || "").toLowerCase();
+  const pressure = !!product.pressure;
+  // Premium: induction heating, twin pressure, or twin pressure + induction
+  if (heating.includes("induction") || type.includes("twin pressure") || type.includes("induction")) return "premium";
+  // Mid: pressure models (CRP-) or micom with advanced features
+  if (pressure || type.includes("pressure")) return "mid";
+  if (type === "micom" && parseInt(product.cookingModes) >= 8) return "mid";
+  // Basic: everything else
+  return "basic";
+}
+
+// Extract hero technology keywords for a product (used for premium-tech validation)
+function getHeroTechKeywords(product) {
+  if (!product) return [];
+  const type = (product.type || "").toLowerCase();
+  const heating = (product.heating || "").toLowerCase();
+  const keywords = [];
+  if (type.includes("twin pressure")) keywords.push("twin pressure");
+  if (heating.includes("induction")) keywords.push("induction");
+  if (type.includes("induction")) keywords.push("induction");
+  if (type.includes("pressure") && !type.includes("twin")) keywords.push("pressure");
+  return [...new Set(keywords)];
+}
+
+// --- LISTING OUTPUT VALIDATOR ---
+
+// Validate and fix helper fields on generated listing output.
+// Returns { warnings: string[], fixedTitles, fixedKeywords }
+// Does NOT change content — only recalculates helper fields and flags issues.
+function validateListingOutput(titles, bullets, keywords, product) {
+  const warnings = [];
+  const tier = classifyProductTier(product);
+  const heroKeywords = getHeroTechKeywords(product);
+
+  // 1. Recalculate title char_counts from actual text
+  if (titles?.conversions) {
+    for (const [key, conv] of Object.entries(titles.conversions)) {
+      if (conv?.title) {
+        const actual = conv.title.trim().length;
+        if (conv.char_count !== actual) {
+          conv.char_count = actual;
+        }
+        // Check marketplace char limit
+        const limit = CHAR_LIMITS[key];
+        if (limit && actual > limit) {
+          warnings.push("CHAR_LIMIT: " + key + " title is " + actual + " chars (limit " + limit + ")");
+        }
+      }
+    }
+  }
+  if (titles?.amazon_audit?.suggested_title) {
+    titles.amazon_audit.suggested_char_count = titles.amazon_audit.suggested_title.trim().length;
+  }
+
+  // 2. Compute bullet char lengths
+  const bulletCharCounts = [];
+  if (bullets?.bullets && Array.isArray(bullets.bullets)) {
+    for (let i = 0; i < bullets.bullets.length; i++) {
+      const b = bullets.bullets[i];
+      const fullText = (b.heading || "") + ": " + (b.text || "");
+      const len = fullText.length;
+      bulletCharCounts.push(len);
+      if (len > 220) {
+        warnings.push("BULLET_LENGTH: Bullet " + (i + 1) + " is " + len + " chars (over 220 limit)");
+      }
+    }
+  }
+
+  // 3. Recalculate BK byte_count from final text
+  if (keywords?.keywords) {
+    const actualBytes = new TextEncoder().encode(keywords.keywords).length;
+    if (keywords.byte_count !== actualBytes) {
+      keywords.byte_count = actualBytes;
+    }
+    if (actualBytes > 499) {
+      warnings.push("BK_BYTES: Backend keywords are " + actualBytes + " bytes (limit 499)");
+    }
+    if (!keywords.keywords.trim()) {
+      warnings.push("BK_EMPTY: Backend keywords field is blank");
+    }
+  }
+
+  // 4. Premium tech presence check across marketplaces that matter
+  if (tier === "premium" && heroKeywords.length > 0 && titles?.conversions) {
+    // Check all marketplaces, not just Amazon
+    const tightMarketplaces = ["walmart", "target", "bestbuy", "bloomingdales", "weee"];
+    const allMpKeys = Object.keys(titles.conversions);
+    for (const key of allMpKeys) {
+      const title = (titles.conversions[key]?.title || "").toLowerCase();
+      const missingTech = heroKeywords.filter(kw => !title.includes(kw));
+      if (missingTech.length > 0) {
+        const isTight = tightMarketplaces.includes(key);
+        warnings.push("PREMIUM_TECH" + (isTight ? "_TIGHT" : "") + ": " + key + " title missing hero tech: " + missingTech.join(", "));
+      }
+    }
+  }
+
+  return { warnings, bulletCharCounts };
+}
+
 // --- APP COMPONENT ---
 
 function AppInner() {
@@ -1255,10 +1361,10 @@ function AppInner() {
       }
       // Verify byte count client-side and hard-cap at 500 bytes
       parsed.byte_count = new TextEncoder().encode(parsed.keywords).length;
-      if (parsed.byte_count > 500) {
+      if (parsed.byte_count > 499) {
         const enc = new TextEncoder();
         let words = parsed.keywords.split(" ");
-        while (words.length > 1 && enc.encode(words.join(" ")).length > 500) { words.pop(); }
+        while (words.length > 1 && enc.encode(words.join(" ")).length > 499) { words.pop(); }
         parsed.keywords = words.join(" ");
         parsed.byte_count = enc.encode(parsed.keywords).length;
       }
@@ -1616,10 +1722,10 @@ function AppInner() {
       const bkMsg = "Generate backend keywords for CUCKOO " + wsModel.trim() + ":\n\n" + productCtx + (amazonTitle ? "\n\nCURRENT TITLE (exclude these words):\n\"" + amazonTitle + "\"" : "") + (bulletText ? "\n\nCURRENT BULLETS (exclude these words):\n" + bulletText : "") + "\nRespond ONLY with valid JSON.";
       let keywords = await callApi(bkSys, bkMsg, 800, 0.3);
       keywords.byte_count = new TextEncoder().encode(keywords.keywords || "").length;
-      if (keywords.byte_count > 500) {
+      if (keywords.byte_count > 499) {
         const words = (keywords.keywords || "").split(" ");
         const enc = new TextEncoder();
-        while (words.length > 1 && enc.encode(words.join(" ")).length > 500) words.pop();
+        while (words.length > 1 && enc.encode(words.join(" ")).length > 499) words.pop();
         keywords.keywords = words.join(" ");
         keywords.byte_count = enc.encode(keywords.keywords).length;
       }
@@ -1631,6 +1737,10 @@ function AppInner() {
       const auditMsg = "Audit this Amazon listing:\nTitle: " + amazonTitle + "\nBullet Points:\n" + bulletText + "\nBackend Keywords:\n" + (keywords.keywords || "") + "\n\n" + productCtx + "\nRespond ONLY with valid JSON.";
       const audit = await callApi(auditSys, auditMsg, 2000, 0);
       setWsResults(prev => ({ ...prev, audit }));
+
+      // Validation pass — recalculate helper fields and flag issues
+      const validation = validateListingOutput(titles, bullets, keywords, product);
+      setWsResults(prev => ({ ...prev, _validation: validation }));
       setWsLoading(null);
     } catch (e) {
       setWsError(formatApiError(e));
@@ -1699,9 +1809,11 @@ function AppInner() {
         if (keywords?.keywords) {
           const enc = new TextEncoder();
           keywords.byte_count = enc.encode(keywords.keywords).length;
-          if (keywords.byte_count > 500) { const w = keywords.keywords.split(" "); while (w.length > 1 && enc.encode(w.join(" ")).length > 500) w.pop(); keywords.keywords = w.join(" "); keywords.byte_count = enc.encode(keywords.keywords).length; }
+          if (keywords.byte_count > 499) { const w = keywords.keywords.split(" "); while (w.length > 1 && enc.encode(w.join(" ")).length > 499) w.pop(); keywords.keywords = w.join(" "); keywords.byte_count = enc.encode(keywords.keywords).length; }
         }
-        results.push({ sku, titles, bullets, keywords, amazonTitle, error: null });
+        // Validation pass
+        const validation = validateListingOutput(titles, bullets, keywords, product);
+        results.push({ sku, titles, bullets, keywords, amazonTitle, error: null, _validation: validation });
         setBeResults([...results]);
       } catch (e) {
         if (e.name === "AbortError") { setBeError("Cancelled at " + sku); break; }
@@ -2233,6 +2345,17 @@ function AppInner() {
                 </div>
               </div>
             ))}
+          </div>}
+
+          {/* Validation Warnings */}
+          {wsResults._validation?.warnings?.length > 0 && <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{"\u26A0\uFE0F"} Validation Warnings ({wsResults._validation.warnings.length})</div>
+            {wsResults._validation.warnings.map((w, i) => (
+              <div key={i} style={{ fontSize: 11, color: "#78350f", padding: "3px 0", fontFamily: "'IBM Plex Mono',monospace" }}>{"\u2022"} {w}</div>
+            ))}
+          </div>}
+          {wsResults._validation && wsResults._validation.warnings?.length === 0 && <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 12, padding: 12, textAlign: "center" }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#16a34a" }}>{"\u2705"} All validation checks passed</span>
           </div>}
 
           {/* Export */}
@@ -3083,14 +3206,14 @@ function AppInner() {
           <div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>Backend Search Terms</div>
-              <div style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: bkResults.byte_count > 500 ? "#dc2626" : bkResults.byte_count > 400 ? "#d97706" : "#16a34a", fontWeight: 700 }}>
+              <div style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: bkResults.byte_count > 499 ? "#dc2626" : bkResults.byte_count > 400 ? "#d97706" : "#16a34a", fontWeight: 700 }}>
                 {bkResults.byte_count} / 500 bytes
               </div>
             </div>
 
             {/* Byte bar */}
             <div style={{ height: 6, background: "#f0eeeb", borderRadius: 3, overflow: "hidden", marginBottom: 16 }}>
-              <div style={{ width: `${Math.min(bkResults.byte_count / 500 * 100, 100)}%`, height: "100%", background: bkResults.byte_count > 500 ? "#dc2626" : bkResults.byte_count > 400 ? "#d97706" : MAROON, borderRadius: 3, transition: "width .4s ease" }} />
+              <div style={{ width: `${Math.min(bkResults.byte_count / 499 * 100, 100)}%`, height: "100%", background: bkResults.byte_count > 499 ? "#dc2626" : bkResults.byte_count > 400 ? "#d97706" : MAROON, borderRadius: 3, transition: "width .4s ease" }} />
             </div>
 
             {/* Keyword string - editable */}
@@ -3106,7 +3229,7 @@ function AppInner() {
               <button onClick={() => { copy(bkResults.keywords, "bk"); }} style={{ padding: "5px 12px", background: copied === "bk" ? "#16a34a" : MAROON, border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
                 {copied === "bk" ? "\u2713 Copied" : "Copy Keywords"}
               </button>
-              {bkResults.byte_count > 500 && <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 600, display: "flex", alignItems: "center" }}>{"\u26A0"} Over 500 byte limit — remove some terms</span>}
+              {bkResults.byte_count > 499 && <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 600, display: "flex", alignItems: "center" }}>{"\u26A0"} Over 499 byte limit — remove some terms</span>}
             </div>
 
             {/* Strategy */}
