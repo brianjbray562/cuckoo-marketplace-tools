@@ -99,198 +99,58 @@ const MARKETPLACES = {
   }
 };
 
-const SYSTEM_PROMPT = `You are a senior ecommerce merchandising director and listing optimization expert for CUCKOO Electronics America.
+const SYSTEM_PROMPT = `You are a senior ecommerce listing specialist at CUCKOO Electronics America. Premium Korean brand: rice cookers, water purifiers, air purifiers, bidets, kitchen appliances.
 
-Your job is to create marketplace-ready product titles that are accurate, readable, conversion-minded, and platform-appropriate. You are not a generic SEO writer. You are a strategic merchandiser.
+CUCKOO TITLE RULES (apply to ALL marketplaces):
 
-PRIMARY OBJECTIVE
-Create titles that preserve product truth, communicate the most important selling points in the right order, and fit the behavior of each marketplace.
+PRIORITY (tight char limits — drop from bottom first):
+P1 (NEVER DROP): Brand "CUCKOO" + Cup capacity with Uncooked/Cooked
+P2 (NEVER DROP): Technology/type (include dual technologies when both present)
+P3 (drop first): Model number in parentheses
 
-SOURCE OF TRUTH
-Use only:
-1. VERIFIED PRODUCT DATA provided in the prompt
-2. Explicitly approved original listing language, if supplied
-Do not invent technologies, materials, certifications, accessories, warranty terms, capacities, origins, or claims.
+RULE 1 — Every cup capacity MUST have "Uncooked" or "Cooked" (e.g. "6-Cup Uncooked"). Hyphen required. NEVER bare "6-Cup" without qualifier. Default Uncooked. Include both if known (e.g. "6-Cup Uncooked / 12-Cup Cooked").
+RULE 2 — Order: CUCKOO [Tech] Rice Cooker [Cup Size], [Features], [Color] ([Model]). No "& Warmer". Cup size AFTER "Rice Cooker". Dual tech (Twin Pressure + Induction Heating): BOTH must appear after CUCKOO in every title — drop model number before dropping tech. Valid types: Basic, Micom, Pressure, Twin Pressure, Induction Heating Pressure, Electric Heating Pressure, Twin Pressure + Induction. Do NOT use "Fuzzy Logic" as a type — use "Micom" instead. When auditing originals, don't flag for not frontloading dual tech.
+RULE 3 — Model numbers in parentheses, placed LAST. Remove entirely if over char limit — first thing to sacrifice.
+RULE 4 — Flowing titles, not keyword lists. "with" connects features, "&" within groups, 3-4 commas max. Ref: "CUCKOO Twin Pressure Rice Cooker 6-Cup Uncooked / 12-Cup Cooked with Induction Heating Technology, 20 Menu Modes with Voice Guide, Versatile Rice Maker Multi-Cooker & Pressure Cooker (CRP-LHTR0609FW)"
+RULE 5 — ONLY use features from (a) the original title or (b) VERIFIED PRODUCT DATA from the internal database. Never invent. If title is sparse, enrich from database.
 
-NON-NEGOTIABLE PRODUCT-TRUTH RULES
-- Always include the brand name CUCKOO first.
-- Every cup capacity must include Uncooked or Cooked.
-- Never use bare cup counts such as "6-Cup" without qualifier.
-- Only use "pressure" for CRP models or when verified by product data.
-- Only use "induction" when verified by heating/product data.
-- Only use "Korean" or "Korean Rice Cooker" if made in South Korea is verified.
-- Only use "stainless steel" if the relevant component is actually stainless steel.
-- Never use "Fuzzy Logic" in titles. Use "Micom" instead when appropriate.
-- Never use unsupported superlatives or claims.
-- Never use "& Warmer" anywhere in titles.
+KEYWORD RESTRICTIONS (all marketplaces):
+- 'small'/'mini'/'compact': only for 3-cup or smaller
+- 'pressure': only for CRP- models
+- 'induction': only for IH models
+- 'Korean'/'Korean Rice Cooker': only if verified made in Korea
+- 'Stainless Steel': only if inner pot IS stainless steel
+- 'low carb': only if product has that feature
+- 'Fuzzy Logic': do NOT use as a product type or heating method. It is a microprocessor control algorithm. Use 'Micom' for the product type instead. Only acceptable in bullet points or descriptions, never in titles.
 
-TITLE STRATEGY
-Do NOT follow one rigid universal title order for every marketplace.
-Instead, build each title from this priority stack:
-1. Brand
-2. Product class
-3. Hero technology
-4. Primary differentiator
-5. Capacity
-6. Secondary useful differentiator
-7. Color
-8. Model number if still valuable and space allows
+EXAMPLE:
+Input: "CUCKOO CRP-P0609S 6 Cup Electric Heating Pressure Rice Cooker with Nonstick Inner Pot, Black"
+Amazon (200): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked / 12-Cup Cooked Rice Maker with Nonstick Inner Pot, Auto Clean, Voice Guide, 12 Cooking Modes, Turbo Mode, Black (CRP-P0609S)"
+Walmart (75): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked, Nonstick, Black"
+Target (100): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked with Nonstick Inner Pot, Voice Guide, Black"
 
-IMPORTANT MERCHANDISING RULES
-- Do not flatten premium products into generic spec lists.
-- For premium products, preserve the hero reason to buy.
-- For induction, twin pressure, and premium pressure models, protect the primary technology before sacrificing lower-value details.
-- Under tight character limits, drop in this order: model number, tertiary feature, color, secondary feature.
-- Never drop brand, product class, or core verified technology unless the marketplace limit makes it absolutely impossible.
-
-READABILITY RULES
-- Titles must read like intentional retail copy, not a pile of attributes.
-- Avoid awkward feature stacking, repetitive wording, and unnecessary commas.
-- Use "with" selectively for flow.
-- Prioritize natural phrasing over keyword stuffing.
-
-AMAZON-SPECIFIC RULES
-- Max 200 characters.
-- Do not automatically force the title to use all 200 characters.
-- Aim for roughly 170 to 195 characters when that produces a stronger title.
-- Include major search language naturally, but do not sacrifice readability to cram synonyms.
-- Prioritize indexing plus conversion, not indexing alone.
-
-MARKETPLACE-SPECIFIC BEHAVIOR
-- Amazon: Search-aware, but still readable. Include strongest product identity and major searchable differentiators. Avoid overpacking.
-- Walmart: Mobile-first and concise. Prioritize Brand + Product Type + Hero Feature + Capacity. Usually 1 to 2 descriptors only. Do not strip out the core technology if it is the main reason to buy.
-- Target: Clean, retail-ready, shelf-tag tone. Polished and consumer-friendly. 2 to 3 descriptors max.
-- Best Buy: More technical audience. Model number is more useful here. Heating type and technical differentiators matter.
-- Wayfair: Sentence case. Home-focused, polished, material/finish aware. Less keywordy, more lifestyle and finish-sensitive.
-- Kohl's / Macy's / Bloomingdale's: Department-store presentation. More polished and consumer-facing. Bloomingdale's should feel the most premium and restrained.
-- TikTok Shop: Scannable and fast. Still literal and product-confirming. No gimmicks.
-- Weee!: Clear and culturally relevant. If verified as made in Korea, "Korean Rice Cooker" may be valuable.
-
-PREMIUM MODEL PROTECTION
-For premium rice cookers (induction and twin pressure models), prioritize:
-1. Brand → 2. Hero technology → 3. Product type → 4. Capacity → 5. Premium differentiator → 6. Convenience feature → 7. Color / model
-
-SELF-CHECK BEFORE FINALIZING EACH TITLE
-a) every cup count includes Uncooked or Cooked
-b) no unsupported claims were added
-c) all restricted terms are properly verified
-d) the title sounds merchandised, not auto-assembled
-e) the title is within the marketplace character limit
-f) premium models still clearly read as premium
-g) core technology was not lost unnecessarily
+TASK:
+1. Sparse titles: enrich from VERIFIED PRODUCT DATA.
+2. With Amazon title: audit SEO strength. Without (model-only): create optimized Amazon title from DB + keywords + rules. Score your own title; note in strengths it's newly generated; list what couldn't fit in improvements.
+3. Generate per marketplace guidelines + CUCKOO rules.
+4. Amazon: maximize 200 chars with all features. Others: efficient within limits, match marketplace tone. No keyword-stuffing non-Amazon.
+5. ALWAYS provide suggested_title in amazon_audit.
+6. SELF-CHECK before responding — verify EVERY title against ALL of these:
+   a) Every cup count has "Uncooked" or "Cooked" qualifier
+   b) Model number in parentheses at end (or omitted if over limit)
+   c) NO features or specs that are NOT in the product database — cross-check each feature you mention
+   d) NO keyword restriction violations (pressure/induction/Korean/Stainless Steel/small only where allowed)
+   e) NO "& Warmer" anywhere
+   f) NO "Fuzzy Logic" in any title
+   g) Every title is within its marketplace character limit
+   h) Title Case used consistently
 
 Respond ONLY in valid JSON:
 {"amazon_audit":{"score":<1-10>,"strengths":["..."],"improvements":["..."],"suggested_title":"always provide"},"conversions":{"<key>":{"title":"...","char_count":<n>,"changes":["..."]}}}`;
 
-// Bullet point generation system prompt (shared across standalone, workspace, and bulk)
-const BULLET_SYSTEM_PROMPT = `You are a senior ecommerce merchandising copywriter for CUCKOO Electronics America.
-
-Generate 5 marketplace-ready bullet points that are persuasive, specific, and differentiated by product tier. These bullets must feel like they were written by an experienced ecommerce merchandiser, not generated from a generic template.
-
-SOURCE OF TRUTH
-Use only the VERIFIED PRODUCT DATA and the supplied title. Do not invent any product claims, materials, technologies, certifications, accessories, or warranty terms.
-
-PRIMARY GOAL
-Create bullets that reinforce the strongest selling points, support conversion, expand keyword coverage naturally, differentiate this SKU from other CUCKOO models, and stay concise and readable.
-
-BULLET LENGTH
-- Target 160 to 210 characters each. Prefer 170 to 200 characters.
-- Do not exceed 220 characters unless absolutely necessary.
-
-BULLET STRUCTURE
-Each bullet must start with a short, strong benefit heading in ALL CAPS, followed by a colon and one concise sentence.
-
-Do NOT force the same exact five themes for every SKU. Instead, use this priority framework:
-1. Hero technology or hero performance story
-2. Capacity and who it is ideal for
-3. Cooking performance, menu versatility, or material story
-4. Ease of use, cleaning, timer, voice guide, or convenience
-5. Brand trust, manufacturing origin, or product confidence only if it adds real value
-
-TIER-AWARE WRITING
-- Entry/basic models: emphasize simplicity, everyday reliability, ease of use, value
-- Mid-tier micom/pressure models: emphasize improved cooking performance, menu variety, convenience
-- Premium induction/twin pressure models: emphasize the main premium technology, elevated cooking control, and why the product is worth the trade-up
-
-IMPORTANT WRITING RULES
-- Do not repeat the same sentence structure across every product
-- Do not turn bullets into raw spec dumps
-- Do not use filler like "trusted quality" unless it truly adds value
-- If made in Korea is verified, use selectively where it strengthens the bullet
-- Use title-aligned language naturally, but do not repeat the title mechanically
-
-SELF-CHECK
-a) no unsupported claims  b) bullets are distinct from one another  c) bullets sound product-specific  d) premium SKUs sound premium  e) no bullet is unnecessarily long  f) headings are strong and not generic
-
-Respond ONLY with valid JSON: {"bullets":[{"heading":"...","text":"...","char_count":0}]}`;
-
-// Backend keyword generation system prompt (shared across standalone, workspace, and bulk)
-const BK_SYSTEM_PROMPT = `You are an Amazon backend search term strategist for CUCKOO Electronics America.
-
-Your job is to build an efficient backend keyword field that expands discoverability beyond the title and bullets without wasting bytes.
-
-SOURCE OF TRUTH
-Use only the verified product data, final title, and final bullets. Do not invent features, technologies, materials, certifications, or unsupported use cases.
-
-GOAL
-Maximize incremental keyword coverage, not raw keyword volume.
-
-HARD RULES
-- Maximum 499 UTF-8 bytes
-- Space-separated only, no commas or punctuation
-- No ASINs, no promo language, no repeated terms
-- No words already present in the final title or final bullets
-- No unsupported claims
-- Do not include filler just to fill space
-
-KEYWORD STRATEGY PRIORITY
-1. High-relevance uncovered search synonyms
-2. Alternate product naming shoppers may use
-3. Rice/grain type intent
-4. Relevant cooking/use-case intent
-5. Alternate language terms if relevant and not duplicative
-6. Competitor brand terms only if there is still room after higher-value relevant terms are covered
-
-IMPORTANT: Competitor brand names are NOT the default highest priority. Relevance and incremental discoverability are the priority.
-
-TERM SELECTION PRINCIPLES
-- Choose the highest-value terms first
-- Prefer terms strongly relevant to this exact SKU
-- Avoid overly broad junk terms
-- Do not use terms that imply unsupported functionality
-
-BYTE OPTIMIZATION
-- Order terms from highest value to lowest value
-- If trimming is needed, remove the lowest-value terms first
-
-SELF-CHECK
-a) <= 499 UTF-8 bytes  b) no title or bullet duplication  c) no repeated words  d) no unsupported terms  e) no wasted low-value filler  f) strong SKU relevance
-
-Respond ONLY with valid JSON: {"keywords":"...","byte_count":0,"strategy":[],"excluded":[]}`;
-
-// QA Validator system prompt (runs after generation to catch issues)
-const QA_VALIDATOR_PROMPT = `You are a listing QA validator for CUCKOO Electronics America.
-
-Review the generated title, bullets, and backend keywords against the verified product data and marketplace rules.
-
-Check for:
-- unsupported claims
-- dropped hero technology on premium models
-- awkward or machine-like phrasing
-- duplicated wording across title and bullets
-- bullets that are too long (over 220 chars)
-- backend terms that waste bytes or duplicate title/bullet words
-- incorrect character or byte counts
-- violations of restricted keyword rules (pressure/induction/Korean/stainless steel/small/fuzzy logic)
-
-If any issue is found, correct the content and return the corrected final version. If everything passes, return the content unchanged with approved: true.
-
-Respond ONLY with valid JSON:
-{"approved":true,"issues_found":[],"corrected_title":"","corrected_bullets":[],"corrected_backend_keywords":"","title_char_count":0,"bullet_char_counts":[],"backend_byte_count":0}`;
-
 // Category-specific rules appended to system prompt
 const CATEGORY_RULES = {
-  rice_cooker: `\nPRODUCT CATEGORY: Rice Cooker\nApply ALL rules above. For Amazon: include major search language naturally — 'Rice Maker' and 'Rice Warmer' are high-volume synonyms. NEVER use 'Fuzzy Logic' in any title — use 'Micom' instead. ONLY include features that exist in the VERIFIED PRODUCT DATA.`,
+  rice_cooker: `\nPRODUCT CATEGORY: Rice Cooker\nApply ALL CUCKOO TITLE RULES above. For Amazon: prioritize exact-matching high-volume keyword phrases within 200 chars. 'Rice Maker' and 'Rice Warmer' are high-volume synonyms — include naturally. NEVER use 'Fuzzy Logic' in any title — use 'Micom' for the product type instead. ONLY include features that exist in the VERIFIED PRODUCT DATA. See KEYWORD RESTRICTIONS in system prompt for all restrictions.`,
   water_purifier: `\nPRODUCT CATEGORY: Water Purifier\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Purifier Line/Type] [Product Type] [Key Feature/Stage Count] [extras]\nCommon keywords: Water Purifier, Filtration, Reverse Osmosis, Alkaline, Mineral, Countertop, Under-Sink, Filter, Stage, Tankless, Self-Cleaning.`,
   air_purifier: `\nPRODUCT CATEGORY: Air Purifier\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Product Line] Air Purifier [Coverage Area] [Key Feature] [extras]\nCommon keywords: Air Purifier, HEPA, True HEPA, Activated Carbon, Coverage, Sq Ft, Smart Sensor, Auto Mode, Sleep Mode, Allergen, Dust, Odor.`,
   bidet: `\nPRODUCT CATEGORY: Bidet\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Product Line] Bidet [Seat Type] [Key Features] [extras]\nCommon keywords: Bidet, Bidet Seat, Elongated, Round, Heated Seat, Warm Water, Air Dryer, Deodorizer, Self-Cleaning Nozzle, Adjustable.`,
@@ -1356,16 +1216,22 @@ function AppInner() {
       const dbProduct = bkModelNumber ? lookupProduct(bkModelNumber, liveProductDbRef.current) : null;
       const dbContext = dbProduct ? "\n\n" + formatProductContext(dbProduct) : "";
 
-      const titleExclusion = bkCurrentTitle.trim() ? "\n\nFINAL TITLE:\n\"" + bkCurrentTitle.trim() + "\"" : "";
-      const bulletExclusion = bkCurrentBullets.trim() ? "\n\nFINAL BULLETS:\n" + bkCurrentBullets.trim() : "";
+      const titleExclusion = bkCurrentTitle.trim() ? "\n\nCURRENT LISTING TITLE (do NOT repeat any of these words in backend keywords — Amazon already indexes them from the title):\n\"" + bkCurrentTitle.trim() + "\"" : "";
+      const bulletExclusion = bkCurrentBullets.trim() ? "\n\nCURRENT BULLET POINTS (do NOT repeat any of these words in backend keywords — Amazon already indexes them from bullet points):\n" + bkCurrentBullets.trim() : "";
 
-      const bkUserMsg = "Generate Amazon backend keywords for this CUCKOO product.\n\nModel: " + (bkModelNumber || "not specified") + "\nTechnology / Type: " + (bkFeatures.technology || "not specified") + "\nCup Size: " + (bkFeatures.cupSize || "not specified") + "\nInner Pot Material: " + (bkFeatures.material || "not specified") + "\nColor: " + (bkFeatures.color || "not specified") + "\nSelected Features: " + (featureList || "none") + "\n\nVERIFIED PRODUCT DATA:\n" + productDesc + dbContext + titleExclusion + bulletExclusion + "\n\nIMPORTANT:\n- Do not repeat words already in the title or bullets\n- Stay under 499 UTF-8 bytes\n- Prioritize uncovered, high-relevance search terms\n- Do not use filler or generic padding\n- Competitor brands are lower priority than strong uncovered relevant terms\n\nRespond only with valid JSON.";
+      const competitorLine = catCfg.competitors ? "\n1. COMPETITOR BRAND NAMES (highest priority): " + catCfg.competitors : "";
+      const spanishLine = catCfg.spanishTerms ? "\n2. ALTERNATE LANGUAGE TERMS: " + catCfg.spanishTerms : "";
+      const synonymLine = catCfg.synonyms ? "\n3. SYNONYM PHRASES not in the title: " + catCfg.synonyms : "";
+
+      const bkSystemPrompt = "Amazon backend keyword specialist for CUCKOO Electronics America. Generate hidden search terms for a CUCKOO " + catCfg.label + " listing (500 byte max). Prioritize:" + competitorLine + spanishLine + synonymLine + "\n- Feature/spec terms not in the title or bullet points\n- Use-case synonyms shoppers search\nRules: space-separated only, no punctuation, no words already in listing title or bullet points, no ASINs or promo phrases, stay under 500 bytes.\nRespond ONLY with valid JSON: {\"keywords\":\"space-separated string\",\"byte_count\":0,\"strategy\":[\"brief explanation\"],\"excluded\":[]}";
+
+      const bkUserMsg = "Generate Amazon backend keywords for this product:\n" + productDesc + dbContext + titleExclusion + bulletExclusion + "\nRespond ONLY with valid JSON.";
 
       const res = await fetch("/api/messages", {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: bkAbort.signal,
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514", max_tokens: 800, temperature: 0.3,
-          system: BK_SYSTEM_PROMPT,
+          system: bkSystemPrompt,
           messages: [{ role: "user", content: bkUserMsg }]
         })
       });
@@ -1389,10 +1255,10 @@ function AppInner() {
       }
       // Verify byte count client-side and hard-cap at 500 bytes
       parsed.byte_count = new TextEncoder().encode(parsed.keywords).length;
-      if (parsed.byte_count > 499) {
+      if (parsed.byte_count > 500) {
         const enc = new TextEncoder();
         let words = parsed.keywords.split(" ");
-        while (words.length > 1 && enc.encode(words.join(" ")).length > 499) { words.pop(); }
+        while (words.length > 1 && enc.encode(words.join(" ")).length > 500) { words.pop(); }
         parsed.keywords = words.join(" ");
         parsed.byte_count = enc.encode(parsed.keywords).length;
       }
@@ -1425,11 +1291,12 @@ function AppInner() {
       const product = lookupProduct(bpModel, liveProductDbRef.current);
       const productCtx = product ? "\n\n" + formatProductContext(product) : "";
       const mpConfig = MARKETPLACES[bpMarketplace] || MARKETPLACES.amazon;
-      const titleCtx = bpTitle.trim() ? "\n\nFINAL TITLE:\n\"" + bpTitle.trim() + "\"" : "";
-      const bpUserMsg = "Generate 5 bullet points for this CUCKOO product.\n\nModel: " + bpModel.trim() + productCtx + titleCtx + "\n\nMarketplace: " + mpConfig.name + "\n\nIMPORTANT:\n- Use only verified product data\n- Do not invent anything\n- Keep bullets concise, differentiated, and commercially strong\n- Make the bullets appropriate for this product tier\n- Avoid repetitive template language\n- Keep each bullet around 170 to 200 characters where possible\n\nRespond only with valid JSON.";
+      const bpSystemPrompt = "You are a senior ecommerce copywriter at CUCKOO Electronics America. Generate 5 bullet points for a product listing. Each bullet should start with a CAPITALIZED benefit phrase (2-4 words), followed by a colon and descriptive text. Bullet points should cover: key technology/feature, capacity/convenience, material/quality, ease of use, and brand trust/warranty. For Amazon: max 500 chars per bullet, keyword-rich. For other marketplaces: adapt tone per guidelines. Only use verified product data — never invent features.\nRespond ONLY with valid JSON: {\"bullets\":[{\"heading\":\"...\",\"text\":\"...\"}],\"marketplace\":\"...\",\"char_counts\":[]}";
+      const titleCtx = bpTitle.trim() ? "\n\nLISTING TITLE (align bullet points with the keywords and features highlighted in this title for SEO consistency):\n\"" + bpTitle.trim() + "\"" : "";
+      const bpUserMsg = "Generate 5 bullet points for this CUCKOO product on " + mpConfig.name + ":\nModel: " + bpModel.trim() + productCtx + titleCtx + "\nMarketplace: " + mpConfig.name + "\n" + mpConfig.guidelines + "\nRespond ONLY with valid JSON.";
       const res = await fetch("/api/messages", {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: BULLET_SYSTEM_PROMPT, messages: [{ role: "user", content: bpUserMsg }] })
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: bpSystemPrompt, messages: [{ role: "user", content: bpUserMsg }] })
       });
       if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
       const data = await res.json();
@@ -1737,20 +1604,22 @@ function AppInner() {
 
       // Step 2: Bullets
       setWsLoading("bullets");
-      const bpMsg = "Generate 5 bullet points for this CUCKOO product.\n\nModel: " + wsModel.trim() + "\n\nVERIFIED PRODUCT DATA:\n" + productCtx + (amazonTitle ? "\n\nFINAL TITLE:\n\"" + amazonTitle + "\"" : "") + "\n\nMarketplace: Amazon\n\nIMPORTANT:\n- Use only verified product data\n- Keep bullets concise (170-200 chars each)\n- Make bullets appropriate for this product tier\n- Avoid repetitive template language\n\nRespond only with valid JSON.";
-      const bullets = await callApi(BULLET_SYSTEM_PROMPT, bpMsg, 1500, 0.3);
+      const bpSys = "You are a senior ecommerce copywriter at CUCKOO Electronics America. Generate 5 bullet points for an Amazon product listing. Each bullet should start with a CAPITALIZED benefit phrase (2-4 words), followed by a colon and descriptive text. Only use verified product data — never invent features.\nRespond ONLY with valid JSON: {\"bullets\":[{\"heading\":\"...\",\"text\":\"...\"}]}";
+      const bpMsg = "Generate 5 bullet points for CUCKOO " + wsModel.trim() + " on Amazon:\n\n" + productCtx + (amazonTitle ? "\n\nLISTING TITLE (align bullets with):\n\"" + amazonTitle + "\"" : "") + "\nRespond ONLY with valid JSON.";
+      const bullets = await callApi(bpSys, bpMsg, 1500, 0.3);
       setWsResults(prev => ({ ...prev, bullets }));
 
       // Step 3: Backend Keywords
       setWsLoading("keywords");
       const bulletText = bullets.bullets?.map(b => b.heading + ": " + b.text).join("\n") || "";
-      const bkMsg = "Generate Amazon backend keywords for this CUCKOO product.\n\nModel: " + wsModel.trim() + "\n\nVERIFIED PRODUCT DATA:\n" + productCtx + (amazonTitle ? "\n\nFINAL TITLE:\n\"" + amazonTitle + "\"" : "") + (bulletText ? "\n\nFINAL BULLETS:\n" + bulletText : "") + "\n\nIMPORTANT:\n- Do not repeat words already in the title or bullets\n- Stay under 499 UTF-8 bytes\n- Prioritize uncovered, high-relevance search terms\n- Do not use filler or generic padding\n\nRespond only with valid JSON.";
-      let keywords = await callApi(BK_SYSTEM_PROMPT, bkMsg, 800, 0.3);
+      const bkSys = "Amazon backend keyword specialist for CUCKOO Electronics America. Generate hidden search terms (500 byte max). Prioritize competitor brand names, alternate language terms, synonym phrases not in the title or bullets. Space-separated only, no punctuation, no words already in title or bullets, no ASINs or promo phrases.\nRespond ONLY with valid JSON: {\"keywords\":\"space-separated string\",\"byte_count\":0,\"strategy\":[\"brief explanation\"]}";
+      const bkMsg = "Generate backend keywords for CUCKOO " + wsModel.trim() + ":\n\n" + productCtx + (amazonTitle ? "\n\nCURRENT TITLE (exclude these words):\n\"" + amazonTitle + "\"" : "") + (bulletText ? "\n\nCURRENT BULLETS (exclude these words):\n" + bulletText : "") + "\nRespond ONLY with valid JSON.";
+      let keywords = await callApi(bkSys, bkMsg, 800, 0.3);
       keywords.byte_count = new TextEncoder().encode(keywords.keywords || "").length;
-      if (keywords.byte_count > 499) {
+      if (keywords.byte_count > 500) {
         const words = (keywords.keywords || "").split(" ");
         const enc = new TextEncoder();
-        while (words.length > 1 && enc.encode(words.join(" ")).length > 499) words.pop();
+        while (words.length > 1 && enc.encode(words.join(" ")).length > 500) words.pop();
         keywords.keywords = words.join(" ");
         keywords.byte_count = enc.encode(keywords.keywords).length;
       }
@@ -1762,28 +1631,6 @@ function AppInner() {
       const auditMsg = "Audit this Amazon listing:\nTitle: " + amazonTitle + "\nBullet Points:\n" + bulletText + "\nBackend Keywords:\n" + (keywords.keywords || "") + "\n\n" + productCtx + "\nRespond ONLY with valid JSON.";
       const audit = await callApi(auditSys, auditMsg, 2000, 0);
       setWsResults(prev => ({ ...prev, audit }));
-
-      // Step 5: QA Validator
-      setWsLoading("qa");
-      const qaMsg = "Validate this listing for CUCKOO " + wsModel.trim() + ":\n\nVERIFIED PRODUCT DATA:\n" + productCtx + "\n\nAMAZON TITLE:\n" + amazonTitle + "\n\nBULLETS:\n" + bulletText + "\n\nBACKEND KEYWORDS:\n" + (keywords.keywords || "") + "\n\nRespond only with valid JSON.";
-      try {
-        const qa = await callApi(QA_VALIDATOR_PROMPT, qaMsg, 2000, 0);
-        if (qa && !qa.approved && qa.corrected_title) {
-          // Apply corrections
-          setWsResults(prev => {
-            const updated = { ...prev, _qaResult: qa };
-            if (qa.corrected_title) updated._amazonTitle = qa.corrected_title;
-            if (qa.corrected_bullets?.length) updated.bullets = { bullets: qa.corrected_bullets.map((b, i) => (typeof b === "string" ? { heading: b.split(":")[0] || "", text: b.split(":").slice(1).join(":").trim() || b, char_count: b.length } : { ...b, char_count: b.text?.length || 0 })) };
-            if (qa.corrected_backend_keywords) updated.keywords = { keywords: qa.corrected_backend_keywords, byte_count: new TextEncoder().encode(qa.corrected_backend_keywords).length, strategy: updated.keywords?.strategy || [] };
-            return updated;
-          });
-        } else {
-          setWsResults(prev => ({ ...prev, _qaResult: qa || { approved: true, issues_found: [] } }));
-        }
-      } catch (qaErr) {
-        // QA is optional — don't fail the whole flow
-        setWsResults(prev => ({ ...prev, _qaResult: { approved: true, issues_found: ["QA validator could not run: " + qaErr.message] } }));
-      }
       setWsLoading(null);
     } catch (e) {
       setWsError(formatApiError(e));
@@ -1840,17 +1687,19 @@ function AppInner() {
         const amazonTitle = titles.amazon_audit?.suggested_title || titles.conversions?.amazon?.title || "";
         // Bullets
         setBeProgress({ current: i + 1, total: beModels.length, sku, step: "bullets" });
-        const bpMsg = "Generate 5 bullet points for this CUCKOO product.\n\nModel: " + sku + "\n\nVERIFIED PRODUCT DATA:\n" + productCtx + (amazonTitle ? "\n\nFINAL TITLE:\n\"" + amazonTitle + "\"" : "") + "\n\nMarketplace: Amazon\n\nIMPORTANT:\n- Use only verified product data\n- Keep bullets concise (170-200 chars each)\n- Make bullets appropriate for this product tier\n\nRespond only with valid JSON.";
-        const bullets = await callApi(BULLET_SYSTEM_PROMPT, bpMsg, 1500, 0.3);
+        const bpSys = "You are a senior ecommerce copywriter at CUCKOO Electronics America. Generate 5 bullet points for an Amazon listing. Each bullet: CAPITALIZED HEADING followed by colon and text. Only use verified product data.\nRespond ONLY with valid JSON: {\"bullets\":[{\"heading\":\"...\",\"text\":\"...\"}]}";
+        const bpMsg = "Generate 5 bullets for CUCKOO " + sku + " on Amazon:\n" + productCtx + (amazonTitle ? "\nTitle: \"" + amazonTitle + "\"" : "") + "\nRespond ONLY with valid JSON.";
+        const bullets = await callApi(bpSys, bpMsg, 1500, 0.3);
         // Keywords
         setBeProgress({ current: i + 1, total: beModels.length, sku, step: "keywords" });
         const bulletText = bullets?.bullets?.map(b => b.heading + ": " + b.text).join("\n") || "";
-        const bkMsg = "Generate Amazon backend keywords for this CUCKOO product.\n\nModel: " + sku + "\n\nVERIFIED PRODUCT DATA:\n" + productCtx + (amazonTitle ? "\n\nFINAL TITLE:\n\"" + amazonTitle + "\"" : "") + (bulletText ? "\n\nFINAL BULLETS:\n" + bulletText : "") + "\n\nIMPORTANT:\n- Do not repeat words in title or bullets\n- Stay under 499 UTF-8 bytes\n- Prioritize uncovered, high-relevance terms\n\nRespond only with valid JSON.";
-        let keywords = await callApi(BK_SYSTEM_PROMPT, bkMsg, 800, 0.3);
+        const bkSys = "Amazon backend keyword specialist for CUCKOO. Generate search terms (500 byte max). Space-separated, no punctuation, no words in title/bullets.\nRespond ONLY with valid JSON: {\"keywords\":\"...\",\"byte_count\":0}";
+        const bkMsg = "Backend keywords for CUCKOO " + sku + ":\n" + productCtx + (amazonTitle ? "\nTitle: \"" + amazonTitle + "\"" : "") + (bulletText ? "\nBullets:\n" + bulletText : "") + "\nRespond ONLY with valid JSON.";
+        let keywords = await callApi(bkSys, bkMsg, 800, 0.3);
         if (keywords?.keywords) {
           const enc = new TextEncoder();
           keywords.byte_count = enc.encode(keywords.keywords).length;
-          if (keywords.byte_count > 499) { const w = keywords.keywords.split(" "); while (w.length > 1 && enc.encode(w.join(" ")).length > 499) w.pop(); keywords.keywords = w.join(" "); keywords.byte_count = enc.encode(keywords.keywords).length; }
+          if (keywords.byte_count > 500) { const w = keywords.keywords.split(" "); while (w.length > 1 && enc.encode(w.join(" ")).length > 500) w.pop(); keywords.keywords = w.join(" "); keywords.byte_count = enc.encode(keywords.keywords).length; }
         }
         results.push({ sku, titles, bullets, keywords, amazonTitle, error: null });
         setBeResults([...results]);
@@ -1965,8 +1814,8 @@ function AppInner() {
         const gl = keys.map(k => MARKETPLACES[k].guidelines).join("\n---\n");
         const isModelMode = inputModeRef.current === "model";
         const userMsg = isModelMode
-          ? `Model number: "${title}"\n\nThis is a CUCKOO product. Create marketplace-ready titles using only the verified data below.\n\nVERIFIED PRODUCT DATA:\n${productCtx}\n\nIMPORTANT:\n- Use the verified product data as the only source of truth for specs and features.\n- Do not invent anything.\n- Preserve the strongest reason to buy the product.\n- Do not flatten premium or induction models into generic feature stacks.\n- Use the right merchandising logic for each marketplace, not a one-size-fits-all order.\n\nGenerate:\n1. A strongest-version Amazon title\n2. Marketplace-specific conversions for: ${keys.join(", ")}\n\nUse these marketplace rules:\n${gl}\n\nRespond only with valid JSON.`
-          : `Amazon title: "${title}"\n\nVERIFIED PRODUCT DATA:\n${productCtx}\n\nConvert for: ${keys.join(", ")}\n\nUse these marketplace rules:\n${gl}\n\nIMPORTANT:\n- Use verified product data as the source of truth.\n- Do not invent anything.\n- Preserve the strongest reason to buy.\n- If the title is sparse, enrich from verified data.\n\nRespond only with valid JSON.`;
+          ? `Model number: "${title}"\nThis is a CUCKOO product model number. There is NO existing Amazon title — you must CREATE one from scratch.\n${productCtx}\n1. ${productMatch ? "Use the VERIFIED PRODUCT DATA above as your ONLY source for ALL product specs — type, heating, pressure, cup size, color, inner pot, and features are ALL provided. Do NOT add any features, specs, or technologies not in the database." : "The model was not found in the internal database. Use only the information available from the model number and general CUCKOO product knowledge."}\n2. Using the product data, search volume keyword data, and CUCKOO title rules, create a fully optimized Amazon title that maximizes the 200-character limit with high-volume keyword phrases.\n3. Put this title in amazon_audit.suggested_title. Score it based on SEO strength.\n4. Then convert for these marketplaces: ${keys.join(", ")}\n\nGuidelines:\n${gl}\nRespond ONLY with valid JSON.`
+          : `Amazon title: "${title}"${productCtx}\nConvert for: ${keys.join(", ")}\nGuidelines:\n${gl}\nIf the title is sparse or missing details, use any product data provided above.\nRespond ONLY with valid JSON.`;
         const makeRequest = () => fetch("/api/messages", {
           method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
           body: JSON.stringify({
@@ -2290,19 +2139,19 @@ function AppInner() {
         {/* Generate Button */}
         {(() => {
           const ready = wsModel.trim() && lookupProduct(wsModel, liveProductDbRef.current) && !wsLoading;
-          const steps = ["titles", "bullets", "keywords", "audit", "qa"];
-          const stepLabels = { titles: "Generating titles...", bullets: "Generating bullet points...", keywords: "Generating backend keywords...", audit: "Running audit...", qa: "QA validation..." };
+          const steps = ["titles", "bullets", "keywords", "audit"];
+          const stepLabels = { titles: "Generating titles...", bullets: "Generating bullet points...", keywords: "Generating backend keywords...", audit: "Running audit..." };
           const currentStep = wsLoading ? steps.indexOf(wsLoading) + 1 : 0;
           return (<>
             <button disabled={!ready && !wsLoading} onClick={generateFullListing}
               style={{ width: "100%", padding: 16, background: !ready && !wsLoading ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: !ready && !wsLoading ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: !ready && !wsLoading ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: !ready && !wsLoading ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
               {wsLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
                 <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
-                {stepLabels[wsLoading]} (Step {currentStep}/5)
+                {stepLabels[wsLoading]} (Step {currentStep}/4)
               </span>) : "Generate Full Listing"}
             </button>
             {wsLoading && <div style={{ textAlign: "center", marginBottom: 12 }}>
-              <div style={{ height: 4, background: "#e8e5e0", borderRadius: 2, overflow: "hidden", marginBottom: 6 }}><div style={{ width: `${(currentStep / 5) * 100}%`, height: "100%", background: MAROON, borderRadius: 2, transition: "width .4s ease" }} /></div>
+              <div style={{ height: 4, background: "#e8e5e0", borderRadius: 2, overflow: "hidden", marginBottom: 6 }}><div style={{ width: `${(currentStep / 4) * 100}%`, height: "100%", background: MAROON, borderRadius: 2, transition: "width .4s ease" }} /></div>
               <span style={{ fontSize: 10, color: "#aaa" }}>{wsElapsed}s</span>
               <button onClick={() => { if (wsAbortRef.current) wsAbortRef.current.abort(); setWsLoading(null); setWsError("Cancelled."); if (wsTimerRef.current) { clearInterval(wsTimerRef.current); wsTimerRef.current = null; } }}
                 style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer", marginLeft: 8 }}>Cancel</button>
@@ -2384,17 +2233,6 @@ function AppInner() {
                 </div>
               </div>
             ))}
-          </div>}
-
-          {/* QA Result */}
-          {wsResults._qaResult && <div style={{ background: wsResults._qaResult.approved ? "#f0fdf4" : "#fffbeb", border: `1px solid ${wsResults._qaResult.approved ? "#bbf7d0" : "#fde68a"}`, borderRadius: 12, padding: 16 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: wsResults._qaResult.approved ? "#16a34a" : "#92400e", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
-              {wsResults._qaResult.approved ? "\u2705 QA Passed" : "\u26A0\uFE0F QA Found Issues — Corrections Applied"}
-            </div>
-            {wsResults._qaResult.issues_found?.length > 0 && wsResults._qaResult.issues_found.map((iss, i) => (
-              <div key={i} style={{ fontSize: 11, color: "#78350f", padding: "2px 0" }}>{"\u2022"} {typeof iss === "string" ? iss : iss.issue || JSON.stringify(iss)}</div>
-            ))}
-            {wsResults._qaResult.approved && (!wsResults._qaResult.issues_found?.length) && <div style={{ fontSize: 11, color: "#16a34a" }}>All content verified against product data and marketplace rules.</div>}
           </div>}
 
           {/* Export */}
