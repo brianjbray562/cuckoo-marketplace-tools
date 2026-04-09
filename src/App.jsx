@@ -2444,6 +2444,19 @@ function AppInner() {
           {wsModel.trim() && !lookupProduct(wsModel, liveProductDbRef.current) && <div style={{ marginTop: 6, fontSize: 10, color: "#e57373" }}>Model not found in database</div>}
         </div>
 
+        {/* Title Capacity Mode */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Title Capacity Mode</label>
+          <div style={{ display: "flex", gap: 0 }}>
+            {[{ key: "both", label: "Both" }, { key: "uncooked", label: "Uncooked Only" }, { key: "cooked", label: "Cooked Only" }].map((m, idx) => (
+              <button key={m.key} onClick={() => { setCapacityMode(m.key); try { window.storage.set("capacity_mode", m.key); } catch(e) {} }}
+                style={{ flex: 1, padding: "7px 12px", background: capacityMode === m.key ? MAROON : "#fff", border: `1px solid ${capacityMode === m.key ? MAROON : "#e0ddd8"}`, borderRadius: idx === 0 ? "8px 0 0 8px" : idx === 2 ? "0 8px 8px 0" : "0", color: capacityMode === m.key ? "#fff" : "#888", fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "all .15s" }}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Generate Button */}
         {(() => {
           const ready = wsModel.trim() && lookupProduct(wsModel, liveProductDbRef.current) && !wsLoading;
@@ -2613,6 +2626,19 @@ function AppInner() {
                 </button>
               );
             })}
+          </div>
+        </div>
+
+        {/* Title Capacity Mode */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Title Capacity Mode</label>
+          <div style={{ display: "flex", gap: 0 }}>
+            {[{ key: "both", label: "Both" }, { key: "uncooked", label: "Uncooked Only" }, { key: "cooked", label: "Cooked Only" }].map((m, idx) => (
+              <button key={m.key} onClick={() => { setCapacityMode(m.key); try { window.storage.set("capacity_mode", m.key); } catch(e) {} }}
+                style={{ flex: 1, padding: "7px 12px", background: capacityMode === m.key ? MAROON : "#fff", border: `1px solid ${capacityMode === m.key ? MAROON : "#e0ddd8"}`, borderRadius: idx === 0 ? "8px 0 0 8px" : idx === 2 ? "0 8px 8px 0" : "0", color: capacityMode === m.key ? "#fff" : "#888", fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "all .15s" }}>
+                {m.label}
+              </button>
+            ))}
           </div>
         </div>
 
