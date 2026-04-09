@@ -950,6 +950,57 @@ function normalizeTitleTech(conversions, product) {
   }
 }
 
+// Normalize capacity phrases in titles based on the selected capacity mode.
+// Derives valid phrases from the specific product's DB cupSize.
+// If no capacity phrase is found, inserts the mode-appropriate phrase after "Rice Cooker".
+function normalizeCapacityInTitles(conversions, product, mode) {
+  if (!conversions || !product || !product.cupSize || !mode) return;
+  // Parse the DB cupSize: "6 Cup Uncooked / 12 Cup Cooked"
+  const cupMatch = product.cupSize.match(/(\d+)\s*Cup\s*Uncooked\s*\/\s*(\d+)\s*Cup\s*Cooked/i);
+  if (!cupMatch) return;
+  const uncookedNum = cupMatch[1];
+  const cookedNum = cupMatch[2];
+  // Build the mode-appropriate replacement phrase
+  const phraseUncooked = uncookedNum + "-Cup Uncooked";
+  const phraseCooked = cookedNum + "-Cup Cooked";
+  const phraseBoth = phraseUncooked + " / " + phraseCooked;
+  const targetPhrase = mode === "uncooked" ? phraseUncooked : mode === "cooked" ? phraseCooked : phraseBoth;
+  // Build regex patterns that match this product's specific capacity forms
+  // Matches: "6-Cup Uncooked / 12-Cup Cooked", "6-Cup Uncooked", "12-Cup Cooked"
+  // Also handles minor variants: "6 Cup" vs "6-Cup", extra spaces around "/"
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const bothPattern = new RegExp(esc(uncookedNum) + "[- ]Cup\\s+Uncooked\\s*\\/\\s*" + esc(cookedNum) + "[- ]Cup\\s+Cooked", "gi");
+  const uncookedPattern = new RegExp(esc(uncookedNum) + "[- ]Cup\\s+Uncooked(?!\\s*\\/)", "gi");
+  const cookedPattern = new RegExp("(?<!\\/\\s*)" + esc(cookedNum) + "[- ]Cup\\s+Cooked", "gi");
+  for (const key of Object.keys(conversions)) {
+    const conv = conversions[key];
+    if (!conv?.title) continue;
+    let title = conv.title;
+    let found = false;
+    // Try replacing "both" form first, then individual forms
+    if (bothPattern.test(title)) {
+      bothPattern.lastIndex = 0;
+      title = title.replace(bothPattern, targetPhrase);
+      found = true;
+    } else if (uncookedPattern.test(title)) {
+      uncookedPattern.lastIndex = 0;
+      title = title.replace(uncookedPattern, targetPhrase);
+      found = true;
+    } else if (cookedPattern.test(title)) {
+      cookedPattern.lastIndex = 0;
+      title = title.replace(cookedPattern, targetPhrase);
+      found = true;
+    }
+    // Fallback: if no capacity phrase found, insert after "Rice Cooker"
+    if (!found && /Rice Cooker/i.test(title)) {
+      title = title.replace(/(Rice Cooker)\s*/i, "$1 " + targetPhrase + ", ");
+      // Clean up double commas or spaces
+      title = title.replace(/,\s*,/g, ",").replace(/\s{2,}/g, " ");
+    }
+    conv.title = title.trim();
+  }
+}
+
 // --- APP COMPONENT ---
 
 function AppInner() {
@@ -959,6 +1010,9 @@ function AppInner() {
   const [inputMode, setInputMode] = useState("model"); // "title" or "model"
   const [showModelList, setShowModelList] = useState(false);
   const [category, setCategory] = useState("rice_cooker");
+  const [capacityMode, setCapacityMode] = useState("both"); // "both" | "uncooked" | "cooked"
+  const capacityModeRef = useRef("both");
+  capacityModeRef.current = capacityMode;
   const [selected, setSelected] = useState([]);
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1074,7 +1128,7 @@ function AppInner() {
   const [ccResults, setCcResults] = useState(null);
   // Dark mode
   const [darkMode, setDarkMode] = useState(false);
-  useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} })(); }, []);
+  useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} try { const cm = await window.storage.get("capacity_mode"); if (cm?.value && ["both","uncooked","cooked"].includes(cm.value)) { setCapacityMode(cm.value); capacityModeRef.current = cm.value; } } catch(e) {} })(); }, []);
   const toggleDarkMode = useCallback(() => { setDarkMode(prev => { const next = !prev; document.body.classList.toggle("dark-mode", next); try { window.storage.set("dark_mode", String(next)); } catch(e) {} return next; }); }, []);
   // Nav group dropdown
   const [openNavGroup, setOpenNavGroup] = useState(null);
@@ -1319,6 +1373,7 @@ function AppInner() {
             const bulkProduct = lookupProduct(titles[i], liveProductDbRef.current);
             const bulkSku = bulkProduct?.sku || titles[i].trim();
             normalizeTitleTech(merged.conversions, bulkProduct || {});
+            normalizeCapacityInTitles(merged.conversions, bulkProduct || {}, capacityModeRef.current);
             if (bulkSku && /^CR[A-Z]?-/i.test(bulkSku)) {
               ensureModelNumberInTitles(merged.conversions, bulkSku);
             }
@@ -1807,6 +1862,7 @@ function AppInner() {
       if (titles.conversions) {
         for (const key of Object.keys(titles.conversions)) { if (titles.conversions[key]?.title) titles.conversions[key].title = titles.conversions[key].title.trim(); }
         normalizeTitleTech(titles.conversions, product);
+        normalizeCapacityInTitles(titles.conversions, product, capacityModeRef.current);
         ensureModelNumberInTitles(titles.conversions, product.sku);
         for (const key of Object.keys(titles.conversions)) { if (titles.conversions[key]?.title) titles.conversions[key].char_count = titles.conversions[key].title.length; }
       }
@@ -1911,6 +1967,7 @@ function AppInner() {
         if (titles.conversions) {
           for (const k of Object.keys(titles.conversions)) { if (titles.conversions[k]?.title) titles.conversions[k].title = titles.conversions[k].title.trim(); }
           normalizeTitleTech(titles.conversions, product);
+          normalizeCapacityInTitles(titles.conversions, product, capacityModeRef.current);
           ensureModelNumberInTitles(titles.conversions, sku);
           for (const k of Object.keys(titles.conversions)) { if (titles.conversions[k]?.title) titles.conversions[k].char_count = titles.conversions[k].title.length; }
         }
@@ -2091,8 +2148,9 @@ function AppInner() {
             merged.conversions[key].title = merged.conversions[key].title.trim();
           }
         }
-        // Post-process: normalize tech phrasing + ensure model number
+        // Post-process: normalize tech, capacity, and model number
         normalizeTitleTech(merged.conversions, productMatch || {});
+        normalizeCapacityInTitles(merged.conversions, productMatch || {}, capacityModeRef.current);
         const sku = productMatch?.sku || title.trim();
         if (sku && /^CR[A-Z]?-/.test(sku.toUpperCase())) {
           ensureModelNumberInTitles(merged.conversions, sku);
@@ -2758,6 +2816,18 @@ function AppInner() {
                 <button key={k} onClick={() => setCategory(k)}
                   style={{ padding: "6px 14px", background: category === k ? MAROON : "#fff", border: `1.5px solid ${category === k ? MAROON : "#e0ddd8"}`, borderRadius: 100, color: category === k ? "#fff" : "#777", fontSize: 11, fontWeight: 500, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "background .15s, color .15s, border-color .15s" }}>
                   {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Title Capacity Mode */}
+          <div style={{ marginBottom: 18 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Title Capacity Mode</label>
+            <div style={{ display: "flex", gap: 0 }}>
+              {[{ key: "both", label: "Both (6-Cup Uncooked / 12-Cup Cooked)" }, { key: "uncooked", label: "Uncooked Only (6-Cup Uncooked)" }, { key: "cooked", label: "Cooked Only (12-Cup Cooked)" }].map((m, idx) => (
+                <button key={m.key} onClick={() => { setCapacityMode(m.key); try { window.storage.set("capacity_mode", m.key); } catch(e) {} }}
+                  style={{ flex: 1, padding: "7px 12px", background: capacityMode === m.key ? MAROON : "#fff", border: `1px solid ${capacityMode === m.key ? MAROON : "#e0ddd8"}`, borderRadius: idx === 0 ? "8px 0 0 8px" : idx === 2 ? "0 8px 8px 0" : "0", color: capacityMode === m.key ? "#fff" : "#888", fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "all .15s" }}>
+                  {m.label}
                 </button>
               ))}
             </div>
