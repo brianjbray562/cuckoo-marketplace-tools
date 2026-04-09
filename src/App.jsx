@@ -109,9 +109,9 @@ P2 (NEVER DROP): Technology/type (include dual technologies when both present)
 P3 (drop first): Model number in parentheses
 
 RULE 1 — Every cup capacity MUST have "Uncooked" or "Cooked" (e.g. "6-Cup Uncooked"). Hyphen required. NEVER bare "6-Cup" without qualifier. Default Uncooked. Include both if known (e.g. "6-Cup Uncooked / 12-Cup Cooked").
-RULE 2 — Order: CUCKOO [Tech] Rice Cooker [Cup Size], [Features], [Color] ([Model]). No "& Warmer". Cup size AFTER "Rice Cooker". Dual tech (Twin Pressure + Induction Heating): BOTH must appear after CUCKOO in every title — drop model number before dropping tech. Valid types: Basic, Micom, Pressure, Twin Pressure, Induction Heating Pressure, Electric Heating Pressure, Twin Pressure + Induction. Do NOT use "Fuzzy Logic" as a type — use "Micom" instead. When auditing originals, don't flag for not frontloading dual tech.
+RULE 2 — Order: CUCKOO [Tech] Rice Cooker [Cup Size], [Features], [Color] ([Model]). No "& Warmer". Cup size AFTER "Rice Cooker". Dual tech: use "Twin Pressure Induction Heating" — never use "+" or "with" between technologies. BOTH must appear after CUCKOO in every title — drop model number before dropping tech. Valid types: Basic, Micom, Pressure, Twin Pressure, Induction Heating Pressure, Electric Heating Pressure, Twin Pressure Induction Heating. Do NOT use "Fuzzy Logic" as a type — use "Micom" instead. The verified product class (Basic, Micom, Pressure, etc.) must remain in the title unless the hard character limit makes it absolutely impossible.
 RULE 3 — Model numbers in parentheses, placed LAST. Remove entirely if over char limit — first thing to sacrifice.
-RULE 4 — Flowing titles, not keyword lists. "with" connects features, "&" within groups, 3-4 commas max. Ref: "CUCKOO Twin Pressure Rice Cooker 6-Cup Uncooked / 12-Cup Cooked with Induction Heating Technology, 20 Menu Modes with Voice Guide, Versatile Rice Maker Multi-Cooker & Pressure Cooker (CRP-LHTR0609FW)"
+RULE 4 — Flowing titles, not keyword lists. "with" connects features to the product, "&" within groups, 3-4 commas max. Do NOT use "with" between dual technologies — write "Twin Pressure Induction Heating" as one phrase. Ref: "CUCKOO Twin Pressure Induction Heating Rice Cooker 6-Cup Uncooked / 12-Cup Cooked, 20 Menu Modes with Voice Guide, Auto Clean, Rice Maker & Pressure Cooker (CRP-LHTR0609FW)"
 RULE 5 — ONLY use features from (a) the original title or (b) VERIFIED PRODUCT DATA from the internal database. Never invent. If title is sparse, enrich from database.
 
 KEYWORD RESTRICTIONS (all marketplaces):
@@ -894,6 +894,51 @@ function ensureModelNumberInTitles(conversions, sku) {
   }
 }
 
+// Normalize dual-tech phrasing and ensure product class is present in titles.
+// Runs as a post-processing step BEFORE ensureModelNumberInTitles.
+// Valid product classes from DB: Basic, Micom, Pressure, Twin Pressure,
+// Induction Heating Pressure, Electric Heating Pressure, Twin Pressure Induction Heating
+const VALID_PRODUCT_CLASSES = ["Basic", "Micom", "Pressure", "Twin Pressure", "Induction Heating Pressure", "Electric Heating Pressure", "Twin Pressure Induction Heating"];
+
+function normalizeTitleTech(conversions, product) {
+  if (!conversions || !product) return;
+  const dbType = (product.type || "").trim();
+  // Map DB type to the canonical class name for matching
+  const canonicalClass = dbType === "Twin Pressure + Induction" ? "Twin Pressure Induction Heating" : dbType;
+
+  for (const key of Object.keys(conversions)) {
+    const conv = conversions[key];
+    if (!conv?.title) continue;
+    let title = conv.title;
+
+    // 1. Normalize dual-tech phrasing: remove "+" and "with" between Twin Pressure and Induction
+    title = title.replace(/Twin Pressure\s*\+\s*Induction/gi, "Twin Pressure Induction");
+    title = title.replace(/Twin Pressure\s+with\s+Induction/gi, "Twin Pressure Induction");
+    // Ensure "Heating" follows "Induction" in the dual-tech phrase if not already there
+    title = title.replace(/Twin Pressure Induction(?!\s+Heating)/gi, "Twin Pressure Induction Heating");
+
+    // 2. Check if the canonical product class is present in the title
+    if (canonicalClass && VALID_PRODUCT_CLASSES.includes(canonicalClass)) {
+      const classLower = canonicalClass.toLowerCase();
+      const titleLower = title.toLowerCase();
+      // For "Twin Pressure Induction Heating", check for the full phrase
+      // For others, check for the class name as a word/phrase
+      if (!titleLower.includes(classLower)) {
+        // Try to insert the class after "CUCKOO " if there's room
+        const limit = CHAR_LIMITS[key];
+        const insertPoint = title.indexOf("CUCKOO ") === 0 ? 7 : 0;
+        const candidate = title.slice(0, insertPoint) + canonicalClass + " " + title.slice(insertPoint);
+        if (!limit || candidate.length <= limit) {
+          title = candidate;
+        }
+        // If it doesn't fit, leave the title as-is (hard cap makes it impossible)
+      }
+    }
+
+    conv.title = title;
+  }
+}
+
 // --- APP COMPONENT ---
 
 function AppInner() {
@@ -1262,6 +1307,7 @@ function AppInner() {
             }
             const bulkProduct = lookupProduct(titles[i], liveProductDbRef.current);
             const bulkSku = bulkProduct?.sku || titles[i].trim();
+            normalizeTitleTech(merged.conversions, bulkProduct || {});
             if (bulkSku && /^CR[A-Z]?-/i.test(bulkSku)) {
               ensureModelNumberInTitles(merged.conversions, bulkSku);
             }
@@ -1747,8 +1793,17 @@ function AppInner() {
       // Post-process: ensure model number in every title where it fits
       if (titles.conversions) {
         for (const key of Object.keys(titles.conversions)) { if (titles.conversions[key]?.title) titles.conversions[key].title = titles.conversions[key].title.trim(); }
+        normalizeTitleTech(titles.conversions, product);
         ensureModelNumberInTitles(titles.conversions, product.sku);
         for (const key of Object.keys(titles.conversions)) { if (titles.conversions[key]?.title) titles.conversions[key].char_count = titles.conversions[key].title.length; }
+      }
+      // Update suggested_title with normalized tech too
+      if (titles.amazon_audit?.suggested_title) {
+        let st = titles.amazon_audit.suggested_title;
+        st = st.replace(/Twin Pressure\s*\+\s*Induction/gi, "Twin Pressure Induction");
+        st = st.replace(/Twin Pressure\s+with\s+Induction/gi, "Twin Pressure Induction");
+        st = st.replace(/Twin Pressure Induction(?!\s+Heating)/gi, "Twin Pressure Induction Heating");
+        titles.amazon_audit.suggested_title = st;
       }
       const amazonTitle = titles.amazon_audit?.suggested_title || titles.conversions?.amazon?.title || "";
       setWsResults(prev => ({ ...prev, titles, _amazonTitle: amazonTitle, _product: product }));
@@ -1842,6 +1897,7 @@ function AppInner() {
         // Post-process: ensure model number in every title where it fits
         if (titles.conversions) {
           for (const k of Object.keys(titles.conversions)) { if (titles.conversions[k]?.title) titles.conversions[k].title = titles.conversions[k].title.trim(); }
+          normalizeTitleTech(titles.conversions, product);
           ensureModelNumberInTitles(titles.conversions, sku);
           for (const k of Object.keys(titles.conversions)) { if (titles.conversions[k]?.title) titles.conversions[k].char_count = titles.conversions[k].title.length; }
         }
@@ -2022,7 +2078,8 @@ function AppInner() {
             merged.conversions[key].title = merged.conversions[key].title.trim();
           }
         }
-        // Post-process: ensure model number in every title where it fits
+        // Post-process: normalize tech phrasing + ensure model number
+        normalizeTitleTech(merged.conversions, productMatch || {});
         const sku = productMatch?.sku || title.trim();
         if (sku && /^CR[A-Z]?-/.test(sku.toUpperCase())) {
           ensureModelNumberInTitles(merged.conversions, sku);
@@ -2035,8 +2092,12 @@ function AppInner() {
         }
       }
       if (merged.amazon_audit?.suggested_title) {
-        merged.amazon_audit.suggested_title = merged.amazon_audit.suggested_title.trim();
-        merged.amazon_audit.suggested_char_count = merged.amazon_audit.suggested_title.length;
+        let st = merged.amazon_audit.suggested_title.trim();
+        st = st.replace(/Twin Pressure\s*\+\s*Induction/gi, "Twin Pressure Induction");
+        st = st.replace(/Twin Pressure\s+with\s+Induction/gi, "Twin Pressure Induction");
+        st = st.replace(/Twin Pressure Induction(?!\s+Heating)/gi, "Twin Pressure Induction Heating");
+        merged.amazon_audit.suggested_title = st;
+        merged.amazon_audit.suggested_char_count = st.length;
       }
 
       // Validation: instant deterministic checks (no API call)
