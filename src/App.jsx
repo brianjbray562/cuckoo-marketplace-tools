@@ -935,6 +935,28 @@ function normalizeTitleTech(conversions, product) {
       }
     }
 
+    // 3. Korean sequencing: "Korean" must not appear before or inside the core front title block
+    //    (CUCKOO [Tech] Rice Cooker [Capacity]). Move it to after the capacity phrase.
+    if (/\bKorean\b/i.test(title)) {
+      // Match the front block: CUCKOO ... Rice Cooker ... X-Cup (Uncooked / Y-Cup Cooked)
+      const frontBlockPattern = /^(CUCKOO\s+(?:[\w\s+\-]+?)Rice Cooker\s+\d+-Cup\s+(?:Uncooked(?:\s*\/\s*\d+-Cup\s+Cooked)?|Cooked))/i;
+      const frontMatch = title.match(frontBlockPattern);
+      if (frontMatch) {
+        const frontBlock = frontMatch[1];
+        const frontLower = frontBlock.toLowerCase();
+        // Check if "korean" is inside the front block
+        if (/\bkorean\b/i.test(frontBlock)) {
+          // Remove "Korean" from the front block (and any trailing/leading space)
+          const cleanedFront = frontBlock.replace(/\s*\bKorean\b\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
+          const rest = title.slice(frontBlock.length);
+          // Insert "Korean" right after the front block
+          title = cleanedFront + ", Korean" + rest;
+          // Clean up double commas or comma-space issues
+          title = title.replace(/,\s*,/g, ",").replace(/\s{2,}/g, " ");
+        }
+      }
+    }
+
     conv.title = title;
   }
 }
