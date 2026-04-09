@@ -52,9 +52,9 @@ const MARKETPLACES = {
       { title: "Wayfair \u2014 Adding Assortment (Official Seller Portal)", url: "https://sell.wayfair.com/start-adding-assortment" },
       { title: "Linnworks \u2014 Wayfair Marketplace: A Seller\u2019s Guide to Success", url: "https://www.linnworks.com/blog/wayfair-marketplace-ultimate-sellers-guide/" },
       { title: "Priceva \u2014 Selling on Wayfair in 2025: Complete Guide", url: "https://priceva.com/blog/How-to-Sell-on-wayfair-marketplace" },
-      { title: "Salsify \u2014 How to Sell on Wayfair (150-char max, sentence case)", url: "https://www.salsify.com/blog/what-does-it-take-to-win-on-wayfair-and-overstock" },
+      { title: "Salsify \u2014 How to Sell on Wayfair (150-char max)", url: "https://www.salsify.com/blog/what-does-it-take-to-win-on-wayfair-and-overstock" },
     ],
-    guidelines: "Wayfair (Home/Department-Store Family): 150 chars max. IMPORTANT: Sentence case (NOT Title Case).\n- Core block: CUCKOO [Class/Tech] rice cooker [Capacity] ([Model]) — keep intact, sentence case.\n- Descriptor layer: Emphasize finish, material, style, and convenience. Home-focused, polished tone.\n- Style descriptors welcome ('modern', 'compact'). Material/finish details valued."
+    guidelines: "Wayfair (Home/Department-Store Family): 150 chars max. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: Emphasize finish, material, style, and convenience. Home-focused, polished tone.\n- Style descriptors welcome ('Modern', 'Compact'). Material/finish details valued."
   },
   kohls: { name: "Kohl's", badge: "K", accent: "#5C2D91", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
@@ -935,10 +935,12 @@ function normalizeTitleTech(conversions, product) {
       }
     }
 
-    // 3. Korean rule: only allow "Korean" as part of "Korean Rice Cooker".
-    //    Remove standalone "Korean" that is not immediately followed by "Rice Cooker".
+    // 3. Korean rule: "Korean" only allowed as "Korean Rice Cooker", and never in the front title block.
     if (/\bKorean\b/i.test(title)) {
-      // Remove "Korean" that is NOT followed by "Rice Cooker"
+      // First: if "Korean Rice Cooker" appears before the capacity phrase, strip "Korean " from it
+      // Front block pattern: CUCKOO ... Korean Rice Cooker ... X-Cup
+      title = title.replace(/^(CUCKOO\s+(?:[\w\s\-]+?)?)Korean\s+Rice\s+Cooker(\s+\d+-Cup)/i, "$1Rice Cooker$2");
+      // Then: remove any remaining standalone "Korean" not followed by "Rice Cooker"
       title = title.replace(/\bKorean\b(?!\s+Rice\s+Cooker)/gi, "");
       // Clean up artifacts: double spaces, leading/trailing commas, double commas
       title = title.replace(/\s{2,}/g, " ").replace(/,\s*,/g, ",").replace(/,\s*$/g, "").replace(/\(\s*,/g, "(").trim();
@@ -1329,6 +1331,8 @@ function AppInner() {
           if (merged.amazon_audit?.suggested_title) {
             merged.amazon_audit.suggested_title = merged.amazon_audit.suggested_title.trim();
           }
+          const bulkValidation = validateListingOutput(merged, null, null, bulkProduct);
+          merged._validation = bulkValidation;
           collected.push({ original: titles[i], results: merged, error: null });
         } catch (err) {
           if (err.name === "AbortError") break;
@@ -2125,6 +2129,9 @@ function AppInner() {
           else if (merged.conversions?.[k]) { if (!merged.conversions[k].changes) merged.conversions[k].changes = []; merged.conversions[k].changes.push(label); }
         }
       }
+
+      // Full validation pass on finalized titles
+      merged._validation = validateListingOutput(merged, null, null, productMatch);
 
       setResults(merged); setEditedKeys(new Set()); originalTitlesRef.current = {};
       saveToHistory(title, inputModeRef.current, sel, merged);
