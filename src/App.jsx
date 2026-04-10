@@ -867,6 +867,15 @@ function validateListingOutput(titles, bullets, keywords, product) {
     warnings.push("AMAZON_SHORT: Amazon title is " + amazonTitle.length + " chars — consider adding a strong verified differentiator if space allows");
   }
 
+  // 6. Full Stainless validation: verify "Stainless Steel Inner Pot" is present in all titles
+  if (product?.innerPot === "Full Stainless" && titles?.conversions) {
+    for (const [key, conv] of Object.entries(titles.conversions)) {
+      if (conv?.title && !conv.title.toLowerCase().includes("stainless steel inner pot")) {
+        warnings.push("STAINLESS_MISSING: " + key + " title is missing mandatory 'Stainless Steel Inner Pot' for Full Stainless SKU");
+      }
+    }
+  }
+
   return { warnings, bulletCharCounts };
 }
 
@@ -1035,6 +1044,81 @@ function unifyAmazonTitle(titles) {
   if (finalAmazon && titles.amazon_audit) {
     titles.amazon_audit.suggested_title = finalAmazon;
     titles.amazon_audit.suggested_char_count = finalAmazon.length;
+  }
+}
+
+// For Full Stainless inner pot products, ensure "Stainless Steel Inner Pot" appears in every title.
+// Returns array of warnings for any marketplace where it could not fit.
+function enforceStainlessInnerPot(conversions, product) {
+  const warnings = [];
+  if (!conversions || !product || product.innerPot !== "Full Stainless") return warnings;
+  const requiredPhrase = "Stainless Steel Inner Pot";
+  const requiredLower = requiredPhrase.toLowerCase();
+  for (const key of Object.keys(conversions)) {
+    const conv = conversions[key];
+    if (!conv?.title) continue;
+    let title = conv.title;
+    // Already present
+    if (title.toLowerCase().includes(requiredLower)) continue;
+    // Remove weaker stainless references
+    title = title.replace(/,?\s*Stainless Steel(?!\s+Inner\s+Pot)\b/gi, "");
+    title = title.replace(/\s{2,}/g, " ").replace(/,\s*,/g, ",").trim();
+    // Try inserting after capacity — if it doesn't fit, strip optional descriptors first
+    const limit = CHAR_LIMITS[key];
+    const tryInsert = (t) => {
+      const capPattern = /(\d+-Cup\s+(?:Uncooked(?:\s*\/\s*\d+-Cup\s+Cooked)?|Cooked))/i;
+      const capMatch = t.match(capPattern);
+      if (capMatch) {
+        const capEnd = capMatch.index + capMatch[0].length;
+        return (t.slice(0, capEnd) + ", " + requiredPhrase + t.slice(capEnd)).replace(/,\s*,/g, ",").replace(/\s{2,}/g, " ").trim();
+      }
+      // No capacity — insert before model number
+      const modelMatch = t.match(/\s*\([A-Z]{2,4}-[A-Z0-9]+\)\s*$/);
+      if (modelMatch) return (t.slice(0, modelMatch.index) + ", " + requiredPhrase + " " + modelMatch[0].trim()).trim();
+      return t + ", " + requiredPhrase;
+    };
+    let candidate = tryInsert(title);
+    if (limit && candidate.length > limit) {
+      // Strip optional descriptors to make room: color words, convenience/mode cues
+      const colorPattern = /,\s*(?:White|Black|Gray|Red|Silver|Gold|Pink|Copper|Dark Gray)\b/gi;
+      const conveniencePattern = /,\s*(?:Auto Clean|Easy Clean|Voice Guide|Keep Warm|Delay Timer)\b/gi;
+      const modePattern = /,\s*\d+\s+(?:Cooking\s+)?Modes?\b/gi;
+      let stripped = title;
+      // Try removing color first
+      stripped = stripped.replace(colorPattern, "").replace(/\s{2,}/g, " ").replace(/,\s*,/g, ",").trim();
+      candidate = tryInsert(stripped);
+      if (limit && candidate.length > limit) {
+        // Try removing convenience cues
+        stripped = stripped.replace(conveniencePattern, "").replace(/\s{2,}/g, " ").replace(/,\s*,/g, ",").trim();
+        candidate = tryInsert(stripped);
+      }
+      if (limit && candidate.length > limit) {
+        // Try removing mode count
+        stripped = stripped.replace(modePattern, "").replace(/\s{2,}/g, " ").replace(/,\s*,/g, ",").trim();
+        candidate = tryInsert(stripped);
+      }
+      if (limit && candidate.length > limit) {
+        // Still doesn't fit — warn and keep original title
+        warnings.push("STAINLESS_MISSING: " + key + " — could not fit 'Stainless Steel Inner Pot' within " + limit + " char limit");
+        continue;
+      }
+    }
+    conv.title = candidate;
+  }
+  return warnings;
+}
+
+// Add comma after capacity phrase when a descriptor follows without one.
+function normalizeCommaAfterCapacity(conversions) {
+  if (!conversions) return;
+  for (const key of Object.keys(conversions)) {
+    const conv = conversions[key];
+    if (!conv?.title) continue;
+    // Match capacity phrase followed by a word (not comma, not parenthesis)
+    conv.title = conv.title.replace(
+      /(\d+-Cup\s+(?:Uncooked(?:\s*\/\s*\d+-Cup\s+Cooked)?|Cooked))\s+(?!,|\()/gi,
+      "$1, "
+    ).replace(/\s{2,}/g, " ").trim();
   }
 }
 
@@ -1412,6 +1496,8 @@ function AppInner() {
             normalizeTitleTech(merged.conversions, bulkProduct || {});
             normalizeCapacityInTitles(merged.conversions, bulkProduct || {}, capacityModeRef.current);
             removePuffery(merged.conversions);
+            enforceStainlessInnerPot(merged.conversions, bulkProduct);
+            normalizeCommaAfterCapacity(merged.conversions);
             if (bulkSku && /^CR[A-Z]?-/i.test(bulkSku)) {
               ensureModelNumberInTitles(merged.conversions, bulkSku);
             }
@@ -1900,6 +1986,8 @@ function AppInner() {
         normalizeTitleTech(titles.conversions, product);
         normalizeCapacityInTitles(titles.conversions, product, capacityModeRef.current);
         removePuffery(titles.conversions);
+        enforceStainlessInnerPot(titles.conversions, product);
+        normalizeCommaAfterCapacity(titles.conversions);
         ensureModelNumberInTitles(titles.conversions, product.sku);
         unifyAmazonTitle(titles);
         for (const key of Object.keys(titles.conversions)) { if (titles.conversions[key]?.title) titles.conversions[key].char_count = titles.conversions[key].title.length; }
@@ -2000,6 +2088,8 @@ function AppInner() {
           normalizeTitleTech(titles.conversions, product);
           normalizeCapacityInTitles(titles.conversions, product, capacityModeRef.current);
           removePuffery(titles.conversions);
+          enforceStainlessInnerPot(titles.conversions, product);
+          normalizeCommaAfterCapacity(titles.conversions);
           ensureModelNumberInTitles(titles.conversions, sku);
           unifyAmazonTitle(titles);
           for (const k of Object.keys(titles.conversions)) { if (titles.conversions[k]?.title) titles.conversions[k].char_count = titles.conversions[k].title.length; }
@@ -2185,6 +2275,8 @@ function AppInner() {
         normalizeTitleTech(merged.conversions, productMatch || {});
         normalizeCapacityInTitles(merged.conversions, productMatch || {}, capacityModeRef.current);
         removePuffery(merged.conversions);
+        const stainlessWarnings = enforceStainlessInnerPot(merged.conversions, productMatch);
+        normalizeCommaAfterCapacity(merged.conversions);
         const sku = productMatch?.sku || title.trim();
         if (sku && /^CR[A-Z]?-/.test(sku.toUpperCase())) {
           ensureModelNumberInTitles(merged.conversions, sku);
