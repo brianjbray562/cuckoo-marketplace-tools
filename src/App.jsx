@@ -1114,9 +1114,9 @@ function normalizeCommaAfterCapacity(conversions) {
   for (const key of Object.keys(conversions)) {
     const conv = conversions[key];
     if (!conv?.title) continue;
-    // Match capacity phrase followed by a word (not comma, not parenthesis)
+    // Match capacity phrase followed by a word (not comma, not parenthesis, not "with")
     conv.title = conv.title.replace(
-      /(\d+-Cup\s+(?:Uncooked(?:\s*\/\s*\d+-Cup\s+Cooked)?|Cooked))\s+(?!,|\()/gi,
+      /(\d+-Cup\s+(?:Uncooked(?:\s*\/\s*\d+-Cup\s+Cooked)?|Cooked))\s+(?!,|\(|with\b)/gi,
       "$1, "
     ).replace(/\s{2,}/g, " ").trim();
   }
