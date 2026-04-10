@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo, memo } from "
 
 const MAROON = "#6B1C23";
 
-const CHAR_LIMITS = { amazon: 200, walmart: 150, target: 100, bestbuy: 120, wayfair: 150, kohls: 150, macys: 150, bloomingdales: 120, tiktokshop: 200, weee: 120 };
+const CHAR_LIMITS = { amazon: 200, walmart: 150, target: 150, bestbuy: 120, wayfair: 150, kohls: 150, macys: 150, bloomingdales: 120, tiktokshop: 200, weee: 120 };
 
 const MARKETPLACES = {
   amazon: { name: "Amazon", badge: "amz", accent: "#FF9900", confidence: "official", confidenceLabel: "Official Docs",
@@ -127,7 +127,7 @@ EXAMPLE:
 Input: "CUCKOO CRP-P0609S 6 Cup Electric Heating Pressure Rice Cooker with Nonstick Inner Pot, Black"
 Amazon (200): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked / 12-Cup Cooked Rice Maker with Nonstick Inner Pot, Auto Clean, Voice Guide, 12 Cooking Modes, Turbo Mode, Black (CRP-P0609S)"
 Walmart (target ~75, cap 150): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked, Nonstick Inner Pot, Black (CRP-P0609S)"
-Target (100): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked with Nonstick Inner Pot, Voice Guide, Black"
+Target (target ~100, cap 150): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked with Nonstick Inner Pot, Voice Guide, Black (CRP-P0609S)"
 
 TASK:
 1. Sparse titles: enrich from VERIFIED PRODUCT DATA.
