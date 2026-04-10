@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo, memo } from "
 
 const MAROON = "#6B1C23";
 
-const CHAR_LIMITS = { amazon: 200, walmart: 75, target: 100, bestbuy: 120, wayfair: 150, kohls: 150, macys: 150, bloomingdales: 120, tiktokshop: 200, weee: 120 };
+const CHAR_LIMITS = { amazon: 200, walmart: 150, target: 100, bestbuy: 120, wayfair: 150, kohls: 150, macys: 150, bloomingdales: 120, tiktokshop: 200, weee: 120 };
 
 const MARKETPLACES = {
   amazon: { name: "Amazon", badge: "amz", accent: "#FF9900", confidence: "official", confidenceLabel: "Official Docs",
@@ -14,7 +14,7 @@ const MARKETPLACES = {
       { title: "Ecomtent \u2014 Amazon 2025 Title Requirements & COSMO/RUFUS Context", url: "https://www.ecomtent.ai/blog-page/amazons-2025-title-requirements-what-sellers-need-to-know" },
       { title: "Amalytix \u2014 Amazon Product Title Guidelines (with Title Checker Tool)", url: "https://www.amalytix.com/en/knowledge/seo/amazon-product-title/" },
     ],
-    guidelines: "Amazon Title Optimization (Search-Heavy Family):\n- Hard limit: 200 chars. Title Case.\n- Prohibited: !, $, ?, _, {, }, ^. Same word max twice. No promo phrases.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — do not change this base structure.\n- Descriptor layer: After the core block, add the strongest searchable differentiator and one high-value feature. Include search synonyms naturally (Rice Maker, Rice Steamer).\n\nAMAZON KEYWORD DATA (exact-match when product matches — obey KEYWORD RESTRICTIONS):\nHIGH: rice cooker, cuckoo rice cooker, rice maker, stainless steel rice cooker (only if SS inner pot), korean rice cooker (only if made in Korea), rice steamer\nMEDIUM: pressure rice cooker (only CRP-), rice warmer, induction rice cooker (only IH), cuckoo pressure rice cooker (only CRP-)\nSIZE: rice cooker 6 cup, rice cooker 10 cup, rice cooker 4 cup, 3 cup rice cooker\nFEATURE: nonstick inner pot, stainless steel inner pot (only if SS), keep warm, delay timer, steamer basket, multi cooker\nNEVER include keywords that violate KEYWORD RESTRICTIONS."
+    guidelines: "Amazon Title Optimization (Search-Heavy Family):\n- Hard limit: 200 chars. Title Case.\n- Prohibited: !, $, ?, _, {, }, ^. Same word max twice. No promo phrases.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — do not change this base structure.\n- Descriptor layer: After the core block, build the strongest possible title. Use as much of the 200-char limit as is valuable and natural. Include search synonyms (Rice Maker, Rice Steamer) and verified features. Do not leave significant space unused when strong differentiators can be added cleanly. Do not add filler.\n\nAMAZON KEYWORD DATA (exact-match when product matches — obey KEYWORD RESTRICTIONS):\nHIGH: rice cooker, cuckoo rice cooker, rice maker, stainless steel rice cooker (only if SS inner pot), korean rice cooker (only if made in Korea), rice steamer\nMEDIUM: pressure rice cooker (only CRP-), rice warmer, induction rice cooker (only IH), cuckoo pressure rice cooker (only CRP-)\nSIZE: rice cooker 6 cup, rice cooker 10 cup, rice cooker 4 cup, 3 cup rice cooker\nFEATURE: nonstick inner pot, stainless steel inner pot (only if SS), keep warm, delay timer, steamer basket, multi cooker\nNEVER include keywords that violate KEYWORD RESTRICTIONS."
   },
   walmart: { name: "Walmart", badge: "W", accent: "#0071CE", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -24,7 +24,7 @@ const MARKETPLACES = {
       { title: "GoAura \u2014 How to Write High-Converting Walmart Product Titles", url: "https://goaura.com/blog/how-to-write-high-converting-walmart-product-titles-and-descriptions" },
       { title: "Channable \u2014 Walmart Product Listing: Beginner\u2019s Guide & Best Practices", url: "https://www.channable.com/blog/walmart-product-listing" },
     ],
-    guidelines: "Walmart (Search-Heavy Family): 75 chars max (70 safe for mobile). Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep this intact.\n- Descriptor layer: Add strongest searchable differentiator only. 1 descriptor max.\n- No special symbols, promo, or marketplace refs. Mobile-first brevity."
+    guidelines: "Walmart (Search-Heavy Family): Target ~75 chars for mobile. Hard cap 150 chars. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep this intact. Never sacrifice core block or model number to hit 75.\n- Descriptor layer: After the core block, add exactly ONE high-value differentiator. Choose the single best from: inner pot/material, OR one cooking/performance cue, OR one convenience cue. Do NOT add more than one.\n- If the core block + model + one differentiator exceeds 75 chars, that is acceptable — stay under 150.\n- No special symbols, promo, or marketplace refs."
   },
   target: { name: "Target", badge: "TGT", accent: "#CC0000", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -34,7 +34,7 @@ const MARKETPLACES = {
       { title: "ChannelEngine \u2014 Target Plus: Marketplace Guide (Jan 2026)", url: "https://www.channelengine.com/en/blog/selling-on-target-plus" },
       { title: "eComClips \u2014 Sell on Target Plus with ChannelAdvisor (Title Requirements)", url: "https://ecomclips.com/blog/sell-on-target-plus-marketplace-target-with-channeladvisor/" },
     ],
-    guidelines: "Target (Retail Shelf Family): 100 chars recommended (hard limit 150). Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep this intact.\n- Descriptor layer: Clean consumer phrasing. 1-2 scannable benefits (material, color, key convenience). No SEO stuffing.\n- Shelf-tag tone — polished, consumer-friendly."
+    guidelines: "Target (Retail Shelf Family): 100 chars recommended (hard limit 150). Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep this intact.\n- Descriptor layer: One clean consumer benefit — material or color. Shelf-tag tone. No feature stacking."
   },
   bestbuy: { name: "Best Buy", badge: "BB", accent: "#0046BE", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
@@ -44,7 +44,7 @@ const MARKETPLACES = {
       { title: "ChannelEngine \u2014 Best Buy US Marketplace Guide (120-char title limit)", url: "https://support.channelengine.com/hc/en-us/articles/31873642736925" },
       { title: "eDesk \u2014 Best Buy's Mirakl-Powered Marketplace (2026)", url: "https://www.edesk.com/blog/mirakl-best-buy-marketplace/" },
     ],
-    guidelines: "Best Buy (Technical/Spec Family): 120 chars max (Mirakl platform). Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep this intact. Model number is especially useful here.\n- Descriptor layer: Add one technical differentiator (wattage, heating type, cooking modes). Tech-savvy audience.\n- Do NOT use 'Fuzzy Logic' in titles."
+    guidelines: "Best Buy (Technical/Spec Family): 120 chars max. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep this intact. Model number especially useful here.\n- Descriptor layer: One specific technical spec — wattage, mode count, or heating detail. No puffery."
   },
   wayfair: { name: "Wayfair", badge: "WF", accent: "#7B2D8E", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -54,7 +54,7 @@ const MARKETPLACES = {
       { title: "Priceva \u2014 Selling on Wayfair in 2025: Complete Guide", url: "https://priceva.com/blog/How-to-Sell-on-wayfair-marketplace" },
       { title: "Salsify \u2014 How to Sell on Wayfair (150-char max)", url: "https://www.salsify.com/blog/what-does-it-take-to-win-on-wayfair-and-overstock" },
     ],
-    guidelines: "Wayfair (Home/Department-Store Family): 150 chars max. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: Emphasize finish, material, style, and convenience. Home-focused, polished tone.\n- Style descriptors welcome ('Modern', 'Compact'). Material/finish details valued."
+    guidelines: "Wayfair (Home/Department-Store Family): 150 chars max. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: One polished material or finish cue (e.g. Nonstick Inner Pot, Stainless Steel). Home-focused tone. No puffery."
   },
   kohls: { name: "Kohl's", badge: "K", accent: "#5C2D91", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
@@ -62,14 +62,14 @@ const MARKETPLACES = {
       { title: "Mirakl \u2014 Marketplace Listing Best Practices", url: "https://www.mirakl.com/resources/marketplace-listing-best-practices" },
       { title: "Pattern \u2014 How to Sell on Kohl's Marketplace (2025)", url: "https://pattern.com/blog/kohls-marketplace/" },
     ],
-    guidelines: "Kohl's (Home/Department-Store Family): 150 chars max (Mirakl platform). Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: Emphasize convenience, ease of use, and practical benefits. Polished department-store tone.\n- Family/home shoppers. Clean, accessible descriptors — not technical SEO phrases."
+    guidelines: "Kohl's (Home/Department-Store Family): 150 chars max. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: One ease-of-use or convenience cue (e.g. Easy Clean, Auto Clean). Polished department-store tone. No puffery."
   },
   macys: { name: "Macy's", badge: "M", accent: "#E21A2C", confidence: "partial", confidenceLabel: "Partial Docs",
     sources: [
       { title: "Macy's Marketplace \u2014 FAQ & Requirements", url: "https://marketplace.macys.com/faq.html" },
       { title: "ChannelEngine \u2014 Macy's Guide", url: "https://support.channelengine.com/hc/en-us/articles/9000052801053" },
     ],
-    guidelines: "Macy's (Home/Department-Store Family): ~150 chars recommended (Mirakl platform). Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: Emphasize material, quality, and finish. Polished department-store tone.\n- Align with existing CUCKOO Macy's naming. Lead with quality/material signals."
+    guidelines: "Macy's (Home/Department-Store Family): ~150 chars. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: One quality or material cue (e.g. Nonstick Inner Pot). Polished department-store tone. No puffery."
   },
   bloomingdales: { name: "Bloomingdale's", badge: "B", accent: "#1a1a1a", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
@@ -77,7 +77,7 @@ const MARKETPLACES = {
       { title: "Mirakl \u2014 Marketplace Listing Best Practices", url: "https://www.mirakl.com/resources/marketplace-listing-best-practices" },
       { title: "ChannelEngine \u2014 Bloomingdale's Marketplace Guide", url: "https://support.channelengine.com/hc/en-us/articles/9000052801053" },
     ],
-    guidelines: "Bloomingdale's (Home/Department-Store Family — most restrained): 120 chars max.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: Minimal and elegant. One premium material or technology signal only. The most restrained of all marketplaces.\n- Premium luxury tone. No keyword stuffing. Quality over quantity."
+    guidelines: "Bloomingdale's (Home/Department-Store Family — most restrained): 120 chars max.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: One signal only — the single most relevant material or finish word. Most restrained marketplace. No puffery, no feature stacking."
   },
   tiktokshop: { name: "TikTok Shop", badge: "TT", accent: "#010101", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -87,7 +87,7 @@ const MARKETPLACES = {
       { title: "TikTok Seller Center \u2014 Content Policy (Official)", url: "https://seller-us.tiktok.com/university/essay?knowledge_id=6837891779151617" },
       { title: "TikTok Seller Center \u2014 Policy Pulse (Jan 2026)", url: "https://seller-us.tiktok.com/university/essay?knowledge_id=6747273381791534" },
     ],
-    guidelines: "TikTok Shop (Retail Shelf Family): 25-200 chars. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: 1-2 scannable benefits. Snappy, social commerce tone. Title confirms what shoppers saw in video.\n- No clickbait or platform refs."
+    guidelines: "TikTok Shop (Retail Shelf Family): 25-200 chars. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: One snappy consumer benefit that confirms what the shopper saw in a video. No clickbait, no feature stacking."
   },
   weee: { name: "Weee!", badge: "W!", accent: "#1DB954", confidence: "limited", confidenceLabel: "Best Practices",
     sources: [
@@ -95,7 +95,7 @@ const MARKETPLACES = {
       { title: "Weee! \u2014 Global+ Seller Onboarding", url: "https://www.sayweee.com/en/company/vendor/onboarding" },
       { title: "Weee! \u2014 About: Asian & Hispanic Grocery Delivery", url: "https://www.sayweee.com/en/about" },
     ],
-    guidelines: "Weee! (Retail Shelf Family): 120 chars max. Asian-American shoppers.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: 1-2 clean consumer benefits. Community-focused, culturally relevant.\n- 'Korean Rice Cooker' only if made in Korea. Audience understands rice cooker technology.\n- No promo. CUCKOO is well-recognized in this community."
+    guidelines: "Weee! (Retail Shelf Family): 120 chars max. Asian-American shoppers.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: One practical consumer benefit. Community-focused, culturally relevant.\n- 'Korean Rice Cooker' only if made in Korea. No feature stacking."
   }
 };
 
@@ -126,7 +126,7 @@ KEYWORD RESTRICTIONS (all marketplaces):
 EXAMPLE:
 Input: "CUCKOO CRP-P0609S 6 Cup Electric Heating Pressure Rice Cooker with Nonstick Inner Pot, Black"
 Amazon (200): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked / 12-Cup Cooked Rice Maker with Nonstick Inner Pot, Auto Clean, Voice Guide, 12 Cooking Modes, Turbo Mode, Black (CRP-P0609S)"
-Walmart (75): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked, Nonstick, Black"
+Walmart (target ~75, cap 150): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked, Nonstick Inner Pot, Black (CRP-P0609S)"
 Target (100): "CUCKOO Pressure Rice Cooker 6-Cup Uncooked with Nonstick Inner Pot, Voice Guide, Black"
 
 TASK:
@@ -861,6 +861,12 @@ function validateListingOutput(titles, bullets, keywords, product) {
     }
   }
 
+  // 5. Amazon short-title soft warning
+  const amazonTitle = titles?.conversions?.amazon?.title;
+  if (amazonTitle && amazonTitle.length < 175) {
+    warnings.push("AMAZON_SHORT: Amazon title is " + amazonTitle.length + " chars — consider adding a strong verified differentiator if space allows");
+  }
+
   return { warnings, bulletCharCounts };
 }
 
@@ -998,6 +1004,37 @@ function normalizeCapacityInTitles(conversions, product, mode) {
       title = title.replace(/,\s*,/g, ",").replace(/\s{2,}/g, " ");
     }
     conv.title = title.trim();
+  }
+}
+
+// Remove unsupported puffery adjectives from titles.
+// Conservative: only strips obvious puff that is never a verified product attribute.
+function removePuffery(conversions) {
+  if (!conversions) return;
+  for (const key of Object.keys(conversions)) {
+    const conv = conversions[key];
+    if (!conv?.title) continue;
+    let title = conv.title;
+    // "Premium" before colors, materials, or finishes
+    title = title.replace(/\bPremium\s+(White|Black|Gray|Red|Silver|Gold|Pink|Copper|Stainless\s+Steel|Nonstick|Finish)/gi, "$1");
+    // "Luxury" as standalone adjective
+    title = title.replace(/\bLuxury\s+/gi, "");
+    // "Advanced" before tech (not part of a product name)
+    title = title.replace(/\bAdvanced\s+(Micom|Pressure|Induction|Heating|Technology)/gi, "$1");
+    // Clean up artifacts
+    title = title.replace(/\s{2,}/g, " ").replace(/,\s*,/g, ",").trim();
+    conv.title = title;
+  }
+}
+
+// Unify Amazon title: make conversions.amazon.title the single source of truth.
+// Copies finalized conversions.amazon.title into amazon_audit.suggested_title.
+function unifyAmazonTitle(titles) {
+  if (!titles) return;
+  const finalAmazon = titles.conversions?.amazon?.title;
+  if (finalAmazon && titles.amazon_audit) {
+    titles.amazon_audit.suggested_title = finalAmazon;
+    titles.amazon_audit.suggested_char_count = finalAmazon.length;
   }
 }
 
@@ -1374,17 +1411,16 @@ function AppInner() {
             const bulkSku = bulkProduct?.sku || titles[i].trim();
             normalizeTitleTech(merged.conversions, bulkProduct || {});
             normalizeCapacityInTitles(merged.conversions, bulkProduct || {}, capacityModeRef.current);
+            removePuffery(merged.conversions);
             if (bulkSku && /^CR[A-Z]?-/i.test(bulkSku)) {
               ensureModelNumberInTitles(merged.conversions, bulkSku);
             }
+            unifyAmazonTitle(merged);
             for (const key of Object.keys(merged.conversions)) {
               if (merged.conversions[key]?.title) {
                 merged.conversions[key].char_count = merged.conversions[key].title.length;
               }
             }
-          }
-          if (merged.amazon_audit?.suggested_title) {
-            merged.amazon_audit.suggested_title = merged.amazon_audit.suggested_title.trim();
           }
           const bulkValidation = validateListingOutput(merged, null, null, bulkProduct);
           merged._validation = bulkValidation;
@@ -1863,18 +1899,13 @@ function AppInner() {
         for (const key of Object.keys(titles.conversions)) { if (titles.conversions[key]?.title) titles.conversions[key].title = titles.conversions[key].title.trim(); }
         normalizeTitleTech(titles.conversions, product);
         normalizeCapacityInTitles(titles.conversions, product, capacityModeRef.current);
+        removePuffery(titles.conversions);
         ensureModelNumberInTitles(titles.conversions, product.sku);
+        unifyAmazonTitle(titles);
         for (const key of Object.keys(titles.conversions)) { if (titles.conversions[key]?.title) titles.conversions[key].char_count = titles.conversions[key].title.length; }
       }
-      // Update suggested_title with normalized tech too
-      if (titles.amazon_audit?.suggested_title) {
-        let st = titles.amazon_audit.suggested_title;
-        st = st.replace(/Twin Pressure\s*\+\s*Induction/gi, "Twin Pressure Induction");
-        st = st.replace(/Twin Pressure\s+with\s+Induction/gi, "Twin Pressure Induction");
-        st = st.replace(/Twin Pressure Induction(?!\s+Heating)/gi, "Twin Pressure Induction Heating");
-        titles.amazon_audit.suggested_title = st;
-      }
-      const amazonTitle = titles.amazon_audit?.suggested_title || titles.conversions?.amazon?.title || "";
+      // amazonTitle is now always from the finalized conversions.amazon.title
+      const amazonTitle = titles.conversions?.amazon?.title || "";
       setWsResults(prev => ({ ...prev, titles, _amazonTitle: amazonTitle, _product: product }));
 
       // Step 2: Bullets
@@ -1968,10 +1999,12 @@ function AppInner() {
           for (const k of Object.keys(titles.conversions)) { if (titles.conversions[k]?.title) titles.conversions[k].title = titles.conversions[k].title.trim(); }
           normalizeTitleTech(titles.conversions, product);
           normalizeCapacityInTitles(titles.conversions, product, capacityModeRef.current);
+          removePuffery(titles.conversions);
           ensureModelNumberInTitles(titles.conversions, sku);
+          unifyAmazonTitle(titles);
           for (const k of Object.keys(titles.conversions)) { if (titles.conversions[k]?.title) titles.conversions[k].char_count = titles.conversions[k].title.length; }
         }
-        const amazonTitle = titles.amazon_audit?.suggested_title || titles.conversions?.amazon?.title || "";
+        const amazonTitle = titles.conversions?.amazon?.title || "";
         // Bullets
         setBeProgress({ current: i + 1, total: beModels.length, sku, step: "bullets" });
         const bpSys = "You are a senior ecommerce copywriter at CUCKOO Electronics America. Generate 5 bullet points for an Amazon listing. Each bullet: CAPITALIZED HEADING followed by colon and text. Only use verified product data.\nRespond ONLY with valid JSON: {\"bullets\":[{\"heading\":\"...\",\"text\":\"...\"}]}";
@@ -2148,13 +2181,15 @@ function AppInner() {
             merged.conversions[key].title = merged.conversions[key].title.trim();
           }
         }
-        // Post-process: normalize tech, capacity, and model number
+        // Post-process pipeline: tech → capacity → puffery → model number → unify → char_count
         normalizeTitleTech(merged.conversions, productMatch || {});
         normalizeCapacityInTitles(merged.conversions, productMatch || {}, capacityModeRef.current);
+        removePuffery(merged.conversions);
         const sku = productMatch?.sku || title.trim();
         if (sku && /^CR[A-Z]?-/.test(sku.toUpperCase())) {
           ensureModelNumberInTitles(merged.conversions, sku);
         }
+        unifyAmazonTitle(merged);
         // Final char_count from post-processed title
         for (const key of Object.keys(merged.conversions)) {
           if (merged.conversions[key]?.title) {
@@ -2163,11 +2198,7 @@ function AppInner() {
         }
       }
       if (merged.amazon_audit?.suggested_title) {
-        let st = merged.amazon_audit.suggested_title.trim();
-        st = st.replace(/Twin Pressure\s*\+\s*Induction/gi, "Twin Pressure Induction");
-        st = st.replace(/Twin Pressure\s+with\s+Induction/gi, "Twin Pressure Induction");
-        st = st.replace(/Twin Pressure Induction(?!\s+Heating)/gi, "Twin Pressure Induction Heating");
-        merged.amazon_audit.suggested_title = st;
+        merged.amazon_audit.suggested_char_count = merged.amazon_audit.suggested_title.length;
         merged.amazon_audit.suggested_char_count = st.length;
       }
 
