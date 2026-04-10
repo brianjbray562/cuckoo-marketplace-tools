@@ -1400,6 +1400,8 @@ function AppInner() {
         setBulkProgress({ current: i + 1, total: titles.length });
         try {
           const merged = await callApi(titles[i], sel);
+          const bulkProduct = lookupProduct(titles[i], liveProductDbRef.current);
+          const bulkSku = bulkProduct?.sku || titles[i].trim();
           // Trim titles, append model number where it fits, recalculate char counts
           if (merged.conversions) {
             for (const key of Object.keys(merged.conversions)) {
@@ -1407,8 +1409,6 @@ function AppInner() {
                 merged.conversions[key].title = merged.conversions[key].title.trim();
               }
             }
-            const bulkProduct = lookupProduct(titles[i], liveProductDbRef.current);
-            const bulkSku = bulkProduct?.sku || titles[i].trim();
             normalizeTitleTech(merged.conversions, bulkProduct || {});
             normalizeCapacityInTitles(merged.conversions, bulkProduct || {}, capacityModeRef.current);
             removePuffery(merged.conversions);
