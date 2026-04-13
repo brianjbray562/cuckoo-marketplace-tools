@@ -1421,7 +1421,7 @@ function AppInner() {
   const [ccResults, setCcResults] = useState(null);
   // Dark mode
   const [darkMode, setDarkMode] = useState(false);
-  useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} try { const cm = await window.storage.get("capacity_mode"); if (cm?.value && ["both","uncooked","cooked"].includes(cm.value)) { setCapacityMode(cm.value); capacityModeRef.current = cm.value; } } catch(e) {} try { const bc = await window.storage.get("bullet_count"); const n = parseInt(bc?.value); if (n >= 1 && n <= 7) { setBulletCount(n); bulletCountRef.current = n; } } catch(e) {} })(); }, []);
+  useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} try { const cm = await window.storage.get("capacity_mode"); if (cm?.value && ["both","uncooked","cooked"].includes(cm.value)) { setCapacityMode(cm.value); capacityModeRef.current = cm.value; } } catch(e) {} try { const bc = await window.storage.get("bullet_count"); const n = parseInt(bc?.value); if (n >= 5 && n <= 7) { setBulletCount(n); bulletCountRef.current = n; } } catch(e) {} })(); }, []);
   const toggleDarkMode = useCallback(() => { setDarkMode(prev => { const next = !prev; document.body.classList.toggle("dark-mode", next); try { window.storage.set("dark_mode", String(next)); } catch(e) {} return next; }); }, []);
   // Nav group dropdown
   const [openNavGroup, setOpenNavGroup] = useState(null);
@@ -2265,7 +2265,10 @@ function AppInner() {
         const amazonTitle = titles.conversions?.amazon?.title || "";
         // Bullets
         setBeProgress({ current: i + 1, total: beModels.length, sku, step: "bullets" });
-        const bpMsg = buildBulletUserMessage(product, sku, amazonTitle, bulletCountRef.current, liveSearchData);
+        // Auto-optimize bullet count by tier: basic=5, mid=6, premium=7
+        const autoTier = classifyProductTier(product);
+        const autoBulletCount = autoTier === "premium" ? 7 : autoTier === "mid" ? 6 : 5;
+        const bpMsg = buildBulletUserMessage(product, sku, amazonTitle, autoBulletCount, liveSearchData);
         const bullets = await callApi(BULLET_SYSTEM_PROMPT, bpMsg, 2000, 0.4);
         // Keywords
         setBeProgress({ current: i + 1, total: beModels.length, sku, step: "keywords" });
@@ -2755,7 +2758,7 @@ function AppInner() {
         <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
           <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Bullet Count <span style={{ fontWeight: 400, color: "#bbb" }}>({bulletCount})</span></label>
           <div style={{ display: "flex", gap: 6 }}>
-            {[1,2,3,4,5,6,7].map(n => (
+            {[5,6,7].map(n => (
               <button key={n} onClick={() => { setBulletCount(n); try { window.storage.set("bullet_count", String(n)); } catch(e) {} }}
                 style={{ flex: 1, padding: "7px 0", background: bulletCount === n ? MAROON : "#fff", border: `1px solid ${bulletCount === n ? MAROON : "#e0ddd8"}`, borderRadius: 6, color: bulletCount === n ? "#fff" : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s" }}>
                 {n}
@@ -2955,22 +2958,14 @@ function AppInner() {
           </div>
         </div>
 
-        {/* Bullet Count */}
-        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Bullet Count <span style={{ fontWeight: 400, color: "#bbb" }}>({bulletCount})</span></label>
-          <div style={{ display: "flex", gap: 6 }}>
-            {[1,2,3,4,5,6,7].map(n => (
-              <button key={n} onClick={() => { setBulletCount(n); try { window.storage.set("bullet_count", String(n)); } catch(e) {} }}
-                style={{ flex: 1, padding: "7px 0", background: bulletCount === n ? MAROON : "#fff", border: `1px solid ${bulletCount === n ? MAROON : "#e0ddd8"}`, borderRadius: 6, color: bulletCount === n ? "#fff" : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s" }}>
-                {n}
-              </button>
-            ))}
+        {/* Bullet Count — auto-optimized per product tier */}
+        <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Bullet Count {"\u00B7"} Auto-optimized per product</div>
+          <div style={{ fontSize: 11, color: "#666", lineHeight: 1.6 }}>
+            <span style={{ display: "inline-block", marginRight: 16 }}><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>Basic</span> <span style={{ color: "#888" }}>{"\u2192"} 5 bullets</span></span>
+            <span style={{ display: "inline-block", marginRight: 16 }}><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>Mid</span> <span style={{ color: "#888" }}>{"\u2192"} 6 bullets</span></span>
+            <span style={{ display: "inline-block" }}><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>Premium</span> <span style={{ color: "#888" }}>{"\u2192"} 7 bullets</span></span>
           </div>
-          {bulletCount > 5 && (() => {
-            const basicCount = beModels.filter(sku => classifyProductTier(PRODUCT_DB[sku]) === "basic").length;
-            if (basicCount > 0) return <div style={{ marginTop: 8, fontSize: 10, color: "#92400e", fontFamily: "'Outfit',sans-serif" }}>{"\u26A0"} {bulletCount} bullets requested — {basicCount} of {beModels.length} selected products are basic tier and may produce weaker/repetitive bullets beyond #5</div>;
-            return null;
-          })()}
         </div>
 
         {/* Generate Button */}
@@ -3547,7 +3542,7 @@ function AppInner() {
         <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "16px 24px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
           <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Bullet Count <span style={{ fontWeight: 400, color: "#bbb" }}>({bulletCount})</span></label>
           <div style={{ display: "flex", gap: 6 }}>
-            {[1,2,3,4,5,6,7].map(n => (
+            {[5,6,7].map(n => (
               <button key={n} onClick={() => { setBulletCount(n); try { window.storage.set("bullet_count", String(n)); } catch(e) {} }}
                 style={{ flex: 1, padding: "7px 0", background: bulletCount === n ? MAROON : "#fff", border: `1px solid ${bulletCount === n ? MAROON : "#e0ddd8"}`, borderRadius: 6, color: bulletCount === n ? "#fff" : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s" }}>
                 {n}
