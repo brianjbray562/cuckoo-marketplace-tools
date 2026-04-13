@@ -788,6 +788,172 @@ function getHeroTechKeywords(product) {
   return [...new Set(keywords)];
 }
 
+// --- BULLET GENERATION HELPERS ---
+
+// Shared bullet system prompt — used by standalone, workspace, and bulk export
+const BULLET_SYSTEM_PROMPT = `Role: Senior ecommerce copywriter for CUCKOO Electronics America.
+
+OUTPUT: Exactly the number of bullet points specified in the user message. Each bullet starts with a CAPITALIZED HEADING (2-4 words) followed by a colon and one concise sentence.
+
+LENGTH: Target 170-200 characters per bullet. Do not exceed 220. Do not leave bullets thin when verified product details can make them stronger. Do not pad with filler.
+
+CAPACITY RULE: When referencing capacity, always use the exact verified values as "X cups uncooked / Y cups cooked" from the product data. Do NOT estimate headcount. Do NOT use vague substitutes like "generous capacity" or "family-sized output".
+
+Capacity context (practical usage language only, not literal headcount):
+- 6 cups cooked: singles, couples, small families
+- 12 cups cooked: average families, meal prep
+- 16 cups cooked: large families, weekly batch cooking
+- 20 cups cooked: extended family gatherings, events
+- 60 cups cooked: restaurants, catering, institutions
+
+ANTI-COLOR/STYLE: Do NOT use color, style, or appearance as a standalone bullet topic. Color and finish are visible from product images. Bullets must earn their space with decision-making information: cooking performance, ease of use, cleanup, capacity, inner pot, menu variety, convenience. Color may only appear inside a bullet as a secondary detail, never the main point.
+
+BENEFIT OVER MECHANISM: Always describe the SHOPPER BENEFIT of a feature, not just the mechanism.
+- Weak: "simple heating plate technology"
+- Strong: "reliable one-touch cooking for perfect rice every day"
+- Weak: "classic finish"
+- Strong: "nonstick inner pot releases rice cleanly and wipes down in seconds"
+
+Do NOT use weak mechanism-led phrasing like "simple heating plate technology", "classic finish", "straightforward design", "basic operation", or "entry-level construction". Rewrite around real shopper value.
+
+ANTI-FILLER: Do not use vague filler like "trusted quality", "premium craftsmanship", "perfect for families", "advanced performance" unless followed by something specific and verified.
+
+ANTI-TEMPLATE: Each bullet must read differently from the others. Do not reuse the same sentence structure across bullets or across products.
+
+SEARCH OPTIMIZATION:
+- Weave provided high-volume search terms into bullet text naturally where accurate. Do not force keywords unnaturally.
+- Write bullets that conceptually address the provided shopper intent clusters. Do not use intent phrases as literal keywords — use them as targets for what each bullet should communicate.
+
+SOURCE OF TRUTH: Use only verified product data. Do not invent claims, materials, certifications, or unsupported benefits. The claim "#1 rice cooker brand in Korea" is approved for use when appropriate.
+
+EXTRA BULLETS (when requested count > 5): Extra bullets MUST be product-specific using verified features. Do NOT fill extra slots with generic brand/value/trust padding or repetition. If the product lacks enough distinct verified features to justify the requested count, still comply but avoid weak repetitive padding.
+
+Respond ONLY with valid JSON: {"bullets":[{"heading":"...","text":"..."}]}`;
+
+// Semantic intent clusters by tier (used in user message, not system prompt)
+const SEMANTIC_INTENT = {
+  basic: [
+    "simple daily rice cooking",
+    "first rice cooker",
+    "easy to use rice cooker",
+    "compact kitchen appliance",
+    "reliable everyday cooking",
+    "beginner friendly"
+  ],
+  mid: [
+    "better rice texture",
+    "multiple grain types",
+    "programmable rice cooker",
+    "set and forget cooking",
+    "upgrade from basic rice cooker",
+    "versatile rice and grain cooker"
+  ],
+  premium: [
+    "restaurant quality rice at home",
+    "induction heating precision",
+    "pressure cooking technology",
+    "Korean rice cooker quality",
+    "long-term kitchen investment",
+    "advanced cooking control"
+  ]
+};
+
+// Build tier-aware bullet role instructions for the requested count (1-7).
+// Takes first N roles in priority order. Bullet 5 (brand/origin) drops first on small counts.
+function buildBulletRoleInstructions(count, tier) {
+  const rolesByTier = {
+    basic: [
+      "One-touch ease and reliable daily rice cooking",
+      "Exact 'X cups uncooked / Y cups cooked' capacity with practical daily-use context",
+      "Nonstick inner pot and simple cleanup",
+      "Keep warm or compact convenience",
+      "CUCKOO brand reliability — only if phrased concretely (not puffery)",
+      "Additional verified product feature (must be specific, not filler)",
+      "Another verified product feature (must be specific, not filler)"
+    ],
+    mid: [
+      "Better cooking control and rice texture vs basic cookers",
+      "Exact 'X cups uncooked / Y cups cooked' capacity with practical use context",
+      "Menu variety and cooking versatility",
+      "Programmable timer, auto clean, or convenience feature",
+      "Upgrade value — concrete reasons this is worth stepping up from basic",
+      "Additional verified product feature (must be specific, not filler)",
+      "Another verified product feature (must be specific, not filler)"
+    ],
+    premium: [
+      "Hero technology and the cooking outcome it delivers",
+      "Exact 'X cups uncooked / Y cups cooked' capacity with practical use context",
+      "Inner pot material or premium cooking system story",
+      "Advanced convenience or menu range",
+      "Origin/engineering — only if phrased concretely, never as puffery",
+      "Additional verified premium feature (must be specific, not filler)",
+      "Another verified premium feature (must be specific, not filler)"
+    ]
+  };
+  const roles = rolesByTier[tier] || rolesByTier.basic;
+  const selected = roles.slice(0, Math.max(1, Math.min(7, count)));
+  return selected.map((r, i) => (i + 1) + ". " + r).join("\n");
+}
+
+// Get relevant search keywords for a product from SEARCH_DATA
+function getRelevantKeywords(product, searchData) {
+  if (!product || !Array.isArray(searchData)) return [];
+  const cupSize = (product.cupSize || "").toLowerCase();
+  const innerPot = (product.innerPot || "").toLowerCase();
+  const isPressure = !!product.pressure || (product.type || "").toLowerCase().includes("pressure");
+  const isInduction = (product.heating || "").toLowerCase().includes("induction") || (product.type || "").toLowerCase().includes("induction");
+  const isKorea = product.mfg === "South Korea";
+  const features = (product.features || []).join(" ").toLowerCase();
+  const results = [];
+  for (const kw of searchData) {
+    if (!kw?.t || typeof kw.v !== "number") continue;
+    const t = kw.t.toLowerCase();
+    // Always include general/brand terms
+    if (t === "rice cooker" || t === "cuckoo rice cooker" || t === "rice maker" || t === "rice steamer") { results.push(kw); continue; }
+    // Size-specific
+    if (/\d+\s*cup/.test(t)) {
+      const num = parseInt(t.match(/(\d+)/)[1]);
+      const cupNum = parseInt(cupSize);
+      if (num && cupNum && num === cupNum) { results.push(kw); continue; }
+      continue;
+    }
+    // Keyword restrictions
+    if (t.includes("pressure") && !isPressure) continue;
+    if (t.includes("induction") && !isInduction) continue;
+    if (t.includes("korean") && !isKorea) continue;
+    if (t.includes("stainless steel") && !innerPot.includes("stainless")) continue;
+    if (t.includes("nonstick") && !innerPot.includes("nonstick")) continue;
+    results.push(kw);
+  }
+  // Sort by volume descending, take top 10
+  return results.sort((a, b) => (b.v || 0) - (a.v || 0)).slice(0, 10);
+}
+
+// Build the bullet user message common across all 3 call sites
+function buildBulletUserMessage(product, sku, finalTitle, count, searchData) {
+  const tier = classifyProductTier(product);
+  const productCtx = product ? formatProductContext({ sku, ...product }) : "";
+  const roles = buildBulletRoleInstructions(count, tier);
+  const relevantKw = getRelevantKeywords(product, searchData || []);
+  const kwLines = relevantKw.length > 0 ? relevantKw.map(k => "- " + k.t + " (" + (k.v >= 1000 ? Math.round(k.v / 1000) + "K" : k.v) + " volume)").join("\n") : "- (none available)";
+  const intents = SEMANTIC_INTENT[tier] || SEMANTIC_INTENT.basic;
+  const intentLines = intents.map(i => "- " + i).join("\n");
+  // Capacity context
+  const cupMatch = (product?.cupSize || "").match(/(\d+)\s*Cup\s*Uncooked\s*\/\s*(\d+)\s*Cup\s*Cooked/i);
+  const capacityLine = cupMatch ? cupMatch[1] + " cups uncooked / " + cupMatch[2] + " cups cooked" : (product?.cupSize || "unknown");
+
+  return "Generate exactly " + count + " bullet points for this CUCKOO product.\n\n" +
+    "Model: " + (sku || "") + "\n" +
+    "Product tier: " + tier + "\n\n" +
+    "VERIFIED PRODUCT DATA:\n" + productCtx + "\n\n" +
+    (finalTitle ? "FINALIZED AMAZON TITLE:\n\"" + finalTitle + "\"\n\n" : "") +
+    "EXACT CAPACITY (use when referencing capacity):\n" + capacityLine + "\n\n" +
+    "BULLET ROLES (use in priority order, one role per bullet):\n" + roles + "\n\n" +
+    "RELEVANT SEARCH TERMS (weave naturally where accurate, do not force):\n" + kwLines + "\n\n" +
+    "SHOPPER INTENT (address conceptually, NOT as literal keywords):\n" + intentLines + "\n\n" +
+    "Respond only with valid JSON.";
+}
+
 // --- LISTING OUTPUT VALIDATOR ---
 
 // Validate and fix helper fields on generated listing output.
@@ -828,6 +994,9 @@ function validateListingOutput(titles, bullets, keywords, product) {
       bulletCharCounts.push(len);
       if (len > 220) {
         warnings.push("BULLET_LENGTH: Bullet " + (i + 1) + " is " + len + " chars (over 220 limit)");
+      }
+      if (len < 120) {
+        warnings.push("BULLET_SHORT: Bullet " + (i + 1) + " is " + len + " chars — may be too thin");
       }
     }
   }
@@ -1177,6 +1346,9 @@ function AppInner() {
   const [bpModel, setBpModel] = useState("");
   const [bpTitle, setBpTitle] = useState(""); // Amazon title to align bullets with
   const [bpMarketplace, setBpMarketplace] = useState("amazon");
+  const [bulletCount, setBulletCount] = useState(5); // 1-7, default 5
+  const bulletCountRef = useRef(5);
+  bulletCountRef.current = bulletCount;
   const [bpResults, setBpResults] = useState(null);
   const [bpLoading, setBpLoading] = useState(false);
   const [bpError, setBpError] = useState(null);
@@ -1249,7 +1421,7 @@ function AppInner() {
   const [ccResults, setCcResults] = useState(null);
   // Dark mode
   const [darkMode, setDarkMode] = useState(false);
-  useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} try { const cm = await window.storage.get("capacity_mode"); if (cm?.value && ["both","uncooked","cooked"].includes(cm.value)) { setCapacityMode(cm.value); capacityModeRef.current = cm.value; } } catch(e) {} })(); }, []);
+  useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} try { const cm = await window.storage.get("capacity_mode"); if (cm?.value && ["both","uncooked","cooked"].includes(cm.value)) { setCapacityMode(cm.value); capacityModeRef.current = cm.value; } } catch(e) {} try { const bc = await window.storage.get("bullet_count"); const n = parseInt(bc?.value); if (n >= 5 && n <= 7) { setBulletCount(n); bulletCountRef.current = n; } } catch(e) {} })(); }, []);
   const toggleDarkMode = useCallback(() => { setDarkMode(prev => { const next = !prev; document.body.classList.toggle("dark-mode", next); try { window.storage.set("dark_mode", String(next)); } catch(e) {} return next; }); }, []);
   // Nav group dropdown
   const [openNavGroup, setOpenNavGroup] = useState(null);
@@ -1670,14 +1842,11 @@ function AppInner() {
     const timeoutId = setTimeout(() => controller.abort("timeout"), 60000);
     try {
       const product = lookupProduct(bpModel, liveProductDbRef.current);
-      const productCtx = product ? "\n\n" + formatProductContext(product) : "";
       const mpConfig = MARKETPLACES[bpMarketplace] || MARKETPLACES.amazon;
-      const bpSystemPrompt = "You are a senior ecommerce copywriter at CUCKOO Electronics America. Generate 5 bullet points for a product listing. Each bullet should start with a CAPITALIZED benefit phrase (2-4 words), followed by a colon and descriptive text. Bullet points should cover: key technology/feature, capacity/convenience, material/quality, ease of use, and brand trust/warranty. For Amazon: max 500 chars per bullet, keyword-rich. For other marketplaces: adapt tone per guidelines. Only use verified product data — never invent features.\nRespond ONLY with valid JSON: {\"bullets\":[{\"heading\":\"...\",\"text\":\"...\"}],\"marketplace\":\"...\",\"char_counts\":[]}";
-      const titleCtx = bpTitle.trim() ? "\n\nLISTING TITLE (align bullet points with the keywords and features highlighted in this title for SEO consistency):\n\"" + bpTitle.trim() + "\"" : "";
-      const bpUserMsg = "Generate 5 bullet points for this CUCKOO product on " + mpConfig.name + ":\nModel: " + bpModel.trim() + productCtx + titleCtx + "\nMarketplace: " + mpConfig.name + "\n" + mpConfig.guidelines + "\nRespond ONLY with valid JSON.";
+      const bpUserMsg = buildBulletUserMessage(product, bpModel.trim(), bpTitle.trim(), bulletCountRef.current, liveSearchData) + "\n\nMarketplace: " + mpConfig.name;
       const res = await fetch("/api/messages", {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: bpSystemPrompt, messages: [{ role: "user", content: bpUserMsg }] })
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 2000, temperature: 0.4, system: BULLET_SYSTEM_PROMPT, messages: [{ role: "user", content: bpUserMsg }] })
       });
       if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
       const data = await res.json();
@@ -1998,9 +2167,8 @@ function AppInner() {
 
       // Step 2: Bullets
       setWsLoading("bullets");
-      const bpSys = "You are a senior ecommerce copywriter at CUCKOO Electronics America. Generate 5 bullet points for an Amazon product listing. Each bullet should start with a CAPITALIZED benefit phrase (2-4 words), followed by a colon and descriptive text. Only use verified product data — never invent features.\nRespond ONLY with valid JSON: {\"bullets\":[{\"heading\":\"...\",\"text\":\"...\"}]}";
-      const bpMsg = "Generate 5 bullet points for CUCKOO " + wsModel.trim() + " on Amazon:\n\n" + productCtx + (amazonTitle ? "\n\nLISTING TITLE (align bullets with):\n\"" + amazonTitle + "\"" : "") + "\nRespond ONLY with valid JSON.";
-      const bullets = await callApi(bpSys, bpMsg, 1500, 0.3);
+      const bpMsg = buildBulletUserMessage(product, wsModel.trim(), amazonTitle, bulletCountRef.current, liveSearchData);
+      const bullets = await callApi(BULLET_SYSTEM_PROMPT, bpMsg, 2000, 0.4);
       setWsResults(prev => ({ ...prev, bullets }));
 
       // Step 3: Backend Keywords
@@ -2097,9 +2265,11 @@ function AppInner() {
         const amazonTitle = titles.conversions?.amazon?.title || "";
         // Bullets
         setBeProgress({ current: i + 1, total: beModels.length, sku, step: "bullets" });
-        const bpSys = "You are a senior ecommerce copywriter at CUCKOO Electronics America. Generate 5 bullet points for an Amazon listing. Each bullet: CAPITALIZED HEADING followed by colon and text. Only use verified product data.\nRespond ONLY with valid JSON: {\"bullets\":[{\"heading\":\"...\",\"text\":\"...\"}]}";
-        const bpMsg = "Generate 5 bullets for CUCKOO " + sku + " on Amazon:\n" + productCtx + (amazonTitle ? "\nTitle: \"" + amazonTitle + "\"" : "") + "\nRespond ONLY with valid JSON.";
-        const bullets = await callApi(bpSys, bpMsg, 1500, 0.3);
+        // Auto-optimize bullet count by tier: basic=5, mid=6, premium=7
+        const autoTier = classifyProductTier(product);
+        const autoBulletCount = autoTier === "premium" ? 7 : autoTier === "mid" ? 6 : 5;
+        const bpMsg = buildBulletUserMessage(product, sku, amazonTitle, autoBulletCount, liveSearchData);
+        const bullets = await callApi(BULLET_SYSTEM_PROMPT, bpMsg, 2000, 0.4);
         // Keywords
         setBeProgress({ current: i + 1, total: beModels.length, sku, step: "keywords" });
         const bulletText = bullets?.bullets?.map(b => b.heading + ": " + b.text).join("\n") || "";
@@ -2141,8 +2311,12 @@ function AppInner() {
         const t = r.titles?.conversions?.[k];
         if (t) { row[MARKETPLACES[k].name + " Title"] = t.title || ""; row[MARKETPLACES[k].name + " Chars"] = t.char_count || (t.title || "").length; }
       });
-      // Bullets
-      (r.bullets?.bullets || []).forEach((b, i) => { row["Bullet " + (i + 1)] = b.heading + ": " + b.text; });
+      // Bullets — always create Bullet 1 through Bullet 7 columns (unused = blank)
+      const bulletList = r.bullets?.bullets || [];
+      for (let bi = 0; bi < 7; bi++) {
+        const b = bulletList[bi];
+        row["Bullet " + (bi + 1)] = b ? (b.heading + ": " + b.text) : "";
+      }
       // Keywords
       row["Backend Keywords"] = r.keywords?.keywords || "";
       row["Keywords Bytes"] = r.keywords?.byte_count || 0;
@@ -2580,6 +2754,25 @@ function AppInner() {
           </div>
         </div>
 
+        {/* Bullet Count */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Bullet Count <span style={{ fontWeight: 400, color: "#bbb" }}>({bulletCount})</span></label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[5,6,7].map(n => (
+              <button key={n} onClick={() => { setBulletCount(n); try { window.storage.set("bullet_count", String(n)); } catch(e) {} }}
+                style={{ flex: 1, padding: "7px 0", background: bulletCount === n ? MAROON : "#fff", border: `1px solid ${bulletCount === n ? MAROON : "#e0ddd8"}`, borderRadius: 6, color: bulletCount === n ? "#fff" : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s" }}>
+                {n}
+              </button>
+            ))}
+          </div>
+          {bulletCount > 5 && (() => {
+            const p = lookupProduct(wsModel, liveProductDbRef.current);
+            const tier = classifyProductTier(p);
+            if (tier === "basic") return <div style={{ marginTop: 8, fontSize: 10, color: "#92400e", fontFamily: "'Outfit',sans-serif" }}>{"\u26A0"} {bulletCount} bullets requested for a basic-tier product — may produce weaker/repetitive bullets beyond #5</div>;
+            return null;
+          })()}
+        </div>
+
         {/* Generate Button */}
         {(() => {
           const ready = wsModel.trim() && lookupProduct(wsModel, liveProductDbRef.current) && !wsLoading;
@@ -2762,6 +2955,16 @@ function AppInner() {
                 {m.label}
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Bullet Count — auto-optimized per product tier */}
+        <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Bullet Count {"\u00B7"} Auto-optimized per product</div>
+          <div style={{ fontSize: 11, color: "#666", lineHeight: 1.6 }}>
+            <span style={{ display: "inline-block", marginRight: 16 }}><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>Basic</span> <span style={{ color: "#888" }}>{"\u2192"} 5 bullets</span></span>
+            <span style={{ display: "inline-block", marginRight: 16 }}><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>Mid</span> <span style={{ color: "#888" }}>{"\u2192"} 6 bullets</span></span>
+            <span style={{ display: "inline-block" }}><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>Premium</span> <span style={{ color: "#888" }}>{"\u2192"} 7 bullets</span></span>
           </div>
         </div>
 
@@ -3333,6 +3536,25 @@ function AppInner() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Bullet Count */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "16px 24px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Bullet Count <span style={{ fontWeight: 400, color: "#bbb" }}>({bulletCount})</span></label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[5,6,7].map(n => (
+              <button key={n} onClick={() => { setBulletCount(n); try { window.storage.set("bullet_count", String(n)); } catch(e) {} }}
+                style={{ flex: 1, padding: "7px 0", background: bulletCount === n ? MAROON : "#fff", border: `1px solid ${bulletCount === n ? MAROON : "#e0ddd8"}`, borderRadius: 6, color: bulletCount === n ? "#fff" : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s" }}>
+                {n}
+              </button>
+            ))}
+          </div>
+          {bulletCount > 5 && (() => {
+            const p = lookupProduct(bpModel, liveProductDbRef.current);
+            const tier = classifyProductTier(p);
+            if (tier === "basic") return <div style={{ marginTop: 8, fontSize: 10, color: "#92400e", fontFamily: "'Outfit',sans-serif" }}>{"\u26A0"} {bulletCount} bullets requested for a basic-tier product — may produce weaker/repetitive bullets beyond #5</div>;
+            return null;
+          })()}
         </div>
 
         {/* Generate button */}
