@@ -112,7 +112,31 @@ RULE 1 — Every cup capacity MUST have "Uncooked" or "Cooked" (e.g. "6-Cup Unco
 RULE 2 — Order: CUCKOO [Tech] Rice Cooker [Cup Size], [Features], [Color] ([Model]). No "& Warmer". Cup size AFTER "Rice Cooker". Dual tech: use "Twin Pressure Induction Heating" — never use "+" or "with" between technologies. BOTH must appear after CUCKOO in every title — drop model number before dropping tech. Valid types: Basic, Micom, Pressure, Twin Pressure, Induction Heating Pressure, Electric Heating Pressure, Twin Pressure Induction Heating. Do NOT use "Fuzzy Logic" as a type — use "Micom" instead. The verified product class (Basic, Micom, Pressure, etc.) must remain in the title unless the hard character limit makes it absolutely impossible.
 RULE 3 — Model numbers in parentheses, placed LAST. Remove entirely if over char limit — first thing to sacrifice.
 RULE 4 — Flowing titles, not keyword lists. "with" connects features to the product, "&" within groups, 3-4 commas max. Do NOT use "with" between dual technologies — write "Twin Pressure Induction Heating" as one phrase. Ref: "CUCKOO Twin Pressure Induction Heating Rice Cooker 6-Cup Uncooked / 12-Cup Cooked, 20 Menu Modes with Voice Guide, Auto Clean, Rice Maker & Pressure Cooker (CRP-LHTR0609FW)"
-RULE 5 — ONLY use features from (a) the original title or (b) VERIFIED PRODUCT DATA from the internal database. Never invent. If title is sparse, enrich from database.
+RULE 5 — ONLY use features, cooking modes, or cooking mode names that are listed in the VERIFIED PRODUCT DATA. Never invent, infer, or extrapolate menu modes. If the product data shows no cooking modes or mode names, you cannot claim dedicated programs for quinoa, oatmeal, porridge, multi-grain, brown rice, or any specific mode. Do not use "Heating Plate Technology" as a title feature or selling point — it is not a differentiator.
+
+AMAZON TITLE LENGTH REQUIREMENT (critical):
+Amazon hard limit: 200 chars. TARGET 180-195 characters. You are underusing Amazon space if the title is under 175 chars and there are additional verified features available to include. Use search synonyms like "Rice Maker", "Rice Steamer", and relevant verified feature callouts to reach the target length. Do NOT pad with filler. Do NOT leave 20+ chars unused when strong verified differentiators fit cleanly.
+
+GENERAL RICE COOKER CAPABILITIES (approved everyday-use language, always allowed for any rice cooker):
+Rice cookers are water-based cooking appliances. The following everyday uses are approved for title descriptor language and bullet language for ANY rice cooker, regardless of cooking mode names:
+- Rice (always)
+- Everyday grains (general term)
+- Oatmeal, quinoa, mixed grains (as general water-based uses)
+- Porridge, soups, one-pot meals (as general water-based uses)
+
+Approved short title descriptors for everyday framing (optional, use only if space allows after the core block):
+- "for Everyday Rice & Grains"
+- "for Rice, Grains & Oatmeal"
+- "for Daily Rice & Grain Cooking"
+
+Use at most ONE concise everyday-use descriptor per title, not a list of foods.
+
+EQUIPMENT-DEPENDENT USES (only claim when verified in product features):
+- Steaming vegetables / fish / dumplings / eggs: ONLY if "Steam Tray" or "Steamer Basket" is in the product features array
+- Water Capture benefits: ONLY if "Water Capture" is in features
+
+DEDICATED COOKING PROGRAMS (strongest claims, only when verified in cookingModeNames):
+Specific mode claims like "dedicated quinoa mode", "steel-cut oats program", "GABA brown rice" can ONLY be made when that exact mode name appears in the product's cookingModeNames. If cookingModeNames is empty or does not contain the mode, you cannot claim that dedicated program exists.
 
 KEYWORD RESTRICTIONS (all marketplaces):
 - 'small'/'mini'/'compact': only for 3-cup or smaller
@@ -121,7 +145,26 @@ KEYWORD RESTRICTIONS (all marketplaces):
 - 'Korean': ONLY allowed as the exact phrase 'Korean Rice Cooker' (never standalone 'Korean'). Only if verified made in Korea.
 - 'Stainless Steel': only if inner pot IS stainless steel
 - 'low carb': only if product has that feature
-- 'Fuzzy Logic': do NOT use as a product type or heating method. It is a microprocessor control algorithm. Use 'Micom' for the product type instead. Only acceptable in bullet points or descriptions, never in titles.
+- 'Fuzzy Logic': do NOT use as a product type or heating method. Use 'Micom' instead. Never in titles.
+- 'Heating Plate Technology': never use in titles or bullets. Not a differentiator.
+- 'Easy Clean Design' / 'Classic Finish' / 'Premium Craftsmanship' / 'Trusted Quality': generic puffery, do not use.
+
+MARKETPLACE DESCRIPTOR DIFFERENTIATION (critical — titles must meaningfully differ across marketplaces):
+The core block stays the same (CUCKOO [Tech] Rice Cooker [Capacity] [Model]), but the descriptor layer after it MUST vary by marketplace family. Do NOT output nearly-identical titles like "CUCKOO Micom Rice Cooker 12-Cup Cooked with Nonstick Inner Pot, [Color] (Model)" across all 10 marketplaces. Each family should have a distinct descriptor angle drawn from a different type of verified product information.
+
+Descriptor pools per marketplace family (pick ONE type per marketplace, different from the others):
+- Amazon: fuller — include rice maker synonym + 2-3 verified features + color + model
+- Walmart: one verified feature (inner pot material OR one cooking cue OR one convenience cue) + color + model. Different feature from other marketplaces when possible.
+- Target: consumer-friendly phrasing — material OR color + everyday-use descriptor
+- TikTok Shop: one snappy benefit — cooking performance OR convenience. Avoid material callouts.
+- Weee!: cultural relevance — may use "Korean Rice Cooker" phrase if made in Korea. Otherwise rice+grains cooking benefit.
+- Best Buy: tech spec — wattage OR mode count OR heating type. NOT "Heating Plate Technology".
+- Wayfair: home aesthetic — material or finish detail + lifestyle language
+- Kohl's: family/ease-of-use — convenience cue (auto clean, keep warm, easy cleanup)
+- Macy's: quality/material cue — inner pot material or construction quality
+- Bloomingdale's: most restrained — single premium signal only, minimal descriptor
+
+Output differentiation rule: If two marketplace titles are identical or nearly identical after the core block, REWRITE one of them using a different verified angle from the pool above. Do not repeat "with Nonstick Inner Pot, [Color]" across every marketplace.
 
 EXAMPLE:
 Input: "CUCKOO CRP-P0609S 6 Cup Electric Heating Pressure Rice Cooker with Nonstick Inner Pot, Black"
@@ -826,6 +869,22 @@ SEARCH OPTIMIZATION:
 
 SOURCE OF TRUTH: Use only verified product data. Do not invent claims, materials, certifications, or unsupported benefits. The claim "#1 rice cooker brand in Korea" is approved for use when appropriate.
 
+CRITICAL MODE NAME VERIFICATION: When mentioning cooking modes, use only mode names that appear EXACTLY in the product's cookingModeNames data. Do NOT invent modes like "quinoa", "oatmeal", "multi-grain", "brown rice", "scorched rice", "GABA", or any other specific mode unless that exact name is in cookingModeNames. If the product has no cookingModeNames, you cannot claim any dedicated cooking programs — period.
+
+THREE-TIER CLAIM STRENGTH FOR EVERYDAY USES:
+Tier 1 — General water-based capabilities (always allowed for any rice cooker):
+  - Rice, grains (general), oatmeal, quinoa, porridge, soups, one-pot meals
+  - Use general language: "cook rice and everyday grains", "prepare rice, oatmeal, and quinoa", "make rice and one-pot meals"
+  - These are approved because rice cookers are water-based cooking appliances
+Tier 2 — Equipment-dependent uses (only if feature verified in product):
+  - Steam vegetables / fish / dumplings / eggs: ONLY if "Steam Tray" or "Steamer Basket" is in features array
+  - Water capture benefits: ONLY if "Water Capture" is in features array
+Tier 3 — Dedicated program claims (strongest, only if mode verified in cookingModeNames):
+  - "Dedicated quinoa mode", "GABA brown rice program", "steel-cut oats setting"
+  - These require the exact mode name in cookingModeNames
+
+EVERYDAY POSITIONING: Position CUCKOO rice cookers as daily-use appliances — breakfast through dinner, Monday through Sunday. Use general everyday language like "daily use", "from breakfast to dinner", "seven days a week" regardless of tier. The stronger the mode verification, the more specific the cooking claims can be.
+
 EXTRA BULLETS (when requested count > 5): Extra bullets MUST be product-specific using verified features. Do NOT fill extra slots with generic brand/value/trust padding or repetition. If the product lacks enough distinct verified features to justify the requested count, still comply but avoid weak repetitive padding.
 
 Respond ONLY with valid JSON: {"bullets":[{"heading":"...","text":"..."}]}`;
@@ -930,6 +989,49 @@ function getRelevantKeywords(product, searchData) {
 }
 
 // Build the bullet user message common across all 3 call sites
+// Three-tier claim strength helper. Returns what kinds of everyday-use claims are allowed
+// for this specific product, based on verified DB data only.
+function getVerifiedAlternateUses(product) {
+  // Tier 1 — Category capabilities: always allowed for any rice cooker
+  const categoryUses = ["rice", "grains", "oatmeal", "quinoa", "porridge", "soups", "one-pot meals"];
+
+  // Tier 2 — Equipment-dependent uses: only if verified in features
+  const featuresText = (product?.features || []).join(" ").toLowerCase();
+  const equipmentUses = [];
+  if (/steam\s*tray|steamer\s*basket/i.test(featuresText)) {
+    equipmentUses.push("steam vegetables", "steam fish", "steam dumplings", "steam eggs");
+  }
+  if (/water\s*capture/i.test(featuresText)) {
+    equipmentUses.push("water capture (prevents overflow)");
+  }
+
+  // Tier 3 — Dedicated program claims: only if verified in cookingModeNames
+  const modeNamesRaw = product?.cookingModeNames;
+  const modeNames = Array.isArray(modeNamesRaw) ? modeNamesRaw.join(", ").toLowerCase() : (typeof modeNamesRaw === "string" ? modeNamesRaw.toLowerCase() : "");
+  const dedicatedModes = [];
+  if (modeNames) {
+    const modeMap = [
+      { pattern: /oatmeal|oat|steel.?cut/i, label: "oatmeal mode" },
+      { pattern: /quinoa/i, label: "quinoa mode" },
+      { pattern: /porridge|nu rung ji/i, label: "porridge mode" },
+      { pattern: /soup/i, label: "soup mode" },
+      { pattern: /multi.?grain|brown.?rice|gaba|mixed.?rice|mixed.?grain/i, label: "multi-grain/brown rice mode" },
+      { pattern: /multi.?cook/i, label: "multi-cook mode" },
+      { pattern: /slow.?cook/i, label: "slow cook mode" },
+      { pattern: /baby.?food/i, label: "baby food mode" },
+      { pattern: /steam/i, label: "steam mode" },
+      { pattern: /yogurt/i, label: "yogurt mode" },
+      { pattern: /cake/i, label: "cake mode" },
+      { pattern: /soymilk|soy.?milk/i, label: "soymilk mode" },
+    ];
+    for (const m of modeMap) {
+      if (m.pattern.test(modeNames)) dedicatedModes.push(m.label);
+    }
+  }
+
+  return { categoryUses, equipmentUses, dedicatedModes };
+}
+
 function buildBulletUserMessage(product, sku, finalTitle, count, searchData) {
   const tier = classifyProductTier(product);
   const productCtx = product ? formatProductContext({ sku, ...product }) : "";
@@ -942,12 +1044,21 @@ function buildBulletUserMessage(product, sku, finalTitle, count, searchData) {
   const cupMatch = (product?.cupSize || "").match(/(\d+)\s*Cup\s*Uncooked\s*\/\s*(\d+)\s*Cup\s*Cooked/i);
   const capacityLine = cupMatch ? cupMatch[1] + " cups uncooked / " + cupMatch[2] + " cups cooked" : (product?.cupSize || "unknown");
 
+  // Three-tier claim strength
+  const uses = getVerifiedAlternateUses(product);
+  const tierClaimSection = "APPROVED EVERYDAY-USE CLAIMS (three tiers — use only what is allowed for this specific product):\n" +
+    "TIER 1 (general category, always allowed): " + uses.categoryUses.join(", ") + "\n" +
+    "TIER 2 (equipment-verified, only because product has these features): " + (uses.equipmentUses.length ? uses.equipmentUses.join(", ") : "(none — product has no steam tray or water capture)") + "\n" +
+    "TIER 3 (dedicated program claims, only if verified in cookingModeNames): " + (uses.dedicatedModes.length ? uses.dedicatedModes.join(", ") : "(none — product has no dedicated cooking modes)") + "\n" +
+    "IMPORTANT: For TIER 3, you may only mention dedicated programs that appear exactly in the list above. Do NOT invent mode names like quinoa, oatmeal, multi-grain, etc. unless they are in TIER 3 for this product.";
+
   return "Generate exactly " + count + " bullet points for this CUCKOO product.\n\n" +
     "Model: " + (sku || "") + "\n" +
     "Product tier: " + tier + "\n\n" +
     "VERIFIED PRODUCT DATA:\n" + productCtx + "\n\n" +
     (finalTitle ? "FINALIZED AMAZON TITLE:\n\"" + finalTitle + "\"\n\n" : "") +
     "EXACT CAPACITY (use when referencing capacity):\n" + capacityLine + "\n\n" +
+    tierClaimSection + "\n\n" +
     "BULLET ROLES (use in priority order, one role per bullet):\n" + roles + "\n\n" +
     "RELEVANT SEARCH TERMS (weave naturally where accurate, do not force):\n" + kwLines + "\n\n" +
     "SHOPPER INTENT (address conceptually, NOT as literal keywords):\n" + intentLines + "\n\n" +
@@ -1776,7 +1887,7 @@ function AppInner() {
       const spanishLine = catCfg.spanishTerms ? "\n2. ALTERNATE LANGUAGE TERMS: " + catCfg.spanishTerms : "";
       const synonymLine = catCfg.synonyms ? "\n3. SYNONYM PHRASES not in the title: " + catCfg.synonyms : "";
 
-      const bkSystemPrompt = "Amazon backend keyword specialist for CUCKOO Electronics America. Generate hidden search terms for a CUCKOO " + catCfg.label + " listing (500 byte max). Prioritize:" + competitorLine + spanishLine + synonymLine + "\n- Feature/spec terms not in the title or bullet points\n- Use-case synonyms shoppers search\nRules: space-separated only, no punctuation, no words already in listing title or bullet points, no ASINs or promo phrases, stay under 500 bytes.\nRespond ONLY with valid JSON: {\"keywords\":\"space-separated string\",\"byte_count\":0,\"strategy\":[\"brief explanation\"],\"excluded\":[]}";
+      const bkSystemPrompt = "Amazon backend keyword specialist for CUCKOO Electronics America. Generate hidden search terms for a CUCKOO " + catCfg.label + " listing (499 byte max). Prioritize:" + competitorLine + spanishLine + synonymLine + "\n- Feature/spec terms not in the title or bullet points\n- Use-case synonyms shoppers actually search\nRules: space-separated only, no punctuation, no words already in listing title or bullet points, no ASINs or promo phrases, stay under 499 bytes.\n\nANTI-FILLER (CRITICAL): Do NOT use vague generic words that provide no search value. Banned words: vessel, container, bowl, dish, utensil, gadget, device, machine, equipment, tool, product, item, goods, merchandise, commodity, article, object, thing, stuff, gear, substance, material, component, element. Every keyword must be a term a real shopper would actually type into Amazon search.\nRespond ONLY with valid JSON: {\"keywords\":\"space-separated string\",\"byte_count\":0,\"strategy\":[\"brief explanation\"],\"excluded\":[]}";
 
       const bkUserMsg = "Generate Amazon backend keywords for this product:\n" + productDesc + dbContext + titleExclusion + bulletExclusion + "\nRespond ONLY with valid JSON.";
 
@@ -2174,7 +2285,7 @@ function AppInner() {
       // Step 3: Backend Keywords
       setWsLoading("keywords");
       const bulletText = bullets.bullets?.map(b => b.heading + ": " + b.text).join("\n") || "";
-      const bkSys = "Amazon backend keyword specialist for CUCKOO Electronics America. Generate hidden search terms (500 byte max). Prioritize competitor brand names, alternate language terms, synonym phrases not in the title or bullets. Space-separated only, no punctuation, no words already in title or bullets, no ASINs or promo phrases.\nRespond ONLY with valid JSON: {\"keywords\":\"space-separated string\",\"byte_count\":0,\"strategy\":[\"brief explanation\"]}";
+      const bkSys = "Amazon backend keyword specialist for CUCKOO Electronics America. Generate hidden search terms (499 byte max). Prioritize competitor brand names, alternate language terms, synonym phrases not in the title or bullets. Space-separated only, no punctuation, no words already in title or bullets, no ASINs or promo phrases.\nANTI-FILLER (CRITICAL): Do NOT use vague generic words. Banned: vessel container bowl dish utensil gadget device machine equipment tool product item goods merchandise commodity article object thing stuff gear substance material component element. Every keyword must be a real shopper search term.\nRespond ONLY with valid JSON: {\"keywords\":\"space-separated string\",\"byte_count\":0,\"strategy\":[\"brief explanation\"]}";
       const bkMsg = "Generate backend keywords for CUCKOO " + wsModel.trim() + ":\n\n" + productCtx + (amazonTitle ? "\n\nCURRENT TITLE (exclude these words):\n\"" + amazonTitle + "\"" : "") + (bulletText ? "\n\nCURRENT BULLETS (exclude these words):\n" + bulletText : "") + "\nRespond ONLY with valid JSON.";
       let keywords = await callApi(bkSys, bkMsg, 800, 0.3);
       keywords.byte_count = new TextEncoder().encode(keywords.keywords || "").length;
@@ -2278,7 +2389,7 @@ function AppInner() {
         // Keywords
         setBeProgress({ current: i + 1, total: beModels.length, sku, step: "keywords" });
         const bulletText = bullets?.bullets?.map(b => b.heading + ": " + b.text).join("\n") || "";
-        const bkSys = "Amazon backend keyword specialist for CUCKOO. Generate search terms (500 byte max). Space-separated, no punctuation, no words in title/bullets.\nRespond ONLY with valid JSON: {\"keywords\":\"...\",\"byte_count\":0}";
+        const bkSys = "Amazon backend keyword specialist for CUCKOO. Generate search terms (499 byte max). Space-separated, no punctuation, no words in title/bullets. Every keyword must be a real shopper search term — do NOT use vague filler words like vessel, container, bowl, utensil, gadget, device, machine, equipment, tool, product, item, goods, thing, stuff.\nRespond ONLY with valid JSON: {\"keywords\":\"...\",\"byte_count\":0}";
         const bkMsg = "Backend keywords for CUCKOO " + sku + ":\n" + productCtx + (amazonTitle ? "\nTitle: \"" + amazonTitle + "\"" : "") + (bulletText ? "\nBullets:\n" + bulletText : "") + "\nRespond ONLY with valid JSON.";
         let keywords = await callApi(bkSys, bkMsg, 800, 0.3);
         if (keywords?.keywords) {
