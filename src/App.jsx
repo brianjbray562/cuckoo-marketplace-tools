@@ -2221,19 +2221,24 @@ function AppInner() {
     const catRules = CATEGORY_RULES.rice_cooker;
     const delay = ms => new Promise(r => setTimeout(r, ms));
     const callApi = async (system, userMsg, maxTokens, temp) => {
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < 5; attempt++) {
         const res = await fetch("/api/messages", {
           method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
           body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, temperature: temp, system, messages: [{ role: "user", content: userMsg }] })
         });
-        if (res.status === 429 || res.status === 502 || res.status === 503) { await delay(Math.pow(2, attempt + 1) * 2000); continue; }
+        if (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 529) {
+          // 529 (overloaded) gets longer backoff: 5s, 10s, 20s, 40s, 80s
+          const baseDelay = res.status === 529 ? 5000 : 2000;
+          await delay(Math.pow(2, attempt) * baseDelay);
+          continue;
+        }
         if (!res.ok) throw new Error("API " + res.status);
         const data = await res.json();
         if (data.error) throw new Error(data.error.message || "API error");
         const text = extractTextFromContent(data.content);
         return parseJsonResponse(text);
       }
-      throw new Error("Rate limited after 3 retries");
+      throw new Error("API overloaded after 5 retries — try again in a few minutes");
     };
     const results = [];
     for (let i = 0; i < beModels.length; i++) {
