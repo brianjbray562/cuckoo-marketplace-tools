@@ -2629,7 +2629,6 @@ function AppInner() {
       }
       if (merged.amazon_audit?.suggested_title) {
         merged.amazon_audit.suggested_char_count = merged.amazon_audit.suggested_title.length;
-        merged.amazon_audit.suggested_char_count = st.length;
       }
 
       // Validation: instant deterministic checks (no API call)
