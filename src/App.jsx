@@ -4,6 +4,23 @@ const MAROON = "#6B1C23";
 
 const CHAR_LIMITS = { amazon: 200, walmart: 150, target: 150, bestbuy: 120, wayfair: 150, kohls: 150, macys: 150, bloomingdales: 120, tiktokshop: 200, weee: 120 };
 
+// Optimal title length ranges per marketplace (soft target, not hard limit).
+// {min, max} — validation warns if title falls outside this range.
+// These ranges reflect actual marketplace conversion behavior and best practice,
+// not just the hard char cap.
+const TITLE_OPTIMAL = {
+  amazon: { min: 175, max: 200 },        // long, keyword-rich
+  walmart: { min: 60, max: 90 },         // mobile-first, target ~75
+  target: { min: 80, max: 120 },         // shelf-tag, target ~100
+  bestbuy: { min: 90, max: 120 },        // tech-spec, full
+  wayfair: { min: 100, max: 150 },       // home/lifestyle, descriptive
+  kohls: { min: 80, max: 120 },          // family-friendly, polished
+  macys: { min: 80, max: 120 },          // department-store, polished
+  bloomingdales: { min: 60, max: 100 },  // luxury, restrained
+  tiktokshop: { min: 80, max: 140 },     // social, scannable
+  weee: { min: 70, max: 110 }            // community, clean
+};
+
 const MARKETPLACES = {
   amazon: { name: "Amazon", badge: "amz", accent: "#FF9900", confidence: "official", confidenceLabel: "Official Docs",
     sources: [
@@ -819,6 +836,19 @@ function classifyProductTier(product) {
   return "basic";
 }
 
+// Determine bullet count by exact product type from PRODUCT_DB.
+// Mapping (per merchandising team):
+//   5 bullets: Basic, Commercial (handles "Commerical" typo too)
+//   6 bullets: Micom, Pressure, Twin Pressure, Induction + Non Pressure
+//   7 bullets: Induction + Pressure, Twin Pressure + Induction
+function getBulletCountForType(productType) {
+  const t = (productType || "").trim();
+  if (t === "Basic" || t === "Commerical" || t === "Commercial") return 5;
+  if (t === "Induction + Pressure" || t === "Twin Pressure + Induction") return 7;
+  // Default: Micom, Pressure, Twin Pressure, Induction + Non Pressure, anything else
+  return 6;
+}
+
 // Extract hero technology keywords for a product (used for premium-tech validation)
 function getHeroTechKeywords(product) {
   if (!product) return [];
@@ -1084,10 +1114,19 @@ function validateListingOutput(titles, bullets, keywords, product) {
         if (conv.char_count !== actual) {
           conv.char_count = actual;
         }
-        // Check marketplace char limit
+        // Check marketplace hard char limit
         const limit = CHAR_LIMITS[key];
         if (limit && actual > limit) {
-          warnings.push("CHAR_LIMIT: " + key + " title is " + actual + " chars (limit " + limit + ")");
+          warnings.push("CHAR_LIMIT: " + key + " title is " + actual + " chars (hard limit " + limit + ")");
+        }
+        // Check marketplace optimal range (soft warning)
+        const optimal = TITLE_OPTIMAL[key];
+        if (optimal && actual <= limit) {
+          if (actual < optimal.min) {
+            warnings.push("TITLE_SHORT: " + key + " title is " + actual + " chars (below optimal " + optimal.min + "-" + optimal.max + ")");
+          } else if (actual > optimal.max) {
+            warnings.push("TITLE_LONG: " + key + " title is " + actual + " chars (above optimal " + optimal.min + "-" + optimal.max + ")");
+          }
         }
       }
     }
@@ -1109,6 +1148,14 @@ function validateListingOutput(titles, bullets, keywords, product) {
       }
       if (len < 120) {
         warnings.push("BULLET_SHORT: Bullet " + (i + 1) + " is " + len + " chars — may be too thin");
+      }
+    }
+    // Batch-level: if more than half of bullets are under 150 chars, the set is undersized
+    if (bulletCharCounts.length > 0) {
+      const undersized = bulletCharCounts.filter(c => c < 150).length;
+      if (undersized > bulletCharCounts.length / 2) {
+        const avg = Math.round(bulletCharCounts.reduce((a, b) => a + b, 0) / bulletCharCounts.length);
+        warnings.push("BULLET_BATCH_SHORT: " + undersized + "/" + bulletCharCounts.length + " bullets under 150 chars (avg " + avg + ") — target is 170-200 per bullet");
       }
     }
   }
@@ -2383,8 +2430,8 @@ function AppInner() {
         // Bullets
         setBeProgress({ current: i + 1, total: beModels.length, sku, step: "bullets" });
         // Auto-optimize bullet count by tier: basic=5, mid=6, premium=7
-        const autoTier = classifyProductTier(product);
-        const autoBulletCount = autoTier === "premium" ? 7 : autoTier === "mid" ? 6 : 5;
+        // Bullet count is determined by exact product type per merchandising mapping
+        const autoBulletCount = getBulletCountForType(product?.type);
         const bpMsg = buildBulletUserMessage(product, sku, amazonTitle, autoBulletCount, liveSearchData);
         const bullets = await callApi(BULLET_SYSTEM_PROMPT, bpMsg, 2000, 0.4);
         // Keywords
@@ -2582,7 +2629,6 @@ function AppInner() {
       }
       if (merged.amazon_audit?.suggested_title) {
         merged.amazon_audit.suggested_char_count = merged.amazon_audit.suggested_title.length;
-        merged.amazon_audit.suggested_char_count = st.length;
       }
 
       // Validation: instant deterministic checks (no API call)
@@ -3075,13 +3121,13 @@ function AppInner() {
           </div>
         </div>
 
-        {/* Bullet Count — auto-optimized per product tier */}
+        {/* Bullet Count — auto-optimized per product type */}
         <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Bullet Count {"\u00B7"} Auto-optimized per product</div>
-          <div style={{ fontSize: 11, color: "#666", lineHeight: 1.6 }}>
-            <span style={{ display: "inline-block", marginRight: 16 }}><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>Basic</span> <span style={{ color: "#888" }}>{"\u2192"} 5 bullets</span></span>
-            <span style={{ display: "inline-block", marginRight: 16 }}><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>Mid</span> <span style={{ color: "#888" }}>{"\u2192"} 6 bullets</span></span>
-            <span style={{ display: "inline-block" }}><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>Premium</span> <span style={{ color: "#888" }}>{"\u2192"} 7 bullets</span></span>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Bullet Count {"\u00B7"} Auto-optimized per product type</div>
+          <div style={{ fontSize: 11, color: "#666", lineHeight: 1.7 }}>
+            <div><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>5 bullets</span> <span style={{ color: "#888" }}>{"\u2192"} Basic, Commercial</span></div>
+            <div><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>6 bullets</span> <span style={{ color: "#888" }}>{"\u2192"} Micom, Pressure, Twin Pressure, Induction (Non-Pressure)</span></div>
+            <div><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>7 bullets</span> <span style={{ color: "#888" }}>{"\u2192"} Induction + Pressure, Twin Pressure + Induction</span></div>
           </div>
         </div>
 
