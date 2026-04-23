@@ -1,0 +1,4932 @@
+import React, { useState, useCallback, useRef, useEffect, useMemo, memo } from "react";
+
+import {
+  CHAR_LIMITS,
+  TITLE_OPTIMAL,
+  VALID_PRODUCT_CLASSES,
+  classifyProductTier,
+  getBulletCountForType,
+  getHeroTechKeywords,
+  hasBadCupCount,
+  ensureModelNumberInTitles,
+  normalizeTitleTech,
+  normalizeCapacityInTitles,
+  removePuffery,
+  unifyAmazonTitle,
+  enforceStainlessInnerPot,
+  normalizeCommaAfterCapacity,
+  validateListingOutput,
+  // Chunk A: canonical core + marketplace facets + descriptor diversification
+  runFullTitlePipeline,
+  resampleInvalidDescriptors,
+  // Chunk B: bullet 1 heading rotation + tier-differentiated prompts
+  selectBulletOneHeading,
+  createBulletHeadingSession,
+  getBulletPromptForTier,
+} from "./lib/title-processing.js";
+
+
+const MAROON = "#6B1C23";
+const MARKETPLACES = {
+  amazon: { name: "Amazon", badge: "amz", accent: "#FF9900", confidence: "official", confidenceLabel: "Official Docs",
+    sources: [
+      { title: "Amazon Seller Central \u2014 Product Title Requirements (Official, Jan 2025)", url: "https://sellercentral.amazon.com/help/hub/reference/external/GYTR6SYGFA5E3EQC" },
+      { title: "Search Engine Land \u2014 Amazon Title Policy: Key Changes & Implementation (Robyn Johnson, Marketplace Blueprint)", url: "https://searchengineland.com/amazon-title-policy-update-2025-450485" },
+      { title: "Carbon6/SellerAssist \u2014 New Amazon Product Title Requirements 2025", url: "https://www.carbon6.io/blog/new-amazon-product-title-requirements-2025/" },
+      { title: "eComEngine/SellerPulse \u2014 Navigating Amazon\u2019s Updated Product Title Guidelines (updated Jan 2026)", url: "https://www.ecomengine.com/blog/amazon-product-title-guidelines" },
+      { title: "Ecomtent \u2014 Amazon 2025 Title Requirements & COSMO/RUFUS Context", url: "https://www.ecomtent.ai/blog-page/amazons-2025-title-requirements-what-sellers-need-to-know" },
+      { title: "Amalytix \u2014 Amazon Product Title Guidelines (with Title Checker Tool)", url: "https://www.amalytix.com/en/knowledge/seo/amazon-product-title/" },
+    ],
+    guidelines: "Amazon Title Optimization (Search-Heavy Family):\n- Hard limit: 200 chars. Title Case.\n- Prohibited: !, $, ?, _, {, }, ^. Same word max twice. No promo phrases.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — do not change this base structure.\n- Descriptor layer: After the core block, build the strongest possible title. Use as much of the 200-char limit as is valuable and natural. Include search synonyms (Rice Maker, Rice Steamer) and verified features. Do not leave significant space unused when strong differentiators can be added cleanly. Do not add filler.\n\nAMAZON KEYWORD DATA (exact-match when product matches — obey KEYWORD RESTRICTIONS):\nHIGH: rice cooker, cuckoo rice cooker, rice maker, stainless steel rice cooker (only if SS inner pot), korean rice cooker (only if made in Korea), rice steamer\nMEDIUM: pressure rice cooker (only CRP-), rice warmer, induction rice cooker (only IH), cuckoo pressure rice cooker (only CRP-)\nSIZE: rice cooker 6 cup, rice cooker 10 cup, rice cooker 4 cup, 3 cup rice cooker\nFEATURE: nonstick inner pot, stainless steel inner pot (only if SS), keep warm, delay timer, steamer basket, multi cooker\nNEVER include keywords that violate KEYWORD RESTRICTIONS."
+  },
+  walmart: { name: "Walmart", badge: "W", accent: "#0071CE", confidence: "official", confidenceLabel: "Official Docs",
+    sources: [
+      { title: "Walmart Marketplace Learn \u2014 Product Details Policy (Official, Dec 2025)", url: "https://marketplacelearn.walmart.com/guides/Item%20setup/Item%20content,%20imagery,%20and%20media/Product-Detail-Page:-overview" },
+      { title: "Walmart Marketplace Learn \u2014 Content Standards & Keyword Optimization (Official)", url: "https://marketplacelearn.walmart.com/guides/Getting%20started/Getting%20ready%20to%20sell/How-to-update-content:-Overview" },
+      { title: "Brandwoven \u2014 Walmart Listing SEO: Mobile vs Desktop (Jan 2026)", url: "https://gobrandwoven.com/resources/articles/walmart-listing-copywriting-seo-optimization-on-mobile-vs-desktop/" },
+      { title: "GoAura \u2014 How to Write High-Converting Walmart Product Titles", url: "https://goaura.com/blog/how-to-write-high-converting-walmart-product-titles-and-descriptions" },
+      { title: "Channable \u2014 Walmart Product Listing: Beginner\u2019s Guide & Best Practices", url: "https://www.channable.com/blog/walmart-product-listing" },
+    ],
+    guidelines: "Walmart (Search-Heavy Family): Target ~75 chars for mobile. Hard cap 150 chars. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep this intact. Never sacrifice core block or model number to hit 75.\n- Descriptor layer: After the core block, add exactly ONE high-value differentiator. Choose the single best from: inner pot/material, OR one cooking/performance cue, OR one convenience cue. Do NOT add more than one.\n- If the core block + model + one differentiator exceeds 75 chars, that is acceptable — stay under 150.\n- No special symbols, promo, or marketplace refs."
+  },
+  target: { name: "Target", badge: "TGT", accent: "#CC0000", confidence: "official", confidenceLabel: "Official Docs",
+    sources: [
+      { title: "Zentail Help Center \u2014 Requirements for Selling on Target+ (Official Checklist)", url: "https://help.zentail.com/en/articles/8615160-requirements-for-selling-on-target" },
+      { title: "GoFlow \u2014 Target Plus Listings Guide (Title 2-100 chars)", url: "https://goflow.com/docs/listings/channels/target" },
+      { title: "Feedonomics \u2014 Selling on Target Plus Successfully (2025)", url: "https://feedonomics.com/blog/selling-on-target/" },
+      { title: "ChannelEngine \u2014 Target Plus: Marketplace Guide (Jan 2026)", url: "https://www.channelengine.com/en/blog/selling-on-target-plus" },
+      { title: "eComClips \u2014 Sell on Target Plus with ChannelAdvisor (Title Requirements)", url: "https://ecomclips.com/blog/sell-on-target-plus-marketplace-target-with-channeladvisor/" },
+    ],
+    guidelines: "Target (Retail Shelf Family): 100 chars recommended (hard limit 150). Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep this intact.\n- Descriptor layer: One clean consumer benefit — material or color. Shelf-tag tone. No feature stacking."
+  },
+  bestbuy: { name: "Best Buy", badge: "BB", accent: "#0046BE", confidence: "limited", confidenceLabel: "Best Practices",
+    sources: [
+      { title: "Best Buy \u2014 Marketplace Program Policies (Official, Apr 2025)", url: "https://partners.bestbuy.com/documents/d/guest/04012025v001-marketplace-program-policies" },
+      { title: "Best Buy \u2014 Marketplace Standard Terms (Official, Apr 2025)", url: "https://partners.bestbuy.com/documents/d/guest/04012025v001-marketplace-standard-terms" },
+      { title: "Best Buy Corporate \u2014 Digital Marketplace Launch Announcement (Aug 2025)", url: "https://corporate.bestbuy.com/2025/marketplace/" },
+      { title: "ChannelEngine \u2014 Best Buy US Marketplace Guide (120-char title limit)", url: "https://support.channelengine.com/hc/en-us/articles/31873642736925" },
+      { title: "eDesk \u2014 Best Buy's Mirakl-Powered Marketplace (2026)", url: "https://www.edesk.com/blog/mirakl-best-buy-marketplace/" },
+    ],
+    guidelines: "Best Buy (Technical/Spec Family): 120 chars max. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep this intact. Model number especially useful here.\n- Descriptor layer: One specific technical spec — wattage, mode count, or heating detail. No puffery."
+  },
+  wayfair: { name: "Wayfair", badge: "WF", accent: "#7B2D8E", confidence: "official", confidenceLabel: "Official Docs",
+    sources: [
+      { title: "Wayfair \u2014 Optimize Products (Official Seller Portal)", url: "https://sell.wayfair.com/start-optimize-products" },
+      { title: "Wayfair \u2014 Adding Assortment (Official Seller Portal)", url: "https://sell.wayfair.com/start-adding-assortment" },
+      { title: "Linnworks \u2014 Wayfair Marketplace: A Seller\u2019s Guide to Success", url: "https://www.linnworks.com/blog/wayfair-marketplace-ultimate-sellers-guide/" },
+      { title: "Priceva \u2014 Selling on Wayfair in 2025: Complete Guide", url: "https://priceva.com/blog/How-to-Sell-on-wayfair-marketplace" },
+      { title: "Salsify \u2014 How to Sell on Wayfair (150-char max)", url: "https://www.salsify.com/blog/what-does-it-take-to-win-on-wayfair-and-overstock" },
+    ],
+    guidelines: "Wayfair (Home/Department-Store Family): 150 chars max. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: One polished material or finish cue (e.g. Nonstick Inner Pot, Stainless Steel). Home-focused tone. No puffery."
+  },
+  kohls: { name: "Kohl's", badge: "K", accent: "#5C2D91", confidence: "limited", confidenceLabel: "Best Practices",
+    sources: [
+      { title: "Kohl's \u2014 Marketplace Certified Partners", url: "https://www.kohls.com/feature/certifiedpartners.jsp" },
+      { title: "Mirakl \u2014 Marketplace Listing Best Practices", url: "https://www.mirakl.com/resources/marketplace-listing-best-practices" },
+      { title: "Pattern \u2014 How to Sell on Kohl's Marketplace (2025)", url: "https://pattern.com/blog/kohls-marketplace/" },
+    ],
+    guidelines: "Kohl's (Home/Department-Store Family): 150 chars max. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: One ease-of-use or convenience cue (e.g. Easy Clean, Auto Clean). Polished department-store tone. No puffery."
+  },
+  macys: { name: "Macy's", badge: "M", accent: "#E21A2C", confidence: "partial", confidenceLabel: "Partial Docs",
+    sources: [
+      { title: "Macy's Marketplace \u2014 FAQ & Requirements", url: "https://marketplace.macys.com/faq.html" },
+      { title: "ChannelEngine \u2014 Macy's Guide", url: "https://support.channelengine.com/hc/en-us/articles/9000052801053" },
+    ],
+    guidelines: "Macy's (Home/Department-Store Family): ~150 chars. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: One quality or material cue (e.g. Nonstick Inner Pot). Polished department-store tone. No puffery."
+  },
+  bloomingdales: { name: "Bloomingdale's", badge: "B", accent: "#1a1a1a", confidence: "limited", confidenceLabel: "Best Practices",
+    sources: [
+      { title: "Macy's Marketplace FAQ (shared Mirakl platform)", url: "https://marketplace.macys.com/faq.html" },
+      { title: "Mirakl \u2014 Marketplace Listing Best Practices", url: "https://www.mirakl.com/resources/marketplace-listing-best-practices" },
+      { title: "ChannelEngine \u2014 Bloomingdale's Marketplace Guide", url: "https://support.channelengine.com/hc/en-us/articles/9000052801053" },
+    ],
+    guidelines: "Bloomingdale's (Home/Department-Store Family — most restrained): 120 chars max.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: One signal only — the single most relevant material or finish word. Most restrained marketplace. No puffery, no feature stacking."
+  },
+  tiktokshop: { name: "TikTok Shop", badge: "TT", accent: "#010101", confidence: "official", confidenceLabel: "Official Docs",
+    sources: [
+      { title: "TikTok Seller Center \u2014 Product Listing Policy (Official)", url: "https://seller-us.tiktok.com/university/essay?knowledge_id=3196690250417921" },
+      { title: "TikTok Seller Center \u2014 Product Listing: What You Need to Know (Official)", url: "https://seller-us.tiktok.com/university/essay?knowledge_id=7073362639816491" },
+      { title: "TikTok Seller Center \u2014 Product Detail Pages & Listing Quality (Official)", url: "https://seller-us.tiktok.com/university/essay?knowledge_id=481891871868714" },
+      { title: "TikTok Seller Center \u2014 Content Policy (Official)", url: "https://seller-us.tiktok.com/university/essay?knowledge_id=6837891779151617" },
+      { title: "TikTok Seller Center \u2014 Policy Pulse (Jan 2026)", url: "https://seller-us.tiktok.com/university/essay?knowledge_id=6747273381791534" },
+    ],
+    guidelines: "TikTok Shop (Retail Shelf Family): 25-200 chars. Title Case.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: One snappy consumer benefit that confirms what the shopper saw in a video. No clickbait, no feature stacking."
+  },
+  weee: { name: "Weee!", badge: "W!", accent: "#1DB954", confidence: "limited", confidenceLabel: "Best Practices",
+    sources: [
+      { title: "Weee! \u2014 Sell on Weee!", url: "https://www.sayweee.com/company/sell-on-weee" },
+      { title: "Weee! \u2014 Global+ Seller Onboarding", url: "https://www.sayweee.com/en/company/vendor/onboarding" },
+      { title: "Weee! \u2014 About: Asian & Hispanic Grocery Delivery", url: "https://www.sayweee.com/en/about" },
+    ],
+    guidelines: "Weee! (Retail Shelf Family): 120 chars max. Asian-American shoppers.\n- Core block: CUCKOO [Class/Tech] Rice Cooker [Capacity] ([Model]) — keep intact.\n- Descriptor layer: One practical consumer benefit. Community-focused, culturally relevant.\n- 'Korean Rice Cooker' only if made in Korea. No feature stacking."
+  }
+};
+
+const SYSTEM_PROMPT = `You are a senior ecommerce listing specialist at CUCKOO Electronics America. Premium Korean brand: rice cookers, water purifiers, air purifiers, bidets, kitchen appliances.
+
+CUCKOO TITLE RULES (apply to ALL marketplaces):
+
+PRIORITY (tight char limits — drop from bottom first):
+P1 (NEVER DROP): Brand "CUCKOO" + Cup capacity with Uncooked/Cooked
+P2 (NEVER DROP): Technology/type (include dual technologies when both present)
+P3 (drop first): Model number in parentheses
+
+RULE 1 — Every cup capacity MUST have "Uncooked" or "Cooked" (e.g. "6-Cup Uncooked"). Hyphen required. NEVER bare "6-Cup" without qualifier. Default Uncooked. Include both if known (e.g. "6-Cup Uncooked / 12-Cup Cooked").
+RULE 2 — Order: CUCKOO [Tech] Rice Cooker [Cup Size], [Features], [Color] ([Model]). No "& Warmer". Cup size AFTER "Rice Cooker". Dual tech: use "Twin Pressure Induction Heating" — never use "+" or "with" between technologies. BOTH must appear after CUCKOO in every title — drop model number before dropping tech. Valid types: Basic, Micom, Pressure, Twin Pressure, Induction Heating Pressure, Electric Heating Pressure, Twin Pressure Induction Heating. Do NOT use "Fuzzy Logic" as a type — use "Micom" instead. The verified product class (Basic, Micom, Pressure, etc.) must remain in the title unless the hard character limit makes it absolutely impossible.
+RULE 3 — Model numbers in parentheses, placed LAST. Remove entirely if over char limit — first thing to sacrifice.
+RULE 4 — Flowing titles, not keyword lists. "with" connects features to the product, "&" within groups, 3-4 commas max. Do NOT use "with" between dual technologies — write "Twin Pressure Induction Heating" as one phrase. Ref: "CUCKOO Twin Pressure Induction Heating Rice Cooker 6-Cup Uncooked / 12-Cup Cooked, 20 Menu Modes with Voice Guide, Auto Clean, Rice Maker & Pressure Cooker (CRP-LHTR0609FW)"
+RULE 5 — ONLY use features, cooking modes, or cooking mode names that are listed in the VERIFIED PRODUCT DATA. Never invent, infer, or extrapolate menu modes. If the product data shows no cooking modes or mode names, you cannot claim dedicated programs for quinoa, oatmeal, porridge, multi-grain, brown rice, or any specific mode. Do not use "Heating Plate Technology" as a title feature or selling point — it is not a differentiator.
+
+AMAZON TITLE LENGTH REQUIREMENT (critical):
+Amazon hard limit: 200 chars. TARGET 180-195 characters. You are underusing Amazon space if the title is under 175 chars and there are additional verified features available to include. Use search synonyms like "Rice Maker", "Rice Steamer", and relevant verified feature callouts to reach the target length. Do NOT pad with filler. Do NOT leave 20+ chars unused when strong verified differentiators fit cleanly.
+
+GENERAL RICE COOKER CAPABILITIES (approved everyday-use language, always allowed for any rice cooker):
+Rice cookers are water-based cooking appliances. The following everyday uses are approved for title descriptor language and bullet language for ANY rice cooker, regardless of cooking mode names:
+- Rice (always)
+- Everyday grains (general term)
+- Oatmeal, quinoa, mixed grains (as general water-based uses)
+- Porridge, soups, one-pot meals (as general water-based uses)
+
+Approved short title descriptors for everyday framing (optional, use only if space allows after the core block):
+- "for Everyday Rice & Grains"
+- "for Rice, Grains & Oatmeal"
+- "for Daily Rice & Grain Cooking"
+
+Use at most ONE concise everyday-use descriptor per title, not a list of foods.
+
+EQUIPMENT-DEPENDENT USES (only claim when verified in product features):
+- Steaming vegetables / fish / dumplings / eggs: ONLY if "Steam Tray" or "Steamer Basket" is in the product features array
+- Water Capture benefits: ONLY if "Water Capture" is in features
+
+DEDICATED COOKING PROGRAMS (strongest claims, only when verified in cookingModeNames):
+Specific mode claims like "dedicated quinoa mode", "steel-cut oats program", "GABA brown rice" can ONLY be made when that exact mode name appears in the product's cookingModeNames. If cookingModeNames is empty or does not contain the mode, you cannot claim that dedicated program exists.
+
+KEYWORD RESTRICTIONS (all marketplaces):
+- 'small'/'mini'/'compact': only for 3-cup or smaller
+- 'pressure': only for CRP- models
+- 'induction': only for IH models
+- 'Korean': ONLY allowed as the exact phrase 'Korean Rice Cooker' (never standalone 'Korean'). Only if verified made in Korea.
+- 'Stainless Steel': only if inner pot IS stainless steel
+- 'low carb': only if product has that feature
+- 'Fuzzy Logic': do NOT use as a product type or heating method. Use 'Micom' instead. Never in titles.
+- 'Heating Plate Technology': never use in titles or bullets. Not a differentiator.
+- 'Easy Clean Design' / 'Classic Finish' / 'Premium Craftsmanship' / 'Trusted Quality': generic puffery, do not use.
+
+MARKETPLACE DESCRIPTOR FACETS (STRICT — each marketplace must use a specific descriptor facet):
+The canonical core of every title is LOCKED and identical across marketplaces: "CUCKOO [Class] Rice Cooker [Capacity], [Color] ([SKU])". Do NOT alter the core. Your only job is to choose the descriptor that sits AFTER the capacity and BEFORE the color comma, using the facet below for that marketplace.
+
+STRICT FACET RULES (titles will be auto-rejected and resampled if the descriptor does not match the facet):
+
+- **amazon** — facet: search_heavy. STACK 2+ of: rice maker, rice steamer, cooking modes, inner pot, auto clean, voice guide, turbo mode, preset timer, water capture, steam tray, keep warm, gaba, multi-cook, pressure cooking, induction heating. Maximize the 200-char limit.
+- **walmart** — facet: primary_benefit. ONE of: with Auto Clean / with Voice Guide / with Turbo Mode / with Preset Timer / with Water Capture / with Keep Warm Function / with Cooking Modes / with Steam Tray / with Steam Plate / with Nonstick Inner Pot / with Stainless Steel Inner Pot. Pick ONLY ONE.
+- **target** — facet: lifestyle. ONE of: for Everyday Rice & Grains / for Rice & Grains / for Family Meal Prep / for Daily Cooking / for Everyday Family Meals. Lifestyle framing, not technical.
+- **bestbuy** — facet: tech_spec. ONE of: with N Cooking Modes / with N Menu Modes / with Induction Heating / with 13-Hour Preset / with Fuzzy Logic / with Microcomputer Control. Must be a concrete spec, NOT puffery. Numbered specs like "with 10 Cooking Modes" are ideal.
+- **wayfair** — facet: material_design. ONE of: with Nonstick Inner Pot / with Stainless Steel Inner Pot / with Diamond Coating / with X-Wall Inner Pot / with Ceramic Inner Pot. Material, finish, or coating — not features.
+- **kohls** — facet: family_benefit. ONE of: with Auto Clean / with Easy Clean / with Keep Warm / with Preset Timer / with Voice Guide / with One-Touch Operation / with Automatic Timer. Family convenience framing.
+- **macys** — facet: polished_benefit. ONE of: with Nonstick Inner Pot / with Stainless Steel Inner Pot / with Preset Timer / with Auto Clean / with Voice Guide / with Steam Plate / with N Cooking Modes. Polished quality/benefit tone.
+- **bloomingdales** — facet: MINIMAL. NO DESCRIPTOR. Title must be ONLY the canonical core + color + SKU. Example: "CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked, White (CRP-LHTAR0609FW)". Do NOT add any "with X" or "for X" — leave the middle slot empty.
+- **tiktokshop** — facet: viral_hook. ONE of: with Turbo Mode / with Voice Guide / with Auto Clean / with One-Touch Cooking / with Steam Plate / with GABA Rice Mode / with Multi-Cook. Scroll-stopping, conversational.
+- **weee** — facet: practical_cultural. ONE of: for Multi-Grain & GABA Rice / for Sticky Rice & Porridge / for Brown Rice & Grains / for Rice & Grains / for Jasmine & Basmati Rice / for Scorched Rice (Nurungji). Culturally relevant to Asian-American home cooking.
+
+DESCRIPTORS MUST BE UNIQUE ACROSS MARKETPLACES (except amazon and bloomingdales). If you would pick the same descriptor for two marketplaces, swap one to a different facet-matching option. Post-processing will enforce this — any duplicates will be resampled, costing API tokens and time.
+
+EXAMPLE (CRP-LHTAR0609FW, Twin Pressure + Induction, Full Stainless, 6/12 cup, White):
+Amazon: "CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked, Stainless Steel Inner Pot Rice Maker with 21 Cooking Modes, Voice Guide, Auto Clean, Turbo Mode, Preset Timer, White (CRP-LHTAR0609FW)"
+Walmart: "CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked, Stainless Steel Inner Pot with Voice Guide, White (CRP-LHTAR0609FW)"
+Target: "CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked, Stainless Steel Inner Pot for Everyday Rice & Grains, White (CRP-LHTAR0609FW)"
+Best Buy: "CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked, Stainless Steel Inner Pot with 21 Cooking Modes, White (CRP-LHTAR0609FW)"
+Wayfair: "CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked with Stainless Steel Inner Pot, White (CRP-LHTAR0609FW)"
+Kohl's: "CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked, Stainless Steel Inner Pot with Auto Clean, White (CRP-LHTAR0609FW)"
+Macy's: "CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked, Stainless Steel Inner Pot with Preset Timer, White (CRP-LHTAR0609FW)"
+Bloomingdale's: "CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked, White (CRP-LHTAR0609FW)"
+TikTok Shop: "CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked with Turbo Mode, White (CRP-LHTAR0609FW)"
+Weee!: "CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked, Stainless Steel Inner Pot for Multi-Grain & GABA Rice, White (CRP-LHTAR0609FW)"
+
+TASK:
+1. Sparse titles: enrich from VERIFIED PRODUCT DATA.
+2. With Amazon title: audit SEO strength. Without (model-only): create optimized Amazon title from DB + keywords + rules. Score your own title; note in strengths it's newly generated; list what couldn't fit in improvements.
+3. Generate per marketplace guidelines + CUCKOO rules.
+4. Amazon: maximize 200 chars with all features. Others: efficient within limits, match marketplace tone. No keyword-stuffing non-Amazon.
+5. ALWAYS provide suggested_title in amazon_audit.
+6. SELF-CHECK before responding — verify EVERY title against ALL of these:
+   a) Every cup count has "Uncooked" or "Cooked" qualifier
+   b) Model number in parentheses at end (or omitted if over limit)
+   c) NO features or specs that are NOT in the product database — cross-check each feature you mention
+   d) NO keyword restriction violations (pressure/induction/Korean/Stainless Steel/small only where allowed)
+   e) NO "& Warmer" anywhere
+   f) NO "Fuzzy Logic" in any title
+   g) Every title is within its marketplace character limit
+   h) Title Case used consistently
+
+Respond ONLY in valid JSON:
+{"amazon_audit":{"score":<1-10>,"strengths":["..."],"improvements":["..."],"suggested_title":"always provide"},"conversions":{"<key>":{"title":"...","char_count":<n>,"changes":["..."]}}}`;
+
+// Category-specific rules appended to system prompt
+const CATEGORY_RULES = {
+  rice_cooker: `\nPRODUCT CATEGORY: Rice Cooker\nApply ALL CUCKOO TITLE RULES above. For Amazon: prioritize exact-matching high-volume keyword phrases within 200 chars. 'Rice Maker' and 'Rice Warmer' are high-volume synonyms — include naturally. NEVER use 'Fuzzy Logic' in any title — use 'Micom' for the product type instead. ONLY include features that exist in the VERIFIED PRODUCT DATA. See KEYWORD RESTRICTIONS in system prompt for all restrictions.`,
+  water_purifier: `\nPRODUCT CATEGORY: Water Purifier\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Purifier Line/Type] [Product Type] [Key Feature/Stage Count] [extras]\nCommon keywords: Water Purifier, Filtration, Reverse Osmosis, Alkaline, Mineral, Countertop, Under-Sink, Filter, Stage, Tankless, Self-Cleaning.`,
+  air_purifier: `\nPRODUCT CATEGORY: Air Purifier\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Product Line] Air Purifier [Coverage Area] [Key Feature] [extras]\nCommon keywords: Air Purifier, HEPA, True HEPA, Activated Carbon, Coverage, Sq Ft, Smart Sensor, Auto Mode, Sleep Mode, Allergen, Dust, Odor.`,
+  bidet: `\nPRODUCT CATEGORY: Bidet\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Product Line] Bidet [Seat Type] [Key Features] [extras]\nCommon keywords: Bidet, Bidet Seat, Elongated, Round, Heated Seat, Warm Water, Air Dryer, Deodorizer, Self-Cleaning Nozzle, Adjustable.`,
+  other: `\nPRODUCT CATEGORY: Other CUCKOO Product\nDo NOT apply rice-cooker-specific rules (cup size, Uncooked/Cooked, Twin Pressure, Induction Heating).\nTitle order: CUCKOO [Product Type] [Key Feature] [extras]\nApply general marketplace guidelines. Frontload brand "CUCKOO" always.`
+};
+
+// Product database: 48 verified rice cooker models (Source: Rice_Cooker_Categorization.xlsx, updated March 2026)
+// Fields: type, heating, pressure, cupSize, color, cookingModes, cookingModeNames, otherMenuModes, innerPot, features, asin
+const PRODUCT_DB = {
+"CR-0301C":{"type":"Basic","heating":"Heating Plate","pressure":false,"cupSize":"3 Cup Uncooked / 6 Cup Cooked","color":"White","cookingModes":"0","otherMenuModes":"0","innerPot":"Nonstick","features":[],"asin":"B0G5TQS5R8",mfg:"China",wattage:"425W",price:"$34.99"},
+"CR-0351FR":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"3 Cup Uncooked / 6 Cup Cooked","color":"Red","cookingModes":"5","cookingModeNames":["Glutinous/White","Turbo","Mixed/Brown","Porridge","Steam"],"otherMenuModes":"0","innerPot":"Nonstick","features":["Turbo Mode","Preset Timer (13 Hours)","Water Capture"],"asin":"B00CCVNX0O",mfg:"South Korea",cookingModeNames:"Glutinous/White, Turbo, Mixed/Brown, Porridge, Steam",wattage:"425W",dimensions:"11.5 x 8.9 x 8 in",price:"$109.99"},
+"CR-0375FG":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"3 Cup Uncooked / 6 Cup Cooked","color":"Gray","cookingModes":"8","cookingModeNames":["Glutinous/White","White Rice Quick","Multi Grain","Brown","Scorched Rice","Quinoa","Oatmeal","Multi Cook"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture"],"asin":"B0CKWGX2J6",mfg:"China",cookingModeNames:"Glutinous/White, White Rice Quick, Multi Grain, Brown, Scorched Rice, Quinoa, Oatmeal, Multi Cook",wattage:"425W",dimensions:"11.1 x 8 x 8 in",price:"$119.99"},
+"CR-0375FW":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"3 Cup Uncooked / 6 Cup Cooked","color":"White","cookingModes":"8","cookingModeNames":["Glutinous/White","White Rice Quick","Multi Grain","Brown","Scorched Rice","Quinoa","Oatmeal","Multi Cook"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture"],"asin":"B0B4MYBLZQ",mfg:"China",cookingModeNames:"Glutinous/White, White Rice Quick, Multi Grain, Brown, Scorched Rice, Quinoa, Oatmeal, Multi Cook",wattage:"425W",dimensions:"11.1 x 8 x 8 in",price:"$119.99"},
+"CR-0601C":{"type":"Basic","heating":"Heating Plate","pressure":false,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"0","otherMenuModes":"0","innerPot":"Nonstick","features":[],"asin":"B0FPYDZT52",mfg:"China",dimensions:"9 x 9.9 x 10.6 in",price:"$39.99"},
+"CR-0631F":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Silver","cookingModes":"6","cookingModeNames":["Glutinous/White","Mixed/Brown","GABA","Porridge","Steam","Slow Cook"],"otherMenuModes":"0","innerPot":"Nonstick","features":["Turbo Mode","Preset Timer (13 Hours)","Water Capture"],"asin":"B00D2CL37W",mfg:"South Korea",cookingModeNames:"Glutinous/White, Mixed/Brown, GABA, Porridge, Steam, Slow Cook",wattage:"580W",dimensions:"12.5 x 9.3 x 8.4 in",price:"$149.99"},
+"CR-0632F":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Pink","cookingModes":"6","cookingModeNames":["Glutinous/White","Multi Grain/Brown","GABA","Porridge","Multi Cook","Slow Cook"],"otherMenuModes":"0","innerPot":"Nonstick","features":["Turbo Mode","Preset Timer (13 Hours)","Water Capture"],"asin":"B0831RL6XK",mfg:"South Korea",cookingModeNames:"Glutinous/White, Multi Grain/Brown, GABA, Porridge, Multi Cook, Slow Cook",dimensions:"12.5 x 9.3 x 8.4 in",price:"$149.99"},
+"CR-0633F":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"6","cookingModeNames":["Glutinous/White","Multi Grain/Brown","GABA","Porridge","Multi Cook","Slow Cook"],"otherMenuModes":"0","innerPot":"Nonstick","features":["Turbo Mode","Preset Timer (13 Hours)","Water Capture"],"asin":"B0C363Y7HX",mfg:"South Korea",cookingModeNames:"Glutinous/White, Multi Grain/Brown, GABA, Porridge, Multi Cook, Slow Cook",wattage:"580W",dimensions:"12.5 x 9.3 x 8.4 in",price:"$149.99"},
+"CR-0641F":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"8","cookingModeNames":["White/Sushi","Quick","Brown/GABA","Quinoa","Stored Rice","Steel-Cut Oats","Porridge","Steam"],"otherMenuModes":"0","innerPot":"Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Steam Tray"],"asin":"B0CHG3HVJX",mfg:"South Korea",cookingModeNames:"White/Sushi, Quick, Brown/GABA, Quinoa, Stored Rice, Steel-Cut Oats, Porridge, Steam",wattage:"500W",dimensions:"12.5 x 9.5 x 8.5 in",price:"$149.99"},
+"CR-0655F":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Red","cookingModes":"7","cookingModeNames":["White/Sushi","Quick","Brown/GABA","Quinoa","Stored Rice","Steel-Cut Oats","Porridge","Steam"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture"],"asin":"B01MQWFGKG",mfg:"China",cookingModeNames:"White/Sushi, Quick, Brown/GABA, Quinoa, Stored Rice, Steel-Cut Oats, Porridge, Steam",wattage:"700W",dimensions:"13 x 9.4 x 8.7 in",price:"$139.99"},
+"CR-0661F":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"8","cookingModeNames":["White/Sushi","Quick","Brown/GABA","Quinoa","Stored Rice","Steel-Cut Oats","Porridge","Steam"],"otherMenuModes":"0","innerPot":"Nonstick","features":["Turbo Mode","Preset Timer (13 Hours)","Water Capture","Steam Tray"],"asin":"B0F51W2R91",mfg:"South Korea",dimensions:"12.4 x 9.3 x 8.4 in",price:"$169.99"},
+"CR-0671V":{"type":"Basic","heating":"Heating Plate","pressure":false,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"2","cookingModeNames":["Cook","Keep Warm"],"otherMenuModes":"0","innerPot":"Nonstick","features":[],"asin":"B01LYLW8P6",mfg:"China",cookingModeNames:"Cook, Keep Warm",wattage:"500W",dimensions:"10.4 x 10.2 x 11 in",price:"$89.99"},
+"CR-0675FG":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Gray","cookingModes":"9","cookingModeNames":["White Rice","White Rice Quick","Multi Grain","GABA Rice","Scorched Rice","Thick Porridge","Thin Porridge","Baby Food","Multi Cook"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture"],"asin":"B0B5B3QBV1",mfg:"China",cookingModeNames:"White Rice, White Rice Quick, Multi Grain, GABA Rice, Scorched Rice, Thick Porridge, Thin Porridge, Baby Food, Multi Cook",wattage:"1200W",dimensions:"12.8 x 9.4 x 8.5 in",price:"$139.99"},
+"CR-0675FW":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"9","cookingModeNames":["White Rice","White Rice Quick","Multi Grain","GABA Rice","Scorched Rice","Thick Porridge","Thin Porridge","Baby Food","Multi Cook"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture"],"asin":"B08WFNV82W",mfg:"China",wattage:"1200W",dimensions:"12.8 x 9.4 x 8.5 in",price:"$139.99"},
+"CR-0810F":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"8 Cup Uncooked / 16 Cup Cooked","color":"White","cookingModes":"7","cookingModeNames":["White Rice","GABA","Thick Porridge","Multi Cook","Soup","Cake","Baby Food"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Auto Clean","Preset Timer (4 Hours)","Water Capture"],"asin":"B0842DDJL4",mfg:"China",cookingModeNames:"White Rice, GABA, Thick Porridge, Multi Cook, Soup, Cake, Baby Food",wattage:"890W",dimensions:"14.8 x 11.4 x 9.4 in",price:"$119.99"},
+"CR-1020F":{"type":"Micom","heating":"Heating Plate","pressure":false,"cupSize":"10 Cup Uncooked / 20 Cup Cooked","color":"White","cookingModes":"14","cookingModeNames":["Glutinous/White","Turbo White Rice","Mixed","GABA","Scorched Rice","Thick Porridge","Thin Porridge","Soup","Soymilk","Yogurt","Baby Food","Slow Cook","Steam Cook","Multi Cook"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Preset Timer (12 Hours)","Water Capture","Steam Plate"],"asin":"B083GBLDF3",mfg:"China",cookingModeNames:"Glutinous/White, Turbo White Rice, Mixed, GABA, Scorched Rice, Thick Porridge, Thin Porridge, Soup, Soymilk, Yogurt, Baby Food, Slow Cook, Steam Cook, Multi Cook",wattage:"890W",dimensions:"14.9 x 11 x 10.1 in",price:"$149.99"},
+"CR-1095":{"type":"Basic","heating":"Heating Plate","pressure":false,"cupSize":"10 Cup Uncooked / 20 Cup Cooked","color":"White","cookingModes":"2","cookingModeNames":["Cook","Keep Warm"],"otherMenuModes":"0","innerPot":"Nonstick","features":["Water Capture","Steam Tray"],"asin":"B0CYNVF15J",mfg:"China",cookingModeNames:"Cook, Keep Warm",wattage:"700W",dimensions:"14 x 12 x 10.5 in",price:"$99.99"},
+"CR-3032":{"type":"Commerical","heating":"Heating Plate","pressure":false,"cupSize":"30 Cup Uncooked / 60 Cup Cooked","color":"Stainless","cookingModes":"3","cookingModeNames":["Cook","Steam","Warm"],"otherMenuModes":"0","innerPot":"Nonstick","features":["Water Capture"],"asin":"B00U1XN4L8",mfg:"South Korea",cookingModeNames:"Cook, Steam, Warm",wattage:"890W",dimensions:"15.4 x 18.5 x 15 in",price:"$299.99"},
+"CR-3055":{"type":"Commerical","heating":"Heating Plate","pressure":false,"cupSize":"30 Cup Uncooked / 60 Cup Cooked","color":"Stainless","cookingModes":"3","cookingModeNames":["Cook","Steam","Warm"],"otherMenuModes":"0","innerPot":"Nonstick","features":["Water Capture"],"asin":"B0CQTTC1VG",mfg:"China",cookingModeNames:"Cook, Steam, Warm",dimensions:"16.3 x 19.2 x 14.5 in",price:"$269.99"},
+"CR-HA0810FW":{"type":"Induction + Non Pressure","heating":"Induction Heat","pressure":false,"cupSize":"8 Cup Uncooked / 16 Cup Cooked","color":"White","cookingModes":"11","cookingModeNames":["White Rice","Mixed Rice","GABA Rice","Scorched Rice","Multicook","Porridge","Veggie Rice","Baby Food","Yogurt","Cake","Turbo White Rice"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Steam Tray"],"asin":"B0GJJDG93W",mfg:"China",cookingModeNames:"White Rice, Mixed Rice, GABA Rice, Scorched Rice, Multicook, Porridge, Veggie Rice, Baby Food, Yogurt, Cake, Turbo White Rice",wattage:"1084W",dimensions:"14.5 x 11 x 9.7 in",price:"$319.99"},
+"CR-HA0810FG":{"type":"Induction + Non Pressure","heating":"Induction Heat","pressure":false,"cupSize":"8 Cup Uncooked / 16 Cup Cooked","color":"Gray","cookingModes":"11","cookingModeNames":["White Rice","Mixed Rice","GABA Rice","Scorched Rice","Multicook","Porridge","Veggie Rice","Baby Food","Yogurt","Cake","Turbo White Rice"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Steam Tray"],"asin":"B0GJGDC36Z",mfg:"China",cookingModeNames:"White Rice, Mixed Rice, GABA Rice, Scorched Rice, Multicook, Porridge, Veggie Rice, Baby Food, Yogurt, Cake, Turbo White Rice",dimensions:"14.5 x 11 x 9.7 in",price:"$319.99"},
+"CRP-BHSS0609F":{"type":"Induction + Pressure","heating":"Induction Heat","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"15","cookingModeNames":["Glutinous","Turbo Glutinous Rice","High Heat Glutinous Rice","Mixed Rice","High Heat Mixed Rice","Turbo Mixed Rice","Soft Glutinous Rice","GABA Rice","High Heat GABA Rice","Black Bean","Nutritious Rice","Nu Rung Ji","Porridge","Multi Cook","Fermentation/Bread Baking"],"otherMenuModes":"1","innerPot":"Stainless Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B00NJ12KAU",mfg:"South Korea",cookingModeNames:"Glutinous, Turbo Glutinous Rice, High Heat Glutinous Rice, Mixed Rice, High Heat Mixed Rice, Turbo Mixed Rice, Soft Glutinous Rice, GABA Rice, High Heat GABA Rice, Black Bean, Nutritious Rice, Nu Rung Ji, Porridge, Multi Cook, Fermentation/Bread Baking",wattage:"800W",dimensions:"15 x 10 x 10.6 in",price:"$469.99"},
+"CRP-CHSS1009F":{"type":"Induction + Pressure","heating":"Induction Heat","pressure":true,"cupSize":"10 Cup Uncooked / 20 Cup Cooked","color":"Silver","cookingModes":"16","cookingModeNames":["Glutinous Rice","Turbo Glutinous Rice","High Heat Glutinous Rice","Mixed Rice","Turbo Mixed Rice","High Heat Mixed  Rice","Soft Glutinous","Sushi Rice","Brown Rice","High Heat Brown Rice","Nutritious Rice","High Heat Nutritious Rice","Chicken Soup","Porridge","Smart Menu","Ferment Bread/Bread Baking"],"otherMenuModes":"1","innerPot":"Stainless Nonstick Eco Curved","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B00NUB6ARI",mfg:"South Korea",cookingModeNames:"Glutinous Rice, Turbo Glutinous Rice, High Heat Glutinous Rice, Mixed Rice, Turbo Mixed Rice, High Heat Mixed Rice, Soft Glutinous, Sushi Rice, Brown Rice, High Heat Brown Rice, Nutritious Rice, High Heat Nutritious Rice, Chicken Soup, Porridge, Smart Menu, Ferment Bread/Bread Baking",wattage:"1455W",dimensions:"16 x 11.7 x 11.5 in",price:"$599.99"},
+"CRP-DHSR0609FD":{"type":"Induction + Pressure","heating":"Induction Heat","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Dark Gray","cookingModes":"15","cookingModeNames":["Glutinous Rice","Turbo Glutinous Rice","High Heat Glutinous Rice","Mixed Rice","Turbo Mixed Rice","High Heat Mixed Rice","Soft Glutinous","Brown Rice","High Heat Brown Rice","Nutritious Rice","High Heat Nutritious Rice","Black Bean Rice","Porridge","Ferment Bread/Bread Baking","Multi Cook"],"otherMenuModes":"1","innerPot":"Stainless Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B0721ZMW8K",mfg:"South Korea",cookingModeNames:"Glutinous Rice, Turbo Glutinous Rice, High Heat Glutinous Rice, Mixed Rice, Turbo Mixed Rice, High Heat Mixed Rice, Soft Glutinous, Brown Rice, High Heat Brown Rice, Nutritious Rice, High Heat Nutritious Rice, Black Bean Rice, Porridge, Ferment Bread/Bread Baking, Multi Cook",wattage:"120W",dimensions:"14.9 x 10.7 x 10.1 in",price:"$559.99"},
+"CRP-EHSS0309FG":{"type":"Induction + Pressure","heating":"Induction Heat","pressure":true,"cupSize":"3 Cup Uncooked / 6 Cup Cooked","color":"Gold","cookingModes":"16","cookingModeNames":["Glutinous Rice","High Heat Glutinous Rice","Turbo Glutinous Rice","Mixed Rice","High Heat Mixed Rice","Mixed Brown Rice","High Heat Mixed Brown Rice","Brown Rice","High Heat Brown Rice","GABA Rice","Porridge","Nu Rung Ji","Glutinous Rice, Mixed Rice","Brown Mixed Rice","GABA Mixed Rice","Porridge"],"otherMenuModes":"1","innerPot":"Stainless Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide"],"asin":"B072NFGLSV",mfg:"South Korea",cookingModeNames:"Glutinous Rice, High Heat Glutinous Rice, Turbo Glutinous Rice, Mixed Rice, High Heat Mixed Rice, Mixed Brown Rice, High Heat Mixed Brown Rice, Brown Rice, High Heat Brown Rice, GABA Rice, Porridge, Nu Rung Ji",wattage:"850W",dimensions:"12.6 x 9.1 x 8.6 in",price:"$399.99"},
+"CRP-HS0657FW":{"type":"Induction + Pressure","heating":"Induction Heat","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"11","cookingModeNames":["Glutinous (White) Rice","Sushi Rice","Mixed/Brown Rice","GABA Rice","Rice & Beans","Dried Rice","Nu Rung Ji","Nutritious Rice","Porridge","Multi Cook","Turbo Glutinous Rice"],"otherMenuModes":"1","innerPot":"Black Shine Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Steam Plate"],"asin":"B071H1FXFC",mfg:"South Korea",cookingModeNames:"Glutinous (White) Rice, Sushi Rice, Mixed/Brown Rice, GABA Rice, Rice & Beans, Dried Rice, Nu Rung Ji, Nutritious Rice, Porridge, Multi Cook, Turbo Glutinous Rice",price:"$389.99"},
+"CRP-HZ0683FR":{"type":"Induction + Pressure","heating":"Induction Heat","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Black","cookingModes":"18","cookingModeNames":["Glutinous (White) Rice","Turbo Glutinous Rice","Mega Heat Glutinous Rice","Mixed Rice","Mega Heat Mixed Rice","Turbo Mixed Rice","Sushi Rice","GABA Rice","Mega Heat GABA Rice","Black Bean","Nutritious Rice","Nu rung Ji","Porridge","Keep Warm","Reheat","Pressure Cook","Multi Cook","Fermentation/Bread Baking"],"otherMenuModes":"1","innerPot":"Black Shine Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B071KMD3GY",mfg:"South Korea",cookingModeNames:"Glutinous (White) Rice, Turbo Glutinous Rice, Mega Heat Glutinous Rice, Mixed Rice, Mega Heat Mixed Rice, Turbo Mixed Rice, Sushi Rice, GABA Rice, Mega Heat GABA Rice, Black Bean, Nutritious Rice, Nu Rung Ji, Porridge, Keep Warm, Reheat, Pressure Cook, Multi Cook, Fermentation/Bread Baking",wattage:"1207W",price:"$389.99"},
+"CRP-JHR0609F":{"type":"Induction + Pressure","heating":"Induction Heat","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Copper","cookingModes":"16","cookingModeNames":["White Rice","Turbo White Rice","High Heat White Rice","Mixed Rice","Turbo Mixed Rice","High Heat Mixed Rice","Sushi Rice","Scorched Rice","Brown Rice","High Heat Brown Rice","Super Grain","Nutritious Rice","Porridge (Thick)","Porridge (Thin)","Multi Cook","Baby Food"],"otherMenuModes":"1","innerPot":"Stainless Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B0BBP8X8GG",mfg:"South Korea",cookingModeNames:"White Rice, Turbo White Rice, High Heat White Rice, Mixed Rice, Turbo Mixed Rice, High Heat Mixed Rice, Sushi Rice, Scorched Rice, Brown Rice, High Heat Brown Rice, Super Grain, Nutritious Rice, Porridge (Thick), Porridge (Thin), Multi Cook, Baby Food",dimensions:"15 x 10.6 x 10.4 in",price:"$469.99"},
+"CRP-JHR1009F":{"type":"Induction + Pressure","heating":"Induction Heat","pressure":true,"cupSize":"10 Cup Uncooked / 20 Cup Cooked","color":"Copper","cookingModes":"16","cookingModeNames":["Glutinous Rice","Turbo Glutinous Rice","High Heat Glutinous Rice","Mixed Rice","Turbo Mixed  Rice","High Heat Mixed Rice","Sushi Rice","Nutritious Rice","Nu Rung Ji","Brown Rice","High Heat Brown Rice","Super Grain","Chicken Soup","Thick Porridge","Thin Porridge","Multicook Steam"],"otherMenuModes":"1","innerPot":"Black Shine Eco-Stainless Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B0BBPPLBWB",mfg:"South Korea",cookingModeNames:"Glutinous Rice, Turbo Glutinous Rice, High Heat Glutinous Rice, Mixed Rice, Turbo Mixed Rice, High Heat Mixed Rice, Sushi Rice, Nutritious Rice, Nu Rung Ji, Brown Rice, High Heat Brown Rice, Super Grain, Chicken Soup, Thick Porridge, Thin Porridge, Multicook Steam",wattage:"1000W",dimensions:"16.7 x 12 x 11.4 in",price:"$519.99"},
+"CRP-LHTAR0609FB":{"type":"Twin Pressure + Induction","heating":"Induction Heat","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Black","cookingModes":"19","cookingModeNames":["White Rice","Sticky White Rice","Savory White Rice","Veggie Rice","Multi Grain Rice","GABA Rice (3H)","GABA Rice (OH)","Non Press White Rice","Sticky Multi Grain Rice","Porridge","Non Pressure Steam","High Pressure Steam","Baby Food","Scorched Rice","Savory Multi Grain Rice","High Heat Sticky White Rice","High Heat Sticky Multi Grain Rice","Turbo White Rice","Turbo White Multi Grain Rice"],"otherMenuModes":"2","innerPot":"Full Stainless","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B0GPHBR65G",mfg:"South Korea",cookingModeNames:"White Rice, Sticky White Rice, Savory White Rice, Veggie Rice, Multi Grain Rice, GABA Rice (3H), GABA Rice (OH), Non Press White Rice, Sticky Multi Grain Rice, Porridge, Non Pressure Steam, High Pressure Steam, Baby Food, Scorched Rice, Savory Multi Grain Rice, High Heat Sticky White Rice, High Heat Sticky Multi Grain Rice, Turbo White Rice, Turbo White Multi Grain Rice",dimensions:"15.1 x 10.3 x 10.3 in",price:"$599.99"},
+"CRP-LHTAR0609FW":{"type":"Twin Pressure + Induction","heating":"Induction Heat","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"19","cookingModeNames":["White Rice","Sticky White Rice","Savory White Rice","High Heat Sticky White Rice","Multi Grain Rice","Sticky Multi Grain Rice","Savory Multi Grain Rice","High Heat Sticky Multi Grain Rice","Turbo White Rice","Turbo Multi Grain Rice","Baby Food","Non Pressure Steam","High Pressure Steam","Thin Porridge","Thick Porridge","Veggie Rice","Non-Pressure White Rice","Scorched Rice","Gaba Rice","Soak Clean"],"otherMenuModes":"2","innerPot":"Full Stainless","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B0GPGXCYBW",mfg:"South Korea",cookingModeNames:"White Rice, Sticky White Rice, Savory White Rice, High Heat Sticky White Rice, Multi Grain Rice, Sticky Multi Grain Rice, Savory Multi Grain Rice, High Heat Sticky Multi Grain Rice, Turbo White Rice, Turbo Multi Grain Rice, Baby Food, Non Pressure Steam, High Pressure Steam, Thin Porridge, Thick Porridge, Veggie Rice, Non-Pressure White Rice, Scorched Rice, Gaba Rice, Soak Clean",dimensions:"15.1 x 10.3 x 10.3 in",price:"$599.99"},
+"CRP-LHTR0609FW":{"type":"Twin Pressure + Induction","heating":"Induction Heat","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"20","cookingModeNames":["White Rice","Sticky White Rice","Savory White Rice","Veggie Rice","Multi Grain Rice","GABA Rice (3H)","GABA Rice (OH)","Non Pressure White Rice","Sticky Multi Grain Rice","Porridge","Non Pressure Steam","High Pressure Steam","Baby Food","Scorched Rice","Savory Multi Grain Rice","Easy Cook","High Heat Sticky White Rice","High Heat Sticky Multi Grain Rice","Turbo White Rice","Turbo Multi Grain Rice"],"otherMenuModes":"1","innerPot":"Black Shine Eco-Stainless Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B08DP4TGNN",mfg:"South Korea",cookingModeNames:"White Rice, Sticky White Rice, Savory White Rice, Veggie Rice, Multi Grain Rice, GABA Rice (3H), GABA Rice (OH), Non Pressure White Rice, Sticky Multi Grain Rice, Porridge, Non Pressure Steam, High Pressure Steam, Baby Food, Scorched Rice, Savory Multi Grain Rice, Easy Cook, High Heat Sticky White Rice, High Heat Sticky Multi Grain Rice, Turbo White Rice, Turbo Multi Grain Rice",wattage:"1090W",dimensions:"15.1 x 10.2 x 10.3 in",price:"$559.99"},
+"CRP-LHTR1009FW":{"type":"Twin Pressure + Induction","heating":"Induction Heat","pressure":true,"cupSize":"10 Cup Uncooked / 20 Cup Cooked","color":"White","cookingModes":"20","cookingModeNames":["White Rice","Sticky White Rice","Savory White Rice","Veggie Rice","Multi Grain Rice","GABA Rice (3H)","GABA Rice (OH)","Non Pressure White Rice","Sticky Multi Grain Rice","Porridge","Non Pressure Steam","High Pressure Steam","Baby Food","Scorched Rice","Savory Multi Grain Rice","Easy Cook","High Heat Sticky White Rice","High Heat Sticky Multi Grain Rice","Turbo White Rice","Turbo Multi Grain Rice"],"otherMenuModes":"1","innerPot":"Black Shine Eco-Stainless Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B08F25FVY6",mfg:"South Korea",cookingModeNames:"White Rice, Sticky White Rice, Savory White Rice, Veggie Rice, Multi Grain Rice, GABA Rice (3H), GABA Rice (OH), Non Pressure White Rice, Sticky Multi Grain Rice, Porridge, Non Pressure Steam, High Pressure Steam, Baby Food, Scorched Rice, Savory Multi Grain Rice, Easy Cook, High Heat Sticky White Rice, High Heat Sticky Multi Grain Rice, Turbo White Rice, Turbo Multi Grain Rice",wattage:"1455W",dimensions:"16.7 x 11.9 x 11.4 in",price:"$599.99"},
+"CRP-MHTR0309F":{"type":"Twin Pressure + Induction","heating":"Induction Heat","pressure":true,"cupSize":"3 Cup Uncooked / 6 Cup Cooked","color":"White","cookingModes":"12","cookingModeNames":["White Rice","High Heat White Rice","Super Turbo White Rice","Multi Grain Rice","High Heat Multi Grain Rice","Super Turbo Multi Grain Rice","GABA Rice (OH)","Non Pressure White Rice","Veggie Rice","Frozen Stored Rice","Baby Food","High Pressure Steam"],"otherMenuModes":"1","innerPot":"Stainless Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide"],"asin":"B09XPC3MNM",mfg:"South Korea",cookingModeNames:"White Rice, High Heat White Rice, Super Turbo White Rice, Multi Grain Rice, High Heat Multi Grain Rice, Super Turbo Multi Grain Rice, GABA Rice (OH), Non Pressure White Rice, Veggie Rice, Frozen Stored Rice, Baby Food, High Pressure Steam",wattage:"700W",dimensions:"13 x 9.4 x 9 in",price:"$449.99"},
+"CRP-N0681FV":{"type":"Pressure","heating":"Heating Plate","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Red","cookingModes":"12","cookingModeNames":["Glutinous","Turbo Glutinous Rice","Mixed Rice","Turbo Mixed Rice","Sushi Rice","GABA Rice","Black Bean","Nu Rung Ji","Nutritious Rice","Porridge","Multi Cook","Fermentation/Bread Baking"],"otherMenuModes":"1","innerPot":"Marble-Coated Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide"],"asin":"B072NFM485",mfg:"South Korea",cookingModeNames:"Glutinous, Turbo Glutinous Rice, Mixed Rice, Turbo Mixed Rice, Sushi Rice, GABA Rice, Black Bean, Nu Rung Ji, Nutritious Rice, Porridge, Multi Cook, Fermentation/Bread Baking"},
+"CRP-OHTR0609FW":{"type":"Twin Pressure + Induction","heating":"Induction Heat","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"13","cookingModeNames":["High Pressure White Rice","High Pressure Quick White Rice","Sticky Multi Grain Rice","Quick Sticky Multi Grain Rice","Sticky Brown Rice","Lentils","Non Pressure  White Rice","Quinoa","Frozen Stored Rice","Thick Porridge","Thin Porridge","Steel Cut Oats","Multi Cook Sous Vide"],"otherMenuModes":"1","innerPot":"Stainless Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Steam Plate","Voice Guide","Silent Pressure System"],"asin":"B0FXNYNHMX",mfg:"South Korea",cookingModeNames:"High Pressure White Rice, High Pressure Quick White Rice, Sticky Multi Grain Rice, Quick Sticky Multi Grain Rice, Sticky Brown Rice, Lentils, Non Pressure White Rice, Quinoa, Frozen Stored Rice, Thick Porridge, Thin Porridge, Steel Cut Oats, Multi Cook Sous Vide",wattage:"1090W",dimensions:"14.7 x 10.6 x 10.6 in",price:"$599.99"},
+"CRP-OHTR1009FW":{"type":"Twin Pressure + Induction","heating":"Induction Heat","pressure":true,"cupSize":"10 Cup Uncooked / 20 Cup Cooked","color":"White","cookingModes":"13","cookingModeNames":["High Pressure White Rice","High Pressure Quick White Rice","Sticky Multi Grain Rice","Quick Sticky Multi Grain Rice","Sticky Brown Rice","Lentils","Non Pressure White Rice","Quinoa","Frozen Stored Rice","Thick Porridge","Thin Porridge","Steel Cut Oats","Multi Cook Sous Vide"],"otherMenuModes":"1","innerPot":"Stainless Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Steam Plate","Voice Guide","Silent Pressure System"],"asin":"",mfg:"South Korea",cookingModeNames:"High Pressure White Rice, High Pressure Quick White Rice, Sticky Multi Grain Rice, Quick Sticky Multi Grain Rice, Sticky Brown Rice, Lentils, Non Pressure White Rice, Quinoa, Frozen Stored Rice, Thick Porridge, Thin Porridge, Steel Cut Oats, Multi Cook Sous Vide",wattage:"1295W",dimensions:"16.14 x 11.85 x 11.38 in"},
+"CRP-P0609S":{"type":"Pressure","heating":"Heating Plate","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Black","cookingModes":"12","cookingModeNames":["Glutinous Rice","High Heat Glutinous Rice","Turbo Glutinous Rice","Mixed Rice","High Heat Mixed Rice","Brown Rice","High Heat Brown Rice","GABA Rice","Thick Porridge","Thin Porridge","Nu Rung Ji","Multi Cook"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B01JRTZVVM",mfg:"South Korea",cookingModeNames:"Glutinous Rice, High Heat Glutinous Rice, Turbo Glutinous Rice, Mixed Rice, High Heat Mixed Rice, Brown Rice, High Heat Brown Rice, GABA Rice, Thick Porridge, Thin Porridge, Nu Rung Ji, Multi Cook",dimensions:"14 x 11 x 10.5 in",price:"$269.99"},
+"CRP-P1009SB":{"type":"Pressure","heating":"Heating Plate","pressure":true,"cupSize":"10 Cup Uncooked / 20 Cup Cooked","color":"Black","cookingModes":"13","cookingModeNames":["Glutinous Rice","High Heat Glutinous Rice","Turbo Glutinous Rice","Mixed Rice","High Heat Mixed Rice","Mixed Brown Rice","High Heat Mixed Brown Rice","Brown Rice","High Heat Brown Rice","GABA Rice","Porridge","Nu Rung Ji","Multi Cook"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B00XQEM2E4",mfg:"South Korea",cookingModeNames:"Glutinous Rice, High Heat Glutinous Rice, Turbo Glutinous Rice, Mixed Rice, High Heat Mixed Rice, Mixed Brown Rice, High Heat Mixed Brown Rice, Brown Rice, High Heat Brown Rice, GABA Rice, Porridge, Nu Rung Ji, Multi Cook",dimensions:"15.6 x 11.6 x 11.4 in",price:"$279.99"},
+"CRP-P1009SW":{"type":"Pressure","heating":"Heating Plate","pressure":false,"cupSize":"10 Cup Uncooked / 20 Cup Cooked","color":"White","cookingModes":"13","cookingModeNames":["Glutinous Rice","High Heat Glutinous Rice","Turbo Glutinous Rice","Mixed Rice","High Heat Mixed Rice","Mixed Brown Rice","High Heat Mixed Brown Rice","Brown Rice","High Heat Brown Rice","GABA Rice","Porridge","Nu Rung Ji","Multi Cook"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Preset Timer (13 Hours)","Water Capture","Steam Plate"],"asin":"B00XQEM2BM",mfg:"South Korea",cookingModeNames:"Glutinous Rice, High Heat Glutinous Rice, Turbo Glutinous Rice, Mixed Rice, High Heat Mixed Rice, Mixed Brown Rice, High Heat Mixed Brown Rice, Brown Rice, High Heat Brown Rice, GABA Rice, Porridge, Nu Rung Ji, Multi Cook",dimensions:"15.6 x 11.6 x 11.4 in",price:"$279.99"},
+"CRP-PHTR0609FS":{"type":"Twin Pressure + Induction","heating":"Induction Heat","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Silver","cookingModes":"12","cookingModeNames":["High Pressure White Rice","High-Pressure Quick White Rice","Sticky Multi-Grain Rice","Quick Sticky Multi-Grain Rice","Sticky Brown Rice","Non-pressure White Rice","Quinoa","Frozen Stored Rice","Thick Porridge","Thin Porridge","Steel Cut Oats","Multicook"],"otherMenuModes":"1","innerPot":"Stainless Nonstick","features":["Turbo Mode","Preset Timer (13 Hours)","Water Capture","Steam Plate","Voice Guide","Silent Pressure System"],"asin":"B0FXNXR46R",mfg:"South Korea",cookingModeNames:"High Pressure White Rice, High-Pressure Quick White Rice, Sticky Multi-Grain Rice, Quick Sticky Multi-Grain Rice, Sticky Brown Rice, Non-pressure White Rice, Quinoa, Frozen Stored Rice, Thick Porridge, Thin Porridge, Steel Cut Oats, Multicook",dimensions:"14.8 x 11 x 10.6 in",price:"$599.99"},
+"CRP-PK1001S":{"type":"Pressure","heating":"Heating Plate","pressure":true,"cupSize":"10 Cup Uncooked / 20 Cup Cooked","color":"Silver","cookingModes":"15","cookingModeNames":["Glutinous Rice","Long Grain","High Heat Glutinous Rice","Turbo Glutinous Rice","Mixed Rice","High Heat Mixed Rice","Mixed Brown Rice","High Heat Mixed Brown Rice","Brown Rice","High Heat Brown Rice","GABA Rice","Porridge","Thin Porridge","Scorched Rice","Multi Cook"],"otherMenuModes":"1","innerPot":"Black Shine Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture"],"asin":"B082QV3J6K",mfg:"South Korea",cookingModeNames:"Glutinous Rice, Long Grain, High Heat Glutinous Rice, Turbo Glutinous Rice, Mixed Rice, High Heat Mixed Rice, Mixed Brown Rice, High Heat Mixed Brown Rice, Brown Rice, High Heat Brown Rice, GABA Rice, Porridge, Thin Porridge, Scorched Rice, Multi Cook",dimensions:"15.6 x 12 x 11.4 in",price:"$239.99"},
+"CRP-RT0609FB":{"type":"Twin Pressure","heating":"Heating Plate","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Black","cookingModes":"14","cookingModeNames":["Glutinous","High Heat Glutinous","Mixed Rice","High Heat Mixed Rice","GABA Rice","High Heat GABA Rice","Turbo Glutinous","Scorched Rice","Non Pressure Rice","Thick Porridge","Thin Porridge","Baby Food","Non Pressure Steam","High Pressure Steam"],"otherMenuModes":"1","innerPot":"X-wall Diamond Coating","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide","Steam Plate"],"asin":"B087H24T6G",mfg:"South Korea",cookingModeNames:"Glutinous, High Heat Glutinous, Mixed Rice, High Heat Mixed Rice, GABA Rice, High Heat GABA Rice, Turbo Glutinous, Scorched Rice, Non Pressure Rice, Thick Porridge, Thin Porridge, Baby Food, Non Pressure Steam, High Pressure Steam",wattage:"880W",dimensions:"14 x 10.4 x 10.6 in",price:"$299.99"},
+"CRP-RT0609FW":{"type":"Twin Pressure","heating":"Heating Plate","pressure":false,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"14","cookingModeNames":["Glutinous","High Heat Glutinous","Mixed Rice","High Heat Mixed Rice","GABA Rice","High Heat GABA Rice","Turbo Glutinous","Scorched Rice","Non Pressure Rice","Thick Porridge","Thin Porridge","Baby Food","Non Pressure Steam","High Pressure Steam"],"otherMenuModes":"1","innerPot":"X-wall Diamond Coating","features":["Preset Timer (13 Hours)","Water Capture","Steam Plate"],"asin":"B087H9ZVKD",mfg:"South Korea",cookingModeNames:"Glutinous, High Heat Glutinous, Mixed Rice, High Heat Mixed Rice, GABA Rice, High Heat GABA Rice, Turbo Glutinous, Scorched Rice, Non Pressure Rice, Thick Porridge, Thin Porridge, Baby Food, Non Pressure Steam, High Pressure Steam",wattage:"880W",dimensions:"14 x 10.4 x 10.6 in",price:"$299.99"},
+"CRP-ST0609FG":{"type":"Twin Pressure","heating":"Heating Plate","pressure":true,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"Gray","cookingModes":"13","cookingModeNames":["White Rice","High Heat White Rice","Super Turbo White Rice","Mixed Rice","High Heat Mixed Rice","GABA Rice","High Heat GABA Rice","Non Pressure White Rice","Veggie Rice","Frozen Stored Rice","Baby Food","Non Pressure Steam","High Pressure Steam"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide"],"asin":"B0B7P646FD",mfg:"South Korea",cookingModeNames:"White Rice, High Heat White Rice, Super Turbo White Rice, Mixed Rice, High Heat Mixed Rice, GABA Rice, High Heat GABA Rice, Non Pressure White Rice, Veggie Rice, Frozen Stored Rice, Baby Food, Non Pressure Steam, High Pressure Steam",wattage:"880W",dimensions:"13.9 x 10.4 x 10.7 in",price:"$339.99"},
+"CRP-ST0609FW":{"type":"Twin Pressure","heating":"Heating Plate","pressure":false,"cupSize":"6 Cup Uncooked / 12 Cup Cooked","color":"White","cookingModes":"13","cookingModeNames":["White Rice","High Heat White Rice","Super Turbo White Rice","Mixed Rice","High Heat Mixed Rice","GABA Rice","High Heat GABA Rice","Non Pressure White Rice","Veggie Rice","Frozen Stored Rice","Baby Food","Non Pressure Steam","High Pressure Steam"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Preset Timer (13 Hours)","Water Capture"],"asin":"B0B44XTV71",mfg:"South Korea",cookingModeNames:"White Rice, High Heat White Rice, Super Turbo White Rice, Mixed Rice, High Heat Mixed Rice, GABA Rice, High Heat GABA Rice, Non Pressure White Rice, Veggie Rice, Frozen Stored Rice, Baby Food, Non Pressure Steam, High Pressure Steam",wattage:"880W",dimensions:"13.9 x 10.4 x 10.7 in",price:"$339.99"},
+"CRP-ST1009FG":{"type":"Twin Pressure","heating":"Heating Plate","pressure":true,"cupSize":"10 Cup Uncooked / 20 Cup Cooked","color":"Gray","cookingModes":"14","cookingModeNames":["White Rice","High Heat White Rice","Super Turbo White Rice","Mixed Rice","High Heat Mixed Rice","GABA Rice","High Heat GABA Rice","Non Pressure White Rice","Veggie Rice","Frozen Stored Rice","Thick Porridge","Thin Porridge","Non Pressure Steam","High Pressure Steam"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Auto Clean","Turbo Mode","Preset Timer (13 Hours)","Water Capture","Voice Guide"],"asin":"B0B7Q6DF32",mfg:"South Korea",cookingModeNames:"White Rice, High Heat White Rice, Super Turbo White Rice, Mixed Rice, High Heat Mixed Rice, GABA Rice, High Heat GABA Rice, Non Pressure White Rice, Veggie Rice, Frozen Stored Rice, Thick Porridge, Thin Porridge, Non Pressure Steam, High Pressure Steam",wattage:"1150W",dimensions:"15.3 x 11.4 x 11.1 in",price:"$379.99"},
+"CRP-ST1009FW":{"type":"Twin Pressure","heating":"Heating Plate","pressure":false,"cupSize":"10 Cup Uncooked / 20 Cup Cooked","color":"White","cookingModes":"14","cookingModeNames":["White Rice","High Heat White Rice","Super Turbo White Rice","Mixed Rice","High Heat Mixed Rice","GABA Rice","High Heat GABA Rice","Non Pressure White Rice","Veggie Rice","Frozen Stored Rice","Thick Porridge","Thin Porridge","Non Pressure Steam","High Pressure Steam"],"otherMenuModes":"1","innerPot":"Nonstick","features":["Preset Timer (13 Hours)","Water Capture"],"asin":"B0BHMW3BQB",mfg:"South Korea",cookingModeNames:"White Rice, High Heat White Rice, Super Turbo White Rice, Mixed Rice, High Heat Mixed Rice, GABA Rice, High Heat GABA Rice, Non Pressure White Rice, Veggie Rice, Frozen Stored Rice, Thick Porridge, Thin Porridge, Non Pressure Steam, High Pressure Steam",wattage:"1150W",dimensions:"15.3 x 11.4 x 11.1 in",price:"$379.99"}
+};
+
+const PRODUCT_IMAGES = {
+"CR-0301C":"data:image/jpeg;base64,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",
+"CR-0351FR":"data:image/jpeg;base64,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",
+"CR-0375FG":"data:image/jpeg;base64,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",
+"CR-0375FW":"data:image/jpeg;base64,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",
+"CR-0601C":"data:image/jpeg;base64,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",
+"CR-0631F":"data:image/jpeg;base64,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",
+"CR-0632F":"data:image/jpeg;base64,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",
+"CR-0633F":"data:image/jpeg;base64,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",
+"CR-0641F":"data:image/jpeg;base64,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",
+"CR-0655F":"data:image/jpeg;base64,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",
+"CR-0661F":"data:image/jpeg;base64,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",
+"CR-0675FG":"data:image/jpeg;base64,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",
+"CR-0675FW":"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAAAAAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAB4AHgDASIAAhEBAxEB/8QAGwAAAgMBAQEAAAAAAAAAAAAAAAMBAgQFBgf/xAA/EAACAQICBQYLBQkBAAAAAAAAAQIDEQQFEiExQVETInGBscEyM0JSYWJygpGh0QYUFSM0FiRDU1RjkpPw4f/EABYBAQEBAAAAAAAAAAAAAAAAAAABAv/EABgRAQEAAwAAAAAAAAAAAAAAAAABESFB/9oADAMBAAIRAxEAPwD6cAAAAZsbmGFwFPTxNVR4Ja2+hHCr/amrJtYPANrdKrK3yQHpgPIPPs2k7/u8PQot9pKzrMt9Wn1QA9cB5fDZnmWInKMKtJaMdJuSSVjR96zL+owvxX0A9AB5yvmWYYamqk6tCSbUebrYj8fxv9t+6/qB6oDyv7Q45eRRfxG0/tPWi/z8Fdcac/qB6UDBgc4weOejTm41PMmrP/03gAAAARJ2i3wRJWpqpTfqsDyGd06v4g6tVNwklyct1uBhTPYRjGdLQqRUota1JXRkrZLgquuEZ0n6j1fBlHnU1fWDtfV2nWn9n5J3pYpe/D6CZ5JjlsqUZr2rdwHAzHMXgqsIRpKenFt3drazGs+nb9LD/Y/oelnkmNb51CnO3rRYv8FxKWvAwfVEm2pY4FLPJTqwhLDRipSSup7LvoOu9THrI8Te6wUE9z5qGrKMfvhCPTUQiXHGNtbiLnQWS4lvn1qMetvuGwyelHxtec/RGKj2lRyY6TqR5NPTvzbbb+g9xgpylQSqPnxSUum2s49KjRwyfIU1B+dtl8To5S/yqntdxBvAAACld2oVH6rLisT+nmuKsBlp+CMFU2vB8rgMKLXIuABEEC69LldHnuNr7P8AtoiWEcm28RO73rU10cCK1dRRsyvBKzTrT/7v9JoYFZMW2WkLYFZbDblHgVfaXYYZuybew2ZPsrdK7wOkAAACsV+nl1do0Ti/EPpQGXRjONpxTXpI5KpHxVeS9E1pr6/MvHYWRQq+Jjtp0p+zNx7V3hytTysPUXQ4vvGgAp1eNOqvcZHKLzZ/4MYRdECnVXm1H7jKOo91Kq/dt2jmVYCJSqPZRt7U0uy4tqq9s4R9lXfz+g+QtgK5NJ3bcnxk7m7KXz6y9C7zIzVlXjqi9VdoHTAAABOK8T1ocJxSvS60BnjsLEIkoAAAhVaehG5mhSq14co6rjfwUkaqsNONjLGVejHQjGMktje4iijUmqjhPW07MexNClLSc5u7bu3xY5gLkUYyQtgVZpyvx9T2e8zs05Yvz6j9XvA6QAAAUrLSpSRcAMaJCUdCbju3AAEAARBVosQFVZVlmVYFJC2MZQCtjbl0bRqS4tIyWvqSu2dTD0+Soxhv39IDAAAAAACs4KcbPbuZmkpQdpLrNYNJqzV0BjuQWr0pxbdKLa4IrTpVp0lKUVGT8lvWgAqyzpVV5HwZV06v8uQENlGy/JVX/DkSsLVe1JdLASyEm3ZJtvchUHiqlTk/u1Sm72vJfO52KdKFJWhFLi97AThsNoPTqeFuXA0gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH/9k=",
+"CR-0810F":"data:image/jpeg;base64,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",
+"CR-1020F":"data:image/jpeg;base64,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",
+"CR-1095":"data:image/jpeg;base64,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",
+"CR-3032":"data:image/jpeg;base64,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",
+"CR-3055":"data:image/jpeg;base64,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",
+"CR-HA0810FG":"data:image/jpeg;base64,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",
+"CR-HA0810FW":"data:image/jpeg;base64,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",
+"CRP-BHSS0609F":"data:image/jpeg;base64,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",
+"CRP-CHSS1009F":"data:image/jpeg;base64,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",
+"CRP-DHSR0609FD":"data:image/jpeg;base64,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",
+"CRP-EHSS0309FG":"data:image/jpeg;base64,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",
+"CRP-JHR0609F":"data:image/jpeg;base64,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",
+"CRP-JHR1009F":"data:image/jpeg;base64,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",
+"CRP-LHTAR0609FB":"data:image/jpeg;base64,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",
+"CRP-LHTAR0609FW":"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAAAAAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAB4AHgDASIAAhEBAxEB/8QAGwABAAMBAQEBAAAAAAAAAAAAAAIEBQMGAQf/xAA4EAABAwIDBQQHCAMBAAAAAAABAAIDBBESITEFIkFRYRMycZEGFIGCobHBIyQzQnKS0eEVUmKi/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAH/xAAWEQEBAQAAAAAAAAAAAAAAAAAAEQH/2gAMAwEAAhEDEQA/AP05ERAREuBqgIvmIL5jHVBJFmVW1KUTmn9bMcjTvBrbnw0R9W7s+1FTZlraNH0QaaLIodrMkqRT9qJDY53uVqdo3qgmij2jeakCDoboCIiAiIgIiIISPw5DVRGaxtuVUtNtOAxOt9mbjgc12pttQltp2Fh5jMINYNX3CFXirqaUbk7PkuwljOkjfNBykjufwwTzss+pgqTcRwkjpZajpGhpIcHHkCF8dMwNJvc8kGdSQ1DCL05ab5kkBaQabZqJqYGtu+aNvQvGS4P2nQs1rIfY6/yQdy1czduYNlUftujHce+T9EZ+Zsqk22JH5QQBgP5nm58h/KDbhlx3aTvNXVYfo/I+SprDI8uccBufatxAREQEREHmfSLPasQ5Qj5lZhdkvQbZ2dJO4VMALnhuFzeJHRYDo3NOEtII1BCuIv7Pdulpaw9SM1pOAINgB0Wds8W429tlpcM0Vm1UbnCzQM762C8/WU1QRIQw2YSDmOGZ8fYvTVD4wwh40vYlody4FefrKiMgukdIZG47WGTsQtzyRGWaaaGzpWWBNu8DY62PJaFEbOFre1Vy+GolwROkBlmxuL7ANyta98/FWKLdlGenG9vig0bnQlptyU2nIrle7tb5c7qbe9lmg1fR4/fKgc2NPxK3157ZVK+OqbPIS0d1rL69SvQqKIiICIiD43RcpIYpnESxsdYC1xmurdEAFyeJQVv8fTg3a0t8ChohbJ58l27S03Z4H2I71slKR7Y2FzyABxQZc+zBICO1t7qyan0ea8n7x/4/tegmYKiNpZK5o1BYdVQlpgXFvrcpdqRi+iUYR9Hoozczk+7/AGgoYofzPd8FqyhtPG4vlc4X1dmqcpBzHFKOLWsBsG+ZVunNnCwA8FTjdd7m4SMPE6FWojvBBqwO3mfqC11iROzZ+ofNbaAiIgIiIIs0UlCPRTQQx/ahmE5i9+Ck4XGa5kR+tDdPaYdeFl0dogryuZEwlxDWj2LLk2nQ9pb1iMOOVyQPip1H3mdxdmxps1vDxUWwtc9zXPDmkW7MgEBBCYhw5gqhNxVk04opRFELU818LeEbwL2HQi+XAjqq03FQVmPxPIwkAcSrUR3gqbHMMr8IOLiSFZiO8EGlEc2+IW8vPxd5viF6BUEREBERBCPkprmd2ToV0CDkZSJ+zwXHO66O0UTFGZBIW744r64oMoMDKqSI2D83Nvxaf4P0UmQWlLw+PGRnl9Lq1UwxztAkaThN2uBIc08wRos91GGPxetVJ/YD+4NugVjmGcMaATFvyHkS0ho8cyfAdVlzHMq7LhYzBG0NYLmw58STxPUrPmdmVBwEgLnCxyXaE74VYkrpCTjQbdIA+Vjebgt1ZGxoS5xmcMm5DxWuqCIiAiIg+ObiFlFpINnKaEA6oPlwubipFh4HzXNzX/6oIPOSpTuABVqTGB3HeSzqkyG4bFIfdKgpzvzKpyOVp9PVPO7TTH3CvjdkbQmP4AYOb3AIM4uzV3ZdHJWT4WCzB3n8B/a06X0ca0h1XNj/AOWZDzW3DDHBGI4WNYwaABUIomQxNjjFmtFgpoiAiIgIiICIiAiIgIiICIiAiIgIiICIiD//2Q==",
+"CRP-LHTR0609FW":"data:image/jpeg;base64,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",
+"CRP-LHTR1009FW":"data:image/jpeg;base64,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",
+"CRP-MHTR0309F":"data:image/jpeg;base64,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",
+"CRP-OHTR0609FW":"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAAAAAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAB4AHgDASIAAhEBAxEB/8QAGwABAAIDAQEAAAAAAAAAAAAAAAQFAgMGAQf/xAA7EAACAgEBBAcCCwkBAAAAAAAAAQIDEQQFEiExBkFRYXGBsRMyFCIjJTRCUnKSwdEzNURTYpGTobLh/8QAFgEBAQEAAAAAAAAAAAAAAAAAAAEC/8QAGREBAQADAQAAAAAAAAAAAAAAAAECEkFR/9oADAMBAAIRAxEAPwD6cAAABhbbXTHeskor1AzBXz2muVVTffJ4NMtdqZcpRj4RAtgU3wjUvndLywh7a7+dZ+IC5BTrUahcrZeeGZx1upjzcZeMQLUECvaPVbXjviyZVbXbHerkmvQDMAAAAAAAGFtiqqlN8kijlOV9jsseW+Xci12ll6SUVzZUVNOKwQbYxMsYPFg9fFYCvKrIznKEF8aP+zOc/ZLNktxf1cCJVp76dS7KLUlJ5cZxyjHa1Wt1cFDdox2ptGZl61rOVtlrtK5qEboTm3hKPE3LisopdJse+FqlbYkl1RWC8jHdjgS2pZIxweJyhJShJxkutGe73HjXA0iz0t61FCnyfJrsZuK3Y80/axT5veXgWRUAAAAAEbW8oLvKyelnGbnRxT5wLLWP40V3GuCIqHCMnw3Wn2MylCxc4teKJviN5pcGBBTaZnls22y3lxIk6q3z3vxMDfhmLko+9KCXe8EOdFX2W/GTNMlCHu1wXlkCe9TTyjLffZBZIer10IpxnJRX2E8yf6FfqrrGmt9pdi4FdH3mB03R6+V2vvbWE61hLqSf/p0Jy3Rh42hNdtT9UdSVAAAAABE1X7VeBhHkZap/L+SMY8gMzFjzDIqPqPabvySi3njkhzlquOIV/wByfMjTAjJ2tv2qiljhhmqzrN8yPZ4gQNTyZBgm54XMn6ndSfBsgqT3mlhLsQF30de7tNR63CWTqzkOjr+dq++MvQ68qAAAAACDqfpD8hHkean6RLyESKyPGDxgYT5ESycU8OSXmSbc7jwyLYljCSx2AapkexmcHmD45Sk1F92TXYwIOpfBkFe8TdS+ZBXvAXHR5/PFPhL0OxOM6Pfvmjwl6M7MqAAAAACDqVjUPvSZ5E3a2D3VYvq8/AjwllAZmLPTxkVrnyIdsU8rMsdiZLnyItgGiWEsJYS6iPYb5keYEHU9ZCXMmangnkguSQF10ai57Yg19SEpP0/M7I53ojo5Q01mtsWHd8WH3V1+b9DoioAAAAADWVhldfRKiTlBN1/8liAKtWJob5sv2dJyctNZuZ+rLiiNZpNfDlXCz7k/1IFlmFzIllhjdHWrOdHf5Rz6EOa1b/hNR/jYVtstx1kK7UPDwzZ8E2hb7ujv84Y9TbXsHaNnGVMIffmvyyBS2zlZLrLTY2wrNfZG29OGmT4vk59y/Us9ndHZq2NuulHdi8qqHHPi+zuOkSSSSWEgjyEYwhGEEoxisJLkkegFAAAAAAAAAAAAAAAAAAAAAAAAH//Z",
+"CRP-P0609S":"data:image/jpeg;base64,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",
+"CRP-P1009SB":"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAAAAAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAB4AHgDASIAAhEBAxEB/8QAHAABAAIDAQEBAAAAAAAAAAAAAAUGAwQHAgEI/8QAQRAAAQMCAwQGBwQHCQAAAAAAAQACAwQRBRIhBjFBURMiYXGRoQcUMoGxwdEVI0JiFjNSU3Ky4TVjc3SCkpOi8P/EABcBAQEBAQAAAAAAAAAAAAAAAAABAgP/xAAbEQEBAQEBAAMAAAAAAAAAAAAAARECEiExQf/aAAwDAQACEQMRAD8A6ciIgIiICKKxDaTBsNcWVVfE2Qb2NOd3gLqBqvSNhcQPq9LVzW4kBg8zfyQXNFzWu9I9ZOzLh1DHBzfI7pD7gLBQjtq9opJOkdXzZuGQhrf9tkHZUXMcM9IOKU5AxKniqmcSwdG4fI+Cnab0i4TLpNT1cJ55A4eRQXFFFUG0mDYg4MpsQhLzuY85HeBspVAREQEREBERAJABJNgFy3a/bCprqiSiw6V0VI05S5hs6X38B2K/bTTup9nq17D1zHkbbm7T5ric7S2d4PE3CD40L0crG5nmwXqNt1mdSdNlI1LeB3FBvYbhFPUM6Wsr4qNnAFpc8+4fVbhw3AAbfbNZm59E23hmWth+K+pxmDFcDbWQ7sw0Nvdp71k+0tlDLc7P17R+yKh1vqg8V+ERMiM1FiMNa0b2WLH+BuPNQ7CyRvUO7eOIU5W41TSwer4Js+adv7x9yR29p7youKgdG90zyASPZve6DXLVZtl9rqvC52U1ZI+eiJtZxu6Ptafkq/KyywAEvAbvJ0Qd8jkZLG2SNwcx4DmkcQV6UFsXOZtnIA43MTnR+4HTyKnUBERAREQQO2L8uExsv7czfIE/JcyqaaOZxG4g6EcF0LbeXJHSMuMt3ud2aAA+aotrynvWa1Eb6pNCfYLhzbr5Lap5GA2JF+RUxTsDhZwBHatqSkhMdzGD3i/xTTES17s7us5rdMuVl7r2Kgjq9O+1726JeKjooSbU8R8R8CtVtVEXa0jP+V/1V1Mb2d7pG6l7DfMXMy2WCpcwX1C2qRkE9gadg/1OPxKlocPpWtuIhfsFk1fKouhlmNmMNuZ0C2aagERBk1cVYqqKOMdRgb3KMf7azpi5bEyD1WrgH4JQ8DsLR9CrMqhsU5prqwW1MUdjzsXA/JW9an0lERFUEREFO24d941p3Ng+Lv6LnNHVysqXxEB7GtLgCdQBwC6Dts680nZG0fE/Nc2pNcScObXDySrFjw/E6KYANna1x/C/qnzU07WG41HMLm8B4KUpn5GdW7T+UlvwU8mpav4qMb7a0qyprCXdFLM4NFzvdZaYmxTeGzc/1f8ARTF1c8N3hWCK5ZoFzjDq3EOnDJ5pWC17Wy6KZlnzx2cXPP5nud8Snk9JzFMQpKcES1EYI/CDc+AVaqMXM8ojp2ljCdXH2j3clHVgcNS3K0nlZYID943vVnKa6nsS4CraBoHUzh4Ob9VdVQ9jXWrKX8zXt8gfkr4qgiIgIiIKLtobzT94H/ULnNH/AGqztJHkV0LbA3fN/EVzhsvQVzJf2Hgnu4oR5pmNdnuTdo0W1E8tAHPtWrE8MdILAgk2KzNfkyu5IMU807Hu6F+Tdc3FuzesQnxMkgTvJOts463b296+1NQWSPOQda17HUdxC12VfWaTGHPAy3LjuusW9fjpJx+1vUTauefM8mZ2W98wOl+fepB5cHFjxlc02Ot7KLopQyTrQRuAZYNc7dre91uGQPzODWsBPst3BXm9b8p1Oc+PtgrmNY8BtySLrDD+sb3r3VuY5wyX7V4g9sd62w6Rsg7LUUjv7y3i1wXQVzvZXQ055TM+NvmuiKAiIgIiIKPtvC6KRzrdSQZmn4j/ANzXLqgfeO713nHMNZiuFzUpsJCCY3n8LuBXC62GSCplhnYY5Y3Fr2ngRvQeKMMJd0ltGm1zZZYzYg8B2XWswaLbiMWTrZr2Qa072CR5OWx3XYtTNH0Qbdlwb+xr4rLUi5NyAsT6bLCH52l3EX+Cz5a91uQSR9MHAtygcGW8llzaniLrTg0Nr+9bjuiyGziXcFZMS3WKpAEthu77r7AOu3vWJ29bVHDJPURwwsL5XuDWNG8k7lUdG2JgM0zNLtj67jy5efwV8UdgOFx4RhkVMLGWwMrx+J3H3clIoCIiAiIgKkbd7JuxAHE8OjzVLR99EN8gHEfmHmruiD88GPISOXAr01wA1XYsd2MwrGp3VMglp6lw1khNsx5kHQqlYj6NsYgc44fUU9WzgHHo3eenmgo9QQTvWLJDexmdb+D+qmavZDaWJxEmD1LrfuwH/wApK0/0bx69vsbEL/5d/wBEGrE5o3kLYDg72dVt02x20kzgGYPVD/EaGfzWVkwv0aYxMQa+enpGcQD0jvAaeaCpsiLnC+8nQBdR2E2Udh4GJ4hFlqHD7qJ2+MHie0+Sk8A2NwzBJ/WWGSoqALB81jl7WgDQqxoCIiAiIgIiICIiAiIgIiICIiAiIgIiICIiD//Z",
+"CRP-P1009SW":"data:image/jpeg;base64,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",
+"CRP-PHTR0609FS":"data:image/jpeg;base64,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",
+"CRP-PK1001S":"data:image/jpeg;base64,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",
+"CRP-RT0609FB":"data:image/jpeg;base64,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",
+"CRP-RT0609FW":"data:image/jpeg;base64,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",
+"CRP-ST0609FG":"data:image/jpeg;base64,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",
+"CRP-ST0609FW":"data:image/jpeg;base64,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",
+"CRP-ST1009FG":"data:image/jpeg;base64,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",
+"CRP-ST1009FW":"data:image/jpeg;base64,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",
+"CR-0671V":"data:image/jpeg;base64,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",
+"CRP-HS0657FW":"data:image/jpeg;base64,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",
+"CRP-HZ0683FR":"data:image/jpeg;base64,/9j/4QC8RXhpZgAASUkqAAgAAAAGABIBAwABAAAAAQAAABoBBQABAAAAVgAAABsBBQABAAAAXgAAACgBAwABAAAAAgAAABMCAwABAAAAAQAAAGmHBAABAAAAZgAAAAAAAABIAAAAAQAAAEgAAAABAAAABgAAkAcABAAAADAyMTABkQcABAAAAAECAwAAoAcABAAAADAxMDABoAMAAQAAAP//AAACoAQAAQAAAGQAAAADoAQAAQAAAGQAAAAAAAAA/+IBuElDQ19QUk9GSUxFAAEBAAABqGxjbXMCEAAAbW50clJHQiBYWVogB9wAAQAZAAMAKQA5YWNzcEFQUEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPbWAAEAAAAA0y1sY21zAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJZGVzYwAAAPAAAABfY3BydAAAAUwAAAAMd3RwdAAAAVgAAAAUclhZWgAAAWwAAAAUZ1hZWgAAAYAAAAAUYlhZWgAAAZQAAAAUclRSQwAAAQwAAABAZ1RSQwAAAQwAAABAYlRSQwAAAQwAAABAZGVzYwAAAAAAAAAFYzJjaQAAAAAAAAAAAAAAAGN1cnYAAAAAAAAAGgAAAMsByQNjBZIIawv2ED8VURs0IfEpkDIYO5JGBVF3Xe1rcHoFibGafKxpv33Tw+kw//90ZXh0AAAAAENDMABYWVogAAAAAAAA9tYAAQAAAADTLVhZWiAAAAAAAABvogAAOPUAAAOQWFlaIAAAAAAAAGKZAAC3hQAAGNpYWVogAAAAAAAAJKAAAA+EAAC2z//bAEMABQUFBQUFBQYGBQgIBwgICwoJCQoLEQwNDA0MERoQExAQExAaFxsWFRYbFykgHBwgKS8nJScvOTMzOUdER11dff/bAEMBBQUFBQUFBQYGBQgIBwgICwoJCQoLEQwNDA0MERoQExAQExAaFxsWFRYbFykgHBwgKS8nJScvOTMzOUdER11dff/CABEIAGQAZAMBEQACEQEDEQH/xAAdAAEAAQQDAQAAAAAAAAAAAAAABwMFBggBBAkC/8QAGgEBAAMBAQEAAAAAAAAAAAAAAAECBAMFBv/aAAwDAQACEAMQAAAA3LAAAAAAAAAAAAAAAAAAAAAAB1otElNdztzk+2b6AAKZ0C4nB5w4Ps8R2/LfNNM+177qd/FAweWn8xCFZuJRJbmI6z+3mWb3cN6ZLrr+a9IJ4XEA1WlZ4mD0YyZPK0QpzajXt35zejMTlMgNeZQTCJSxG0iYUi2J2rRhmVe3pbbh3QdI6Zi5EBfSbTXOmvU3l6Ntr23M7+Ps1fKBwcnB1i3FEyApH0VAAAAAAAAAAAAAAAAAAAAAf//EADUQAAICAQIEBAMFCQEBAAAAAAECAwQRAAUGEiExBxNBUWFxkRQVICKBCBAjMlBSobGyYoL/2gAIAQEAAT8A/p26bztey1Xs7huEFSuveWZwi59hnufgNbv47cCUY5PsFx9xmVwvlRYhyD3YNOVBA+Gtn8bfD/dVrxvvC1JnQEwzjojf2s6cy/Q6rWq1uCOevPHLE4ykkbBlYe4I7/is36lUZntQwqPWSRU/6I0eJeH2IVd9274D7VFn/rUNytZGYLEcg90cN/onVy5FTqWbMhxHDE0jn/ygydcdca7pxlv1m3dsHylytSDOI4l7hQPQ+59dLJBGLIF0Vpi0bRSWIyEKgHnQFQ2GyQcnoR01etRXr4etH/BWvEhmCCMSTKMPIBgEBj6H568FuOL2x7lW2+e0XoWZVjeMnIVm6c6+xHr8PweIXGU3Bm20pq+2tbsWpvLjjw/KoUZLMY1Y/prj/wAQeOeLbDzbBu0p21QiyVasjRvDKRllZTykrkdCM9NWDxE9hY7kV3zHYD+Krkn9cHRdHikih2nkn8teWdg69R3Oc9T+mq2+cQxYEEtlSpwCq4Ix8cAjXCviBxYdm4k23cd1eeNqIKQvIzsgMgXOTkD4DOqksEdiQzxeZGW/MjIWHX5dj+utr2LhW3FJLf3U0AxDQoTIOeNuzj8rdDreq1KpuBj29ms0+Yqtk8xViO4GQO2tiufZrcLxqxZCMYHLj64xrh3cPvDYdotDHNNUiZjnPXlwf9fg4/4e2Hhvf4fuailUXZDYsIvVS5OA3rjm6nGt/r0DBHLJXRSI+rIqZz/86uttZty+T5gXsOYHPz741fmVS4Qnlz0J764QjFjZuJpggLotZS3ryFmOPlnSzyVjeKWJYmxgBH5ebm/KQR6jB1Q4qkrQLUkjsSxK38JPNVVXr1wGVu51c3h7tuKRvM8vmVUVpObl98EAYzqrIFvScvq4x15v8+uvDVXXgjYA+c+Qe/tzH987+XDI3rynHz14w7bLXq7XvcaEqcxuR1wVP5fqNbjxULNHypFVSFIA7f41PbHnu3udXrgckDXg5wLNe8MeJ91ngIa/Ov2bI6tDVBDMPgWY/TW+7dY2u7dhkhfkcgK/pgevx1Hs6zTmNNwjAwTzlTj3x11Ht4jdXNlS0bjC4OTrhylLf3SvHHES0kirGo6ksxwAPfWybeu1bTttHpitXSMn3IHX/P77vmu3Y8i9sdtSoJK0aOoZVc9D1HuPpnXEfCdLi/ZrW0WCsAnC4sLEjyR8jBsrzDoTjGov2cOHTKTZ4ivyxeixxRRMf1PN/rW3fs9+G1CxHYloXbxQ5EdqyTESP7lQJn5Zxqt5VKvDVrVooq8UYjjhRAqIgGAoUdAAPTXiXwHarxT7ntkL2YGk/PWjjaSSMN6gKDzKPf01uV2rXmdWjCOCQVICkH4g4Oqk13dLK1ts2ye1O3aOCMyMf0QE68CfCq5QWrxXxDC0VllLUqciFXhzkebKGAw/9q+g6/gKAnOSD8NNCjJy41HWSJufPUDW7UbUtSX7vkjhs5Uqz/y4z1yOvcaqbfuggAt7jGZsnPlwjlH1xnVzat+82Fqu4QeTlfMEkQDd+uCM9xqOCOP+VcH39dWNm2263Pb2+rMfeSFHP1YHVXbaVFWFapDXU9xFGsefnygf0v8A/8QAJREBAAEDAwMFAQEAAAAAAAAAAQIAAxEhMUEEECAiMFBRYRIy/9oACAECAQE/APjlDVabkcaav1nFE4/ftzuErv8AMnANQLYenFXC3hXA8Yq1JdHwD9rbate2tO1XemtXnMhJfZR0M4unUv5kqHSSH1Xsn4VGEYGDx48HjtkBXjeiYuAex4G3g7UI89sUyM4HL7UoEucNNu7xcosXH/V3SoQjA0+X/8QAKhEAAgEDBAEDAgcAAAAAAAAAAQIRAAMEBRIhUUEwMXEGUCIkMkOBobH/2gAIAQMBAT8A+3Ij3GCopY9ATVvBvFwLisimZbaWj+BzTYl9SYtsQCYMRI7iiCDBHpYuG2Ppy3LCBrjpuB7NX7maXY3muhp5mRWDczjdQW97qSA4aSseZmtVsW0/GogzHpaZr2dpiG0my7ZP7VwSB8H3FN9WYN1V36IoaOStwkE/BiKyfqWw6bcfS1tt5ZrhP9CsjJvZT7rrT0BwB6YR2ZFA/V7TxNPjPbQuWUgdekIJ5prboJKmO/FBiPY+IrdIAPPVLjXdu9lKp2eJ+PSx8x7HG0MvRpM/TZm5hGfPCmm1fBtj8vp4DdkKP8msnLvZTS5geFHt93//2Q==",
+"CRP-N0681FV":"data:image/jpeg;base64,/9j/4QC8RXhpZgAASUkqAAgAAAAGABIBAwABAAAAAQAAABoBBQABAAAAVgAAABsBBQABAAAAXgAAACgBAwABAAAAAgAAABMCAwABAAAAAQAAAGmHBAABAAAAZgAAAAAAAABIAAAAAQAAAEgAAAABAAAABgAAkAcABAAAADAyMTABkQcABAAAAAECAwAAoAcABAAAADAxMDABoAMAAQAAAP//AAACoAQAAQAAAGQAAAADoAQAAQAAAGQAAAAAAAAA/+IBuElDQ19QUk9GSUxFAAEBAAABqGxjbXMCEAAAbW50clJHQiBYWVogB9wAAQAZAAMAKQA5YWNzcEFQUEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPbWAAEAAAAA0y1sY21zAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJZGVzYwAAAPAAAABfY3BydAAAAUwAAAAMd3RwdAAAAVgAAAAUclhZWgAAAWwAAAAUZ1hZWgAAAYAAAAAUYlhZWgAAAZQAAAAUclRSQwAAAQwAAABAZ1RSQwAAAQwAAABAYlRSQwAAAQwAAABAZGVzYwAAAAAAAAAFYzJjaQAAAAAAAAAAAAAAAGN1cnYAAAAAAAAAGgAAAMsByQNjBZIIawv2ED8VURs0IfEpkDIYO5JGBVF3Xe1rcHoFibGafKxpv33Tw+kw//90ZXh0AAAAAENDMABYWVogAAAAAAAA9tYAAQAAAADTLVhZWiAAAAAAAABvogAAOPUAAAOQWFlaIAAAAAAAAGKZAAC3hQAAGNpYWVogAAAAAAAAJKAAAA+EAAC2z//bAEMABQUFBQUFBQYGBQgIBwgICwoJCQoLEQwNDA0MERoQExAQExAaFxsWFRYbFykgHBwgKS8nJScvOTMzOUdER11dff/bAEMBBQUFBQUFBQYGBQgIBwgICwoJCQoLEQwNDA0MERoQExAQExAaFxsWFRYbFykgHBwgKS8nJScvOTMzOUdER11dff/CABEIAGQAZAMBEQACEQEDEQH/xAAcAAABBAMBAAAAAAAAAAAAAAAABAUGBwEDCAL/xAAbAQEAAgMBAQAAAAAAAAAAAAAAAQMCBAUGB//aAAwDAQACEAMQAAAA7LAAA0gnajIAAAADNF3PFHqk02K2TTGVtWcK2bOJkAABhizhjS+lMmUaMevIsrYtjz3KcOk7/G9EXebyAHk5qp9FzPq++mNqY5aC6aWaNuuquoscjvze+WuqABgTzPrevpSj2j7PQm1vO9TrN9fTh2BpanenQ+PzBiARlNK0+poCj6M4Y32Df4mT2cutNb3TE3fU8zsnc+QTRiARFLNju8k6/wBmU8WqUeZ52/DJHt5xX3HVtHPxt43/ADucMcgRpKVNA0/UIh5vrrfLaO+uzbfZDPo/Z60v+KqMufOmIA2JjSdUbXLvO+rR/mwKl1+zeHZ8fbFnjE6JigAwV4yWoQxsU7T6hrjZs+zgTyzjJh8Q+oAAb0wKMtiPKcntHoVynLHIAAEZTG0tyfA4CpFhscgAAAAAAAAAH//EAEAQAAIBAwEFBAYGBgsAAAAAAAECAwQFEQAGEiExQQcTUWEgIjJxgZEUQmKhscEQFVJjcoIjJCUwM0BTkqLR8P/aAAgBAQABPwD0XudHAQDJlicKACRnzPLX63pkGZPVXxB3vuHHUU8UwJRwf7m+bR2uw0k1VXVUcMUXtsxwATyB8z0A46vnbrWVFQKex2pXi3sb8+QZAOgVeIHvOoe3G4oQk9qtofqqSyufkoIHz1N231Ea5W2UPLmWmAHvwDqTtu2kDpUU9qt3dI3rPE7vkeBOfVz5jWxvbDZ9o3jo6hTSVzYCwuQN8/u25N7uB1FNHMu9GwI/9z9LaG909poqqaacQwU8TS1EvVEXw+0eQGtrdr7hthcjUTloqSMkUtKDlYlPU+Ln6x1V09RHbaB4QRFUySrPIPFMbsZPQY4466p6VIu7kU5UMFfyzyPuzw1ebbFT/QoaaqWdp4I5HwMd2WGWU+SjmdCGaCeN6HeaUuFRQMl9443SvUHw1dKcUdfVQx8O7kwADndI44B+yeGuyTtBqrwj2qvnL3Klj345GPGpgXgQ3i6ePUcdQzJNGsiHII9CqmWnp5pTyRC3vx01243ael2bt9AJMSXGsLTY+skA3iPdvEap15asd0lthkjamhqqSbHfUsy7yPjkfJh0I1Tp2eTuk4p71aahTnNLIk6DPMbsgOVPgdTwdn0sRSe936aLILQxUtNTByOPrGNFyPLlqqvFjtsbps3YjSysCDW1L99UAH9jonvGqhCSxPEkkknnrZa5SWTaixXBWKiKsjD46xudxwfeDq2z9xUyU5b1XBZc+Kc/mPQ2oSokpKERTCNBXQmUZxvxrklR8ca7eQzVGynH1e7qvnvLqniHAjlqli3ioCkknAAGk2YuNPHFPW0clPA/sySAKDjhqC2W6596lrr4quSN+7dYjkq/7Jz11fNnrhZO5FbSvF3oyuRnpnHDrg6njGTxxqRQZY1Q5O+uMeOdTpO1VZzFOImjrYWkY9U5Mv8ANnHobRue+tceeZlcj3AAfjrtptgqbDaq9YgTS1m65xxCzrj8VGqXdQApTM5Ay3rHB+AGo6mFiwZdwHIxkkYPDnz1arlebl9HMjxV6RncUzkB/VA5sCpOMji2dSNXCmBpbZRIW9be7wY4EjON4dR11eb3V3Go366ted4gY0TgEjAPFVVQAOPPqdKzVCTYpS4XHEPukf8AetmbULttNYqLuwwkrIi/D6iHfY/IauTbkJdQFKsGGOnHPobRH+0rYP3Mp/5Aa2itAv8As/dLYcb08DCMnpIvrIf9w1QFYIqxJlKyAYVePB1yCOHI6sdPFPLV97Csm5FvANxyc6WJkZcUkG5g725kspHioOpJaJCQ8sYPP2GOcHHDHMg9OY1JBa6unqniWGRkhZgyqR0ODk8+WrW1MpqfpAyGhITiR63TkDwOux2yGa53G8yL6lLF9HhJ6yS8WI9y/jq6n+qzfwnUBzFGT1Rfw/TtMiCe2SKOTSR58cgN+Wom4DW3+zYte0UVxjhzRXGTfcKMBJhxZf5vaHx1bot2pvIRSpKjdAOCM5+XHVJZ0WaqqJC6PO39KpYHfA6MRzzqO0RxSO0dS6ZYMmAu8mOgYg5HkdfRFpKSpVZpHHcMF3yDuqAcAYA8euqOlWpipYqVXkrJpREsQ5ljwAA8PA62bskWzlkorbGQzRqWmcfXlfizfPgPLVed6Pd5lmVQPHeONDgMD9O0FE1RbmeMYeFxMoPMhM5HxB1Tyh0Ug9NXe1UV9ttTb6xMxSjmPaRhxV181PLV0tl32Ous9LUypGsiMYqhkDRzqvEFc8j4jmNTbS3fIEVXExKg/wCEFwfDjp79fadl3q6GQMmfYXgfDl9+lvlZUUdQHuERkYKiQrAN9y/MeQA5Eczrs32HktCreLpFu1rpinhbnArDizfbYdOg07ao4hWXOnU8UgPfN57vsj5+gQGBBGQeY1JE9srZ6N8hUOYmPWNuK/LlpZhjjq6W+3XmkekuFJHUQNxKOOR8VI4g+Y1c+xqild3tl6kgUnhFUx96B5B1wfmNU/YvWlx9I2gplTr3ULs3w3io1szsFs9s06VEMT1NYvKpqMFl/gUcF9/Pz0JgBz1PUBQePTlrZ2laOmlq5Bh6kgjPSNfZHx5+jfLObhCjwYFRFkxnkCDzQ+R+46SUgspBR1OGRhyI6EaMp6rn3HXfqOpHwOhUL+0fkdCbPIE/d+OjIccSAPLVtt7XSXeYEUiN67f6hH1R+Z0AAAAMAch6W01mmqZoqukhYy7u4/djiccsjr4aNpvsUKSNQmTIyRGwZl9689SPURHEtLOh+1Gw/LS1DscLFIT4BCfy1BSXWpx3NtnIP1mXcX4lsaFiu71AimpyIyR68bZUg88t5aghjp4Y4o1CoihVA6Af5H//xAA1EQABBAACBwMKBwAAAAAAAAABAAIDEQQhBRIgMUFRYRATgQYiMEBCVJGhotEVJDJScZPB/9oACAECAQE/APUCQBZNBGYk01trvjxAXfdAjK8Z6opMla7LcdskAElPeXm+HAIjVjaR7V2f8XJOAypAkEUpGhryAopNbzTvG1OaaBzPYx2qCKsHeEO7u8x80TGctY/ClrNb+hufMo5pppzT12p97fHsB4IRSH2UYn8k5rm7xSO3MLaDyKq0WkZhMmk4tB+SMrqyZ809z5DmKCDQOqAtzR12nDWaQhuWm8RNhsPCYpTGXShpcN9VfFHSGLIP5/EXws0D4puN0oc24if+wfysLj9JtxmEjlnk1XytaWuINjiEOqjGZO29tG+BXlFQgwl7u/z+BU2McWRRtDS2MeaaIo9AnYtzmtDogcqNk0epA4rByum0hgiWNae/aTq3mSd/Y0UNsgEUVi8JBiWhmIjDmg2MyM/BHQujfd/qd91+CaN93+t33UOidHQyMkZhwHsILTZNH4pjKzO/0JAcKIRgHByEB/cE2Nrc955+izWazVq/X//EADkRAAIBAgMEBwUGBwEAAAAAAAECAwQRAAUhBhIxQRMgIlFhcYEQMqGx0RQzYnKRwRUWIzBAQkNS/9oACAEDAQE/AOtb+1BBNUyLFDGXc8AMU2y6LGZK2r3NOCWsPMnH8tUjG0dRUN5hV+euDsrGou8k4HhufvhNm8tfsfa5xIR2QwUH001xmORVdAGkFpYRxdRqPzDl14YnnlSKNbu5AUeJxlmXw0EIRBd299+bH6d2AxqMyqYmP3ATcU9zC5f1Ol+WIljingW/vk6+WJZpGpp3mpuhKzsiC+9vqDYN692Kqmi6NrnsjUm9t23O/K3figmkqqCmmk1Z1OpHvAEgN6jXGfZWtK4qYFtE7WZRwVj3eB62zkAeqllI+7Sw820+WIhiqymGvMcqyvBUxiyTR+8B3HvHhibLdoiojMlHUqCCGO9C4I56c8Jlm0SurdBTkqbgy1LyAHvAx/Aq2qIOaV4kjGpp4F3EP5jxIw6KoCqoCgWAGgAHLGYU4qKWpiI96NreY1Hx6oxsuAUq+/fT5HCC3PCSJFGzu1lVSWPcBxOJNqcjjUla9XPcFY/tiPa/KWNnn3R37rfTFJm+X5kZVpagOUF2ABvY89RiUi/HEgFibjhg87dQc8bKSqK2aFv+kdx5qfpjozbWQKCdNB++OhLoyN21ZSreIOmMw2VyyJjuVc1ObX3WXpFsfjywmzdIrlZszewOoWBr6i/PGV5HSZWjGmR7yKu9JIblhxGnLEoCMgMwUnkVuD9MZy601BWSkC6xtbTmdB88DqDgcZfVfYq2mqOSOC3ip0Pww0BqEgdCCvM/hOt8VpZWjUFho5sCRe1rcMdu43kBFjezMzD0vhjTLoXA0/F5YjlRrmKdjax0ZrcfE64qIZZei6M2s+ul9Mba1gSOCjU9qRukf8q6D9T1Rz9myubfacslpGe09OtlvzjPA+nDFQWZKezXPRyAH9LYholDyysWVpD2xcHeHicLRKjMVlI1uLAXXwBN9MJCIV3Q7MNAN62gB4aYacwGoknKpBGhcv3AYzWvfM66oqmBAduwp/1QaAdUeyhrZ8vqoqmBrOh9CDxB8DiLNKXNqNKmEN0iaNGDZkLcQe8YO+ATvSDW1rg+vDEEkkpILSDW3AfTEe906I0b7lizOXsotw/XG0+0Irr0VI96dTeRx/0Ych+EfHr8fZT1NRSSiWCVo3HMfI94xT7WSKAKmkDH/wBRtu39Dh9racL/AE6KQt+JgB8L4zDPa7MFMbMI4TxjTgfM8T7T1Qbey3tti2Dp1wcXHtuMXH+F/9k=",
+};
+
+// Lookup a model in the product database (case-insensitive, partial match)
+function lookupProduct(input, db) {
+  if (!input) return null;
+  const source = db || PRODUCT_DB;
+  const q = input.trim().toUpperCase();
+  for (const [sku, data] of Object.entries(source)) {
+    if (sku.toUpperCase() === q) return { sku, ...data, verified: true };
+  }
+  for (const [sku, data] of Object.entries(source)) {
+    if (sku.toUpperCase().startsWith(q) || q.startsWith(sku.toUpperCase())) return { sku, ...data, verified: true };
+  }
+  return null;
+}
+
+// Format product DB entry as prompt context
+function formatProductContext(p) {
+  if (!p) return "";
+  const lines = [`VERIFIED PRODUCT DATA (from internal database — this is the authoritative source):`];
+  lines.push(`Model: ${p.sku}`);
+  lines.push(`Type: ${p.type}`);
+  if (p.heating) lines.push(`Heating: ${p.heating}`);
+  lines.push(`Pressure: ${p.pressure ? "Yes" : "No"}`);
+  if (p.cupSize) lines.push(`Cup Size: ${p.cupSize}`);
+  if (p.color) lines.push(`Color: ${p.color}`);
+  if (p.cookingModes) {
+    const total = (parseInt(p.cookingModes) || 0) + (parseInt(p.otherMenuModes) || 0);
+    lines.push(`Cooking Modes: ${p.cookingModes}${p.otherMenuModes ? ` (+${p.otherMenuModes} other menu modes = ${total} total)` : ""}`);
+    if (p.cookingModeNames) lines.push(`Cooking Mode Names: ${typeof p.cookingModeNames === "string" ? p.cookingModeNames : p.cookingModeNames.join(", ")}`);
+  }
+  if (p.otherMenuModes) lines.push(`Other Menu Modes: ${p.otherMenuModes}`);
+  lines.push(`Inner Pot: ${p.innerPot}`);
+  if (p.features.length) lines.push(`Features: ${p.features.join(", ")}`);
+  if (p.mfg) lines.push(`Country of Manufacture: ${p.mfg}`);
+  if (p.asin) lines.push(`ASIN: ${p.asin}`);
+  lines.push(`\nCRITICAL: The data above is from the internal verified product database — the single source of truth for all product specs. Do NOT add features, technologies, or specs that are NOT listed above.`);
+  return lines.join("\n");
+}
+
+// Amazon search volume data: 179 unique rice cooker keywords (Source: Amazon Product Opportunity Explorer, March 2026)
+const SEARCH_DATA = [
+{t:"rice cooker",v:14811563,g90:-8.1,g180:19.3,cs:72.0,cr:2.95,tier:"T1",cat:"general"},
+{t:"rice cooker small",v:1239585,g90:-7.9,g180:22.2,cs:6.49,cr:3.17,tier:"T1",cat:"size"},
+{t:"zojirushi rice cooker",v:1109293,g90:-18.0,g180:30.5,cs:48.88,cr:2.14,tier:"T1",cat:"brand"},
+{t:"aroma rice cooker",v:715032,g90:4.1,g180:21.1,cs:4.37,cr:3.84,tier:"T1",cat:"brand"},
+{t:"cuckoo rice cooker",v:508551,g90:-19.9,g180:24.7,cs:13.71,cr:1.23,tier:"T1",cat:"brand"},
+{t:"mini rice cooker",v:496061,g90:-3.1,g180:14.5,cs:2.04,cr:1.19,tier:"T2",cat:"size"},
+{t:"small rice cooker",v:464906,g90:2.4,g180:23.9,cs:2.59,cr:2.28,tier:"T2",cat:"size"},
+{t:"rice cooker 6 cup",v:426709,g90:-15.4,g180:19.4,cs:1.74,cr:3.51,tier:"T2",cat:"size"},
+{t:"arrocera elctrica",v:393101,g90:5.6,g180:18.8,cs:1.84,cr:1.34,tier:"T2",cat:"spanish"},
+{t:"tiger rice cooker",v:393883,g90:-2.0,g180:31.5,cs:67.33,cr:0.87,tier:"T2",cat:"brand"},
+{t:"rice maker",v:350717,g90:-8.1,g180:24.9,cs:1.74,cr:3.09,tier:"T2",cat:"type"},
+{t:"stainless steel rice cooker",v:348495,g90:15.5,g180:28.2,cs:37.55,cr:2.39,tier:"T2",cat:"material"},
+{t:"olla arrocera elctrica",v:345223,g90:2.1,g180:0.4,cs:1.38,cr:1.26,tier:"T2",cat:"spanish"},
+{t:"rice cooker 10 cup",v:331990,g90:-12.2,g180:3.3,cs:0.84,cr:1.6,tier:"T2",cat:"size"},
+{t:"rice cooker stainless steel inner pot",v:279443,g90:-10.6,g180:-10.1,cs:19.09,cr:2.02,tier:"T2",cat:"material"},
+{t:"rice robot",v:207408,g90:-8.1,g180:-4.7,cs:30.17,cr:3.94,tier:"T2",cat:"brand"},
+{t:"rice cooker 4 cup",v:203355,g90:-15.2,g180:11.2,cs:0.92,cr:2.94,tier:"T2",cat:"size"},
+{t:"olla arrocera",v:195907,g90:-23.5,g180:28.7,cs:0.72,cr:1.14,tier:"T2",cat:"spanish"},
+{t:"japanese rice cooker",v:171574,g90:-7.7,g180:22.9,cs:5.8,cr:0.94,tier:"T2",cat:"general"},
+{t:"rice cookers",v:161092,g90:-13.4,g180:47.5,cs:0.67,cr:2.11,tier:"T2",cat:"general"},
+{t:"cuckoo",v:159699,g90:-13.8,g180:13.1,cs:2.19,cr:0.46,tier:"T2",cat:"brand"},
+{t:"arrocera",v:133510,g90:-24.2,g180:15.9,cs:0.47,cr:1.07,tier:"T2",cat:"spanish"},
+{t:"rice cooker zojirushi",v:130421,g90:-14.9,g180:33.2,cs:5.93,cr:2.54,tier:"T2",cat:"brand"},
+{t:"rice pot",v:124048,g90:-14.3,g180:30.4,cs:0.12,cr:0.58,tier:"T2",cat:"type"},
+{t:"small rice cooker 2 cup",v:114812,g90:6.8,g180:6.5,cs:0.42,cr:1.53,tier:"T2",cat:"size"},
+{t:"pink rice cooker",v:112457,g90:16.3,g180:30.8,cs:69.02,cr:2.11,tier:"T2",cat:"style"},
+{t:"low carb rice cooker",v:106720,g90:-32.4,g180:33.7,cs:43.03,cr:0.91,tier:"T2",cat:"health"},
+{t:"rice cooker stainless steel",v:100005,g90:-8.2,g180:57.6,cs:9.27,cr:2.49,tier:"T2",cat:"material"},
+{t:"ninja rice cooker",v:97349,g90:-5.0,g180:29.3,cs:18.14,cr:0.54,tier:"T3",cat:"brand"},
+{t:"cosori rice cooker",v:94765,g90:39.5,g180:31.2,cs:40.55,cr:3.28,tier:"T3",cat:"brand"},
+{t:"rice steamer",v:91132,g90:4.0,g180:12.2,cs:0.24,cr:1.56,tier:"T3",cat:"type"},
+{t:"3 cup rice cooker",v:86496,g90:23.1,g180:24.0,cs:0.44,cr:2.6,tier:"T3",cat:"size"},
+{t:"rice robot as seen on tv",v:78667,g90:-11.5,g180:-71.9,cs:4.36,cr:5.06,tier:"T3",cat:"brand"},
+{t:"stainless steel rice cooker inner pot",v:72050,g90:9.6,g180:-2.2,cs:5.19,cr:1.63,tier:"T3",cat:"material"},
+{t:"small rice cooker 1 cup",v:70234,g90:4.7,g180:15.7,cs:16.3,cr:2.13,tier:"T3",cat:"size"},
+{t:"rice robot rice cooker",v:68940,g90:-17.1,g180:200.8,cs:13.79,cr:4.15,tier:"T3",cat:"brand"},
+{t:"toshiba rice cooker",v:63072,g90:-16.2,g180:49.9,cs:2.68,cr:2.26,tier:"T3",cat:"brand"},
+{t:"tatung rice cooker",v:62069,g90:-11.3,g180:71.4,cs:0.72,cr:0.08,tier:"T3",cat:"brand"},
+{t:"mini rice cooker 1 cup",v:57894,g90:-0.8,g180:21.2,cs:13.96,cr:1.44,tier:"T3",cat:"size"},
+{t:"rice cooker tiger",v:57904,g90:-13.5,g180:13.4,cs:8.04,cr:1.05,tier:"T3",cat:"brand"},
+{t:"korean rice cooker",v:55978,g90:-8.9,g180:-3.6,cs:63.35,cr:0.99,tier:"T3",cat:"general"},
+{t:"aroma stainless steel rice cooker",v:55537,g90:3.9,g180:58.9,cs:8.19,cr:4.31,tier:"T3",cat:"material"},
+{t:"tiger rice cooker 5.5 cup",v:52038,g90:-6.5,g180:-12.6,cs:5.62,cr:0.94,tier:"T3",cat:"brand"},
+{t:"zojirushi rice-cooker",v:50771,g90:-22.6,g180:82.2,cs:2.28,cr:1.06,tier:"T3",cat:"brand"},
+{t:"rice cooker with stainless steel inner pot",v:47788,g90:-21.9,g180:6.2,cs:3.42,cr:1.76,tier:"T3",cat:"material"},
+{t:"commercial rice cooker",v:43592,g90:1.0,g180:9.1,cs:45.09,cr:2.72,tier:"T3",cat:"commercial"},
+{t:"low sugar rice cooker",v:40771,g90:-36.5,g180:-23.2,cs:11.13,cr:0.54,tier:"T3",cat:"health"},
+{t:"dash rice cooker",v:36801,g90:0.8,g180:3.5,cs:11.01,cr:2.48,tier:"T3",cat:"brand"},
+{t:"mini rice cooker 2 cup",v:36266,g90:-3.8,g180:2.2,cs:6.59,cr:1.62,tier:"T3",cat:"size"},
+{t:"compact mini rice cooker small kitchen",v:36306,g90:526.1,g180:0.0,cs:0.73,cr:4.3,tier:"T3",cat:"size"},
+{t:"stainless rice cooker",v:36286,g90:4.4,g180:24.6,cs:3.31,cr:2.03,tier:"T3",cat:"material"},
+{t:"rice cooker cuckoo",v:35850,g90:-10.8,g180:26.3,cs:1.07,cr:1.69,tier:"T3",cat:"brand"},
+{t:"hamilton beach rice cooker",v:35156,g90:-15.5,g180:27.3,cs:5.33,cr:2.64,tier:"T3",cat:"brand"},
+{t:"comfee rice cooker",v:35067,g90:-13.8,g180:20.1,cs:0.26,cr:0.68,tier:"T3",cat:"brand"},
+{t:"rice cooker pink",v:33077,g90:10.3,g180:34.2,cs:19.43,cr:2.43,tier:"T3",cat:"style"},
+{t:"rice cooker japanese",v:32115,g90:-10.1,g180:16.8,cs:1.03,cr:1.01,tier:"T3",cat:"general"},
+{t:"cuckoo rice cooker 6 cups",v:32488,g90:-24.7,g180:-2.8,cs:0.69,cr:1.72,tier:"T3",cat:"brand"},
+{t:"1 cup rice cooker",v:31910,g90:-12.6,g180:31.6,cs:7.43,cr:1.58,tier:"T3",cat:"size"},
+{t:"olla arrocera cosori",v:30845,g90:4.0,g180:-4.2,cs:5.79,cr:1.69,tier:"T3",cat:"spanish"},
+{t:"cute rice cooker",v:30136,g90:7.3,g180:22.3,cs:8.09,cr:0.41,tier:"T3",cat:"style"},
+{t:"rice cooker ninja",v:29770,g90:0.6,g180:26.5,cs:5.94,cr:0.68,tier:"T3",cat:"brand"},
+{t:"portable rice cooker",v:29614,g90:0.6,g180:16.1,cs:5.54,cr:0.58,tier:"T3",cat:"portable"},
+{t:"dash mini rice cooker",v:29670,g90:-6.9,g180:25.7,cs:9.82,cr:3.81,tier:"T3",cat:"brand"},
+{t:"cuckoo pressure rice cooker",v:29498,g90:-7.2,g180:170.5,cs:0.83,cr:0.85,tier:"T3",cat:"brand"},
+{t:"zojirushi rice maker",v:28163,g90:-21.7,g180:33.4,cs:1.21,cr:2.31,tier:"T3",cat:"brand"},
+{t:"tiger rice cooker 3 cup",v:28063,g90:-22.5,g180:-8.2,cs:3.32,cr:1.02,tier:"T3",cat:"brand"},
+{t:"pressure rice cooker",v:27514,g90:-17.5,g180:27.8,cs:0.31,cr:0.33,tier:"T3",cat:"technology"},
+{t:"aroma rice cooker stainless steel",v:26059,g90:-19.9,g180:219.5,cs:3.86,cr:3.89,tier:"T3",cat:"material"},
+{t:"steel rice cooker",v:25585,g90:-15.2,g180:35.8,cs:2.33,cr:1.9,tier:"T3",cat:"material"},
+{t:"zojirushi rice cooker 3 cups",v:25384,g90:-49.6,g180:-13.3,cs:2.42,cr:3.12,tier:"T3",cat:"brand"},
+{t:"rice warmer",v:24909,g90:-14.0,g180:22.5,cs:35.76,cr:1.37,tier:"T3",cat:"type"},
+{t:"neuro fuzzy rice cooker",v:21266,g90:12.2,g180:57.2,cs:1.29,cr:2.92,tier:"T3",cat:"technology"},
+{t:"tatung",v:21607,g90:-31.3,g180:96.1,cs:0.07,cr:0.0,tier:"T3",cat:"brand"},
+{t:"induction rice cooker",v:20333,g90:-24.8,g180:30.5,cs:18.54,cr:0.63,tier:"T3",cat:"technology"},
+{t:"arrocera ninja",v:19368,g90:7.1,g180:50.0,cs:3.41,cr:0.24,tier:"T4",cat:"spanish"},
+{t:"arrocera cosori",v:19455,g90:-0.9,g180:30.8,cs:4.25,cr:1.73,tier:"T4",cat:"spanish"},
+{t:"cookoo ricecooker",v:18366,g90:-13.7,g180:30.4,cs:23.37,cr:1.5,tier:"T4",cat:"brand"},
+{t:"stainless steel inner pot rice cooker",v:18290,g90:7.5,g180:54.3,cs:1.4,cr:1.15,tier:"T4",cat:"material"},
+{t:"travel rice cooker",v:17999,g90:-3.7,g180:4.9,cs:3.25,cr:0.88,tier:"T4",cat:"portable"},
+{t:"rice warmer commercial",v:17540,g90:-8.3,g180:18.6,cs:41.84,cr:2.31,tier:"T4",cat:"commercial"},
+{t:"olla arrocera ninja",v:17427,g90:-11.8,g180:7.9,cs:2.28,cr:0.22,tier:"T4",cat:"spanish"},
+{t:"carb reducing rice cooker",v:16358,g90:-26.1,g180:62.3,cs:6.96,cr:0.73,tier:"T4",cat:"health"},
+{t:"rice cooker 1 cup",v:15838,g90:0.6,g180:24.9,cs:3.34,cr:1.87,tier:"T4",cat:"size"},
+{t:"portable rice cooker for travel mini",v:15241,g90:7.6,g180:-10.3,cs:2.86,cr:0.59,tier:"T4",cat:"portable"},
+{t:"rice cooker tiger brand",v:14451,g90:-16.8,g180:-1.3,cs:1.54,cr:0.88,tier:"T4",cat:"brand"},
+{t:"starch removing rice cooker",v:13878,g90:1.7,g180:63.6,cs:6.46,cr:0.54,tier:"T4",cat:"health"},
+{t:"zojirushi rice cooker 3cup",v:13873,g90:113.9,g180:2614.0,cs:1.9,cr:4.25,tier:"T4",cat:"brand"},
+{t:"tatung rice cooker stainless steel",v:13753,g90:-13.0,g180:116.5,cs:0.32,cr:0.31,tier:"T4",cat:"brand"},
+{t:"dash rice cooker mini",v:13214,g90:-11.2,g180:10.7,cs:3.9,cr:3.6,tier:"T4",cat:"brand"},
+{t:"rice cooker cute",v:12665,g90:2.6,g180:37.2,cs:3.44,cr:0.42,tier:"T4",cat:"style"},
+{t:"ninja rice cooker and steamer",v:12549,g90:-16.4,g180:-21.1,cs:1.21,cr:0.34,tier:"T4",cat:"brand"},
+{t:"1 cup rice cooker mini",v:12316,g90:-6.5,g180:-12.3,cs:2.35,cr:1.23,tier:"T4",cat:"size"},
+{t:"rice cooker with stainless steel pot",v:12186,g90:-25.6,g180:349.2,cs:1.3,cr:1.65,tier:"T4",cat:"material"},
+{t:"2 cup rice cooker mini",v:12107,g90:-1.9,g180:-4.7,cs:2.26,cr:1.99,tier:"T4",cat:"size"},
+{t:"rice cooker steamer basket",v:11612,g90:-1.1,g180:17.2,cs:0.05,cr:0.05,tier:"T4",cat:"general"},
+{t:"electric rice cooker stainless steel",v:11575,g90:-40.7,g180:-12.3,cs:0.55,cr:1.59,tier:"T4",cat:"material"},
+{t:"rice cooker small 1 cup",v:11566,g90:8.9,g180:5.0,cs:2.58,cr:2.11,tier:"T4",cat:"size"},
+{t:"olla arrocera de acero inoxidable",v:10894,g90:23.6,g180:49.9,cs:0.99,cr:0.68,tier:"T4",cat:"spanish"},
+{t:"30 cup rice cooker",v:10570,g90:-29.1,g180:31.9,cs:47.39,cr:2.98,tier:"T4",cat:"size"},
+{t:"stainless rice cooker inner pot",v:10454,g90:-4.1,g180:-6.1,cs:0.72,cr:1.45,tier:"T4",cat:"material"},
+{t:"ih rice cooker",v:10338,g90:-35.3,g180:23.6,cs:7.13,cr:0.36,tier:"T4",cat:"technology"},
+{t:"low sugar rice cooker made in japan",v:10500,g90:-13.2,g180:-39.6,cs:3.11,cr:0.41,tier:"T4",cat:"health"},
+{t:"induction heating rice cooker",v:10231,g90:30.7,g180:373.5,cs:14.7,cr:0.77,tier:"T4",cat:"technology"},
+{t:"rice cooker commercial",v:10293,g90:-6.4,g180:7.5,cs:10.42,cr:3.31,tier:"T4",cat:"commercial"},
+{t:"zojirushi rice cooker 3 cup",v:9724,g90:-25.2,g180:63.2,cs:1.69,cr:2.94,tier:"T4",cat:"brand"},
+{t:"zojirushi 3 cup rice cooker",v:9954,g90:-26.6,g180:53.1,cs:1.74,cr:4.13,tier:"T4",cat:"brand"},
+{t:"tiny rice cooker",v:9622,g90:7.7,g180:16.2,cs:1.98,cr:1.27,tier:"T4",cat:"size"},
+{t:"aroma stainless steel inner pot",v:9523,g90:27.4,g180:63.5,cs:0.9,cr:2.07,tier:"T4",cat:"material"},
+{t:"stainless steel rice cooker 6 cup",v:9348,g90:3.6,g180:-0.6,cs:0.72,cr:2.69,tier:"T4",cat:"material"},
+{t:"zojirushi rice cooker pot",v:29304,g90:21.4,g180:2748.1,cs:2.29,cr:2.01,tier:"T4",cat:"brand"},
+{t:"commercial rice cooker 100 cup",v:9048,g90:19.2,g180:33.0,cs:10.19,cr:1.87,tier:"T4",cat:"commercial"},
+{t:"arrocera elctrica ninja",v:8945,g90:11.0,g180:-24.2,cs:1.27,cr:0.16,tier:"T4",cat:"spanish"},
+{t:"single serve rice cooker",v:8863,g90:43.8,g180:63.2,cs:2.73,cr:1.55,tier:"T4",cat:"size"},
+{t:"rice cooker hamilton beach",v:8817,g90:-23.0,g180:9.9,cs:1.13,cr:3.16,tier:"T4",cat:"brand"},
+{t:"rice cooker zojirushi 3 cup",v:8610,g90:-33.5,g180:-2.3,cs:1.16,cr:3.4,tier:"T4",cat:"brand"},
+{t:"zojirushi induction rice cooker",v:8532,g90:-32.4,g180:63.6,cs:13.0,cr:1.85,tier:"T4",cat:"brand"},
+{t:"stainless steel rice pot",v:8104,g90:11.8,g180:57.3,cs:0.38,cr:0.46,tier:"T4",cat:"material"},
+{t:"aroma rice cooker steamer basket",v:8057,g90:51.5,g180:63.7,cs:0.24,cr:0.33,tier:"T4",cat:"brand"},
+{t:"small rice cooker 2 cup mini",v:7965,g90:52.4,g180:169.1,cs:1.3,cr:1.11,tier:"T4",cat:"size"},
+{t:"rice cooker korean",v:7880,g90:-3.8,g180:4.0,cs:10.05,cr:1.19,tier:"T4",cat:"general"},
+{t:"rice cooker small stainless steel",v:7801,g90:-25.7,g180:197.4,cs:0.7,cr:2.52,tier:"T4",cat:"material"},
+{t:"travel rice cooker mini",v:7740,g90:-12.4,g180:-1.8,cs:1.64,cr:1.05,tier:"T4",cat:"portable"},
+{t:"olla cosori para arroz",v:7674,g90:10.6,g180:-5.3,cs:1.47,cr:1.94,tier:"T4",cat:"spanish"},
+{t:"rice robot reviews",v:7372,g90:10.3,g180:225.4,cs:1.74,cr:1.76,tier:"T4",cat:"brand"},
+{t:"rice cooker stainless steel pot",v:7298,g90:-46.7,g180:142.9,cs:0.48,cr:1.65,tier:"T4",cat:"material"},
+{t:"zojirushi rice cooker induction heating",v:7158,g90:-16.8,g180:501.1,cs:18.58,cr:2.45,tier:"T4",cat:"brand"},
+{t:"olla arrocera elctrica ninja",v:7007,g90:-9.6,g180:-5.3,cs:0.8,cr:0.25,tier:"T4",cat:"spanish"},
+{t:"rice cooker low carb",v:6975,g90:-27.4,g180:28.8,cs:2.57,cr:0.91,tier:"T4",cat:"health"},
+{t:"mini rice cookers",v:6885,g90:-71.2,g180:-42.6,cs:0.32,cr:2.06,tier:"T4",cat:"size"},
+{t:"2 cups rice cooker",v:6670,g90:-26.2,g180:-24.1,cs:0.85,cr:1.4,tier:"T4",cat:"size"},
+{t:"commercial rice warmer",v:6581,g90:-19.3,g180:19.7,cs:15.0,cr:2.3,tier:"T4",cat:"commercial"},
+{t:"commercial rice cooker 60 cup",v:6477,g90:-0.6,g180:-5.2,cs:7.16,cr:4.27,tier:"T4",cat:"commercial"},
+{t:"60 cup rice cooker",v:6397,g90:-25.4,g180:-1.8,cs:5.73,cr:3.62,tier:"T4",cat:"size"},
+{t:"single serving rice cooker",v:6421,g90:44.4,g180:34.3,cs:1.21,cr:1.26,tier:"T4",cat:"size"},
+{t:"hamilton beach cooker and steamer 37519",v:6289,g90:-1.8,g180:48.4,cs:1.57,cr:4.59,tier:"T4",cat:"brand"},
+{t:"starch free rice cooker",v:6245,g90:84.9,g180:218.3,cs:4.9,cr:0.54,tier:"T4",cat:"health"},
+{t:"mini rice maker",v:6006,g90:-6.1,g180:10.4,cs:1.18,cr:1.94,tier:"T4",cat:"size"},
+{t:"tiger 5.5-cup micom rice cooker and warmer",v:5981,g90:71.4,g180:53.1,cs:1.55,cr:0.85,tier:"T4",cat:"brand"},
+{t:"zojirushi rice cooker small",v:5801,g90:-56.1,g180:28.9,cs:0.62,cr:2.74,tier:"T4",cat:"brand"},
+{t:"cookoo",v:5796,g90:-38.5,g180:-3.2,cs:3.22,cr:0.87,tier:"T4",cat:"brand"},
+{t:"cosori arrocera",v:5838,g90:-13.6,g180:2.3,cs:1.24,cr:2.07,tier:"T4",cat:"spanish"},
+{t:"rice cooker 30 cups",v:5588,g90:-22.6,g180:31.5,cs:28.01,cr:3.32,tier:"T4",cat:"size"},
+{t:"rice cooker with starch separator",v:5531,g90:47.8,g180:45.0,cs:2.81,cr:0.41,tier:"T4",cat:"health"},
+{t:"rice cooker cosori",v:5276,g90:54.8,g180:26.6,cs:2.07,cr:3.75,tier:"T4",cat:"brand"},
+{t:"extra large rice cooker",v:5127,g90:-3.8,g180:21.9,cs:24.58,cr:1.85,tier:"T4",cat:"size"},
+{t:"tiger brand rice cooker",v:5068,g90:-18.0,g180:33.5,cs:0.75,cr:0.71,tier:"T4",cat:"brand"},
+{t:"low carb rice cooker japan",v:4921,g90:-48.4,g180:16.4,cs:1.75,cr:0.91,tier:"T4",cat:"health"},
+{t:"tiger rice cooker 5 cup",v:4711,g90:-40.6,g180:116.4,cs:0.54,cr:1.14,tier:"T4",cat:"brand"},
+{t:"hamilton rice cooker",v:4666,g90:-32.0,g180:12.0,cs:0.5,cr:2.25,tier:"T4",cat:"brand"},
+{t:"rice cooker low carb low sugar",v:4572,g90:-44.7,g180:500.1,cs:2.49,cr:1.07,tier:"T4",cat:"health"},
+{t:"rice cooker ih",v:4517,g90:-46.7,g180:2.5,cs:3.15,cr:0.84,tier:"T4",cat:"technology"},
+{t:"sushi rice warmer",v:4303,g90:1.0,g180:10.3,cs:7.38,cr:1.11,tier:"T4",cat:"type"},
+{t:"zojirushi np-hcc10",v:4265,g90:-25.4,g180:38.7,cs:5.8,cr:2.83,tier:"T4",cat:"brand"},
+{t:"rice cooker induction",v:4190,g90:-43.1,g180:27.6,cs:3.56,cr:1.05,tier:"T4",cat:"technology"},
+{t:"tiger 3 cup rice cooker",v:4189,g90:1.3,g180:21.9,cs:0.75,cr:0.97,tier:"T4",cat:"brand"},
+{t:"zojirushi 3 cup",v:4215,g90:-13.2,g180:32.6,cs:0.91,cr:3.65,tier:"T4",cat:"brand"},
+{t:"rice cooker for diabetics",v:4175,g90:-24.2,g180:51.0,cs:1.95,cr:0.71,tier:"T4",cat:"health"},
+{t:"rice cooker tiger",v:4059,g90:-53.9,g180:-14.5,cs:0.24,cr:0.68,tier:"T4",cat:"brand"},
+{t:"diabetic rice cooker",v:4033,g90:-32.4,g180:37.5,cs:1.58,cr:1.16,tier:"T4",cat:"health"},
+{t:"industrial rice cooker",v:3865,g90:31.6,g180:19.4,cs:4.52,cr:1.34,tier:"T4",cat:"commercial"},
+{t:"cosori rice cooker 10 cup",v:3797,g90:53.8,g180:24.3,cs:1.63,cr:5.74,tier:"T4",cat:"brand"},
+{t:"zojirushi rice cooker induction",v:3713,g90:-33.7,g180:17.9,cs:5.8,cr:2.53,tier:"T4",cat:"brand"},
+{t:"rice cooker with starch remover",v:3586,g90:-45.7,g180:1234.4,cs:1.61,cr:0.41,tier:"T4",cat:"health"},
+{t:"tiger cooker",v:3592,g90:4.1,g180:-2.4,cs:0.48,cr:0.47,tier:"T4",cat:"brand"},
+{t:"rice cooker with strainer",v:3602,g90:-38.9,g180:88.2,cs:0.91,cr:0.13,tier:"T4",cat:"health"},
+{t:"starch draining rice cooker",v:3538,g90:-53.9,g180:94.6,cs:1.12,cr:0.59,tier:"T4",cat:"health"},
+{t:"tiger 5.5 cup rice cooker",v:3410,g90:-12.9,g180:-14.9,cs:0.33,cr:1.26,tier:"T4",cat:"brand"},
+{t:"np-hcc10",v:3366,g90:3.8,g180:6.0,cs:5.21,cr:3.5,tier:"T4",cat:"brand"},
+{t:"sugar removal rice cooker",v:3352,g90:72.6,g180:-53.4,cs:1.27,cr:0.47,tier:"T4",cat:"health"},
+{t:"large rice cooker 60 cup",v:3276,g90:-16.1,g180:28.6,cs:2.79,cr:2.44,tier:"T4",cat:"size"},
+{t:"cosori rice cooker 6 cup",v:3169,g90:57.0,g180:10.4,cs:1.06,cr:2.14,tier:"T4",cat:"brand"},
+{t:"zojirushi mini rice cooker",v:3141,g90:-34.6,g180:4.2,cs:0.37,cr:1.65,tier:"T4",cat:"brand"},
+{t:"zojirushi 3-cup rice cooker",v:2806,g90:-3.0,g180:24.1,cs:0.52,cr:4.09,tier:"T4",cat:"brand"},
+{t:"instant pot low carb rice cooker",v:2706,g90:20.2,g180:180.6,cs:2.17,cr:2.1,tier:"T4",cat:"health"},
+{t:"zojirushi np-hcc10xh",v:2692,g90:-27.8,g180:16.7,cs:4.46,cr:4.23,tier:"T4",cat:"brand"},
+{t:"toshiba low carb rice cooker",v:2614,g90:-28.0,g180:80.2,cs:1.36,cr:2.06,tier:"T4",cat:"brand"},
+{t:"olla arrocera cosori 10 tazas",v:1754,g90:-27.0,g180:-33.0,cs:0.28,cr:1.93,tier:"T4",cat:"brand"},
+{t:"low-carb rice cooker",v:3629,g90:-34.1,g180:143.3,cs:1.58,cr:0.41,tier:"T4",cat:"health"},
+{t:"zolele rice cooker low sugar",v:9346,g90:-43.1,g180:-70.0,cs:1.14,cr:0.12,tier:"T4",cat:"brand"},
+];
+
+const SV_TIER_CONFIG = { T1: { label: "Tier 1", color: "#16a34a", bg: "rgba(22,163,74,0.1)", desc: "500K+" }, T2: { label: "Tier 2", color: "#d97706", bg: "rgba(217,119,6,0.1)", desc: "100K–500K" }, T3: { label: "Tier 3", color: "#6366f1", bg: "rgba(99,102,241,0.1)", desc: "20K–100K" }, T4: { label: "Tier 4", color: "#94a3b8", bg: "rgba(148,163,184,0.1)", desc: "<20K" } };
+const SV_CAT_CONFIG = { general: "General", brand: "Brand", spanish: "Spanish", size: "Size", material: "Material", technology: "Technology", health: "Health/Low-Carb", commercial: "Commercial", style: "Style/Color", type: "Product Type", portable: "Portable/Travel" };
+
+const CATEGORY_LABELS = { rice_cooker: "Rice Cooker", water_purifier: "Water Purifier", air_purifier: "Air Purifier", bidet: "Bidet", other: "Other" };
+
+const ASIN_DATA = [
+  { asin: "B08WFNV82W", sku: "CR-0675FW" },{ asin: "B08DP4TGNN", sku: "CRP-LHTR0609FW" },{ asin: "B082QV3J6K", sku: "CRP-PK1001S" },{ asin: "B01MQWFGKG", sku: "CR-0655F" },{ asin: "B0B4MYBLZQ", sku: "CR-0375FW" },{ asin: "B0CKWGX2J6", sku: "CR-0375FG" },{ asin: "B00U1XN4L8", sku: "CR-3032" },{ asin: "B087H24T6G", sku: "CRP-RT0609FB" },{ asin: "B087H9ZVKD", sku: "CRP-RT0609FW" },{ asin: "B01JRTZVVM", sku: "CRP-P0609S" },{ asin: "B0B5B3QBV1", sku: "CR-0675FG" },{ asin: "B09XPC3MNM", sku: "CRP-MHTR0309F" },{ asin: "B072NFGLSV", sku: "CRP-EHSS0309FG" },{ asin: "B0B7Q6DF32", sku: "CRP-ST1009FG" },{ asin: "B00XQEM2E4", sku: "CRP-P1009SB" },{ asin: "B00XQEM2BM", sku: "CRP-P1009SW" },{ asin: "B0BHMW3BQB", sku: "CRP-ST1009FW" },{ asin: "B0B7P646FD", sku: "CRP-ST0609FG" },{ asin: "B0B44XTV71", sku: "CRP-ST0609FW" },{ asin: "B0831RL6XK", sku: "CR-0632F" },{ asin: "B0CYNVF15J", sku: "CR-1095" },{ asin: "B08TQX6FSS", sku: "CBM-AAB101S" },{ asin: "B09SVVSFK7", sku: "CR-0375F" },{ asin: "B071H1FXFC", sku: "CRP-HS0657FW" },{ asin: "B08F25FVY6", sku: "CRP-LHTR1009FW" },{ asin: "B00D2CL37W", sku: "CR-0631F" },{ asin: "B075R7VL2Z", sku: "CMC-QSB501S" },{ asin: "B0CQTTC1VG", sku: "CR-3055" },{ asin: "B00NUB6ARI", sku: "CRP-CHSS1009F" },{ asin: "B0CHG3HVJX", sku: "CR-0641F" },{ asin: "B0BBPPLBWB", sku: "CRP-JHR1009F" },{ asin: "B01LYLW8P6", sku: "CR-0671V" },{ asin: "B083GBLDF3", sku: "CR-1020F" },{ asin: "B0721ZMW8K", sku: "CRP-DHSR0609FD" },{ asin: "B07NJSBSQ3", sku: "CMC-QAB501SB" },{ asin: "B0C91WFFWQ", sku: "CWP-A501TW" },{ asin: "B09NMSXPB2", sku: "CAC-K1910FW" },{ asin: "B0891PDG9N", sku: "CAC-I0510FW" },{ asin: "B0BBP8X8GG", sku: "CRP-JHR0609F" },{ asin: "B00CCVNX0O", sku: "CR-0351FR" },{ asin: "B072NFM485", sku: "CRP-N0681FV" },{ asin: "B0BQKWQBY8", sku: "CBT-N1030EW" },{ asin: "B00NJ12KAU", sku: "CRP-BHSS0609F" },{ asin: "B00PGC9R42", sku: "CCP-DH06" },{ asin: "B08ZH4JJHM", sku: "CAC-I0510FW BUNDLE" },{ asin: "B0842DDJL4", sku: "CR-0810F" },{ asin: "B071KMD3GY", sku: "CRP-HZ0683FR" },{ asin: "B01LZWPUUW", sku: "CR-0351FR" },{ asin: "B0BWGSQ7Q8", sku: "CF-AC1410WH" },{ asin: "B08H3HGY6Y", sku: "CAC-J1510FW" },{ asin: "B00PGBUK0I", sku: "CCP-DH10" },{ asin: "B0D5GJGCXN", sku: "CVC-A1410NW" },{ asin: "B0991JHP9G", sku: "CMC-ZSN601F" },{ asin: "B07ZQSCRSN", sku: "CMC-ASB501F" },{ asin: "B09KBG7Z2R", sku: "CAC-AB0610FI" },{ asin: "B0C125Y46W", sku: "CAFG-A0601S" },{ asin: "B0BLJ7NCQL", sku: "ND-A0609FG" },{ asin: "B00HUWDKWG", sku: "CCP-10" },{ asin: "B0D7GH3KTS", sku: "CF-ECL1010WH" },{ asin: "B08CBKKL9Z", sku: "CMC-ASB601F" },{ asin: "B08H4TZQ1N", sku: "CWC-BB001C" },{ asin: "B0BYRFF57N", sku: "CAFO-A2601S" },{ asin: "B08HP1HCQG", sku: "CS-A0250AW" },{ asin: "B09KT5H27B", sku: "CBT-I1030RW" },{ asin: "B0DJG9XZ1V", sku: "CCM-AK011B" },{ asin: "B0B8GGDRTC", sku: "CAC-R1510FW" },{ asin: "B0C363Y7HX", sku: "CR-0633F" },{ asin: "B0BQKPK1G7", sku: "CP-ADR031UW" },{ asin: "B0DG7VT7KJ", sku: "CK-G170BS" },{ asin: "B0172OJAIO", sku: "CWP-333G" },{ asin: "B0BFD57VRL", sku: "CACFS-K12M03US" },{ asin: "B0BZGTKLDX", sku: "CACFS-R12M03US" },{ asin: "B0BF8V1THG", sku: "CACF-ABAF" },{ asin: "B0DL7SYPVW", sku: "CACF-KAL" },{ asin: "B09BG767CZ", sku: "CIM-AS09M10S" },{ asin: "B09SVVSFK7", sku: "CR-0375F (Dupe)" },{ asin: "B0787GV5KB", sku: "CRP-JHSR0609F" },{ asin: "B07SVSQCZ1", sku: "CFM-D60W" },{ asin: "B07GDGTMJ6", sku: "CAC-03V10W" },{ asin: "B0DYKWV9HW", sku: "CCM-BD011B" },{ asin: "B0DXQQXCBK", sku: "COP-B2810HGB" },{ asin: "B07LFPK4GD", sku: "CPF-802P" },{ asin: "B019486ADO", sku: "CR-0671V" },{ asin: "B07L8PNYVB", sku: "CP-MN031W" },{ asin: "B09GK4HHSV", sku: "CVB-D50SB" },{ asin: "B09M7MSWSB", sku: "CVB-F50SB" },{ asin: "B0DXR672QZ", sku: "CFP-B2810HGB" },{ asin: "B0F51W2R91", sku: "CR-0661F" },{ asin: "B071KM9XTN", sku: "CRP-HN1059FR" },{ asin: "B0DZQHG4NL", sku: "CAC-AA0910FW" },{ asin: "B0FPYDZT52", sku: "CR-0601C" },{ asin: "B0FXNYNHMX", sku: "CRP-OHTR0609FWW" },{ asin: "B0FXNXR46R", sku: "CRP-PHTR0609FSS" },{ asin: "B0G5TQS5R8", sku: "CR-0301C" },{ asin: "B0GJGDC36Z", sku: "CR-HA0810FG" },{ asin: "B0GJJDG93W", sku: "CR-HA0810FW" },{ asin: "B0GPGXCYBW", sku: "CRP-LHTAR0609FW" },{ asin: "B0GPHBR65G", sku: "CRP-LHTAR0609FB" },
+];
+
+// Backend keyword tool: per-category field config
+const BK_CATEGORY_CONFIG = {
+  rice_cooker: {
+    label: "Rice Cooker",
+    fields: [
+      { key: "technology", label: "Technology", type: "select", options: [
+        { value: "Basic", label: "Basic (On/Off)" }, { value: "Micom", label: "Micom (Fuzzy Logic)" },
+        { value: "Electric Heating Pressure", label: "Electric Heating Pressure" },
+        { value: "Twin Pressure", label: "Twin Pressure" }, { value: "Twin Pressure Induction Heating", label: "Twin Pressure + Induction Heating" },
+        { value: "Induction Heating Pressure", label: "Induction Heating Pressure" },
+        { value: "Induction Non Pressure", label: "Induction Heating (Non Pressure)" },
+        { value: "HP High Pressure", label: "HP (High Pressure)" }, { value: "Commercial", label: "Commercial" },
+      ]},
+      { key: "cupSize", label: "Cup Size (Uncooked)", type: "select", options: [
+        { value: "3", label: "3-Cup" }, { value: "6", label: "6-Cup" }, { value: "8", label: "8-Cup" },
+        { value: "10", label: "10-Cup" }, { value: "12", label: "12-Cup" }, { value: "30", label: "30-Cup (Commercial)" },
+      ]},
+      { key: "material", label: "Inner Pot Material", type: "select", options: [
+        { value: "Nonstick", label: "Nonstick" }, { value: "Stainless Steel", label: "Stainless Steel (Full)" }, { value: "Stainless Nonstick", label: "Stainless Nonstick" },
+        { value: "X-wall Diamond", label: "X-wall Diamond Coating" }, { value: "Marble-Coated", label: "Marble-Coated Nonstick" }, { value: "Ceramic", label: "Ceramic" },
+      ]},
+      { key: "color", label: "Color", type: "select", options: [
+        { value: "White", label: "White" }, { value: "Black", label: "Black" }, { value: "Red", label: "Red" },
+        { value: "Gray", label: "Gray" }, { value: "Dark Gray", label: "Dark Gray" }, { value: "Silver", label: "Silver" },
+        { value: "Stainless", label: "Stainless" }, { value: "Pink", label: "Pink" }, { value: "Gold", label: "Gold" }, { value: "Copper", label: "Copper" },
+      ]},
+    ],
+    features: ["Keep Warm", "Delay Timer", "Auto Clean", "Quick Rice", "Voice Guide", "Smart Algorithm", "Steamer Basket", "Multi-Cook", "Low Carb", "Turbo Mode", "GABA Rice", "Slow Cook", "Water Capture", "Preset Timer", "Silent Pressure System", "Ideal for Delicate Grains"],
+    competitors: "zojirushi tiger aroma cosori toshiba comfee dash ninja instant pot tatung yum asia sakura panasonic hitachi midea hamilton beach black decker cuisinart",
+    spanishTerms: "arrocera olla arrocera arrocera electrica olla arrocera electrica cocedor de arroz rice robot",
+    synonyms: "rice maker rice pot rice steamer grain cooker multi cooker slow cooker food steamer hot pot",
+  },
+  water_purifier: {
+    label: "Water Purifier",
+    fields: [
+      { key: "technology", label: "Filtration Type", type: "select", options: [
+        { value: "Nano Positive", label: "Nano Positive" }, { value: "Reverse Osmosis", label: "Reverse Osmosis (RO)" },
+      ]},
+      { key: "capacity", label: "Daily Capacity", type: "select", options: [
+        { value: "50 GPD", label: "50 GPD" }, { value: "75 GPD", label: "75 GPD" }, { value: "100 GPD", label: "100 GPD" },
+        { value: "400 GPD", label: "400 GPD" }, { value: "800 GPD", label: "800 GPD" },
+      ]},
+      { key: "installation", label: "Installation Type", type: "select", options: [
+        { value: "Under Sink", label: "Under Sink" }, { value: "Countertop", label: "Countertop" },
+      ]},
+      { key: "color", label: "Color", type: "select", options: [
+        { value: "White", label: "White" }, { value: "Black", label: "Black" }, { value: "Silver", label: "Silver" },
+      ]},
+    ],
+    features: ["Smart Display", "Filter Change Indicator", "Tankless", "Self-Cleaning", "Hot Water Dispenser", "UV Sterilization", "Mineral Enhancement", "WiFi Connected"],
+    competitors: "brita pur aquasana waterdrop ispring apec brondell clearly filtered berkey frizzlife",
+    spanishTerms: "purificador de agua filtro de agua dispensador de agua",
+    synonyms: "water filter water filtration system water dispenser drinking water purifier reverse osmosis system RO water filter nano filtration",
+  },
+  air_purifier: {
+    label: "Air Purifier",
+    fields: [
+      { key: "technology", label: "Filter Configuration", type: "select", options: [
+        { value: "True HEPA H13", label: "True HEPA H13" }, { value: "True HEPA H13 + Carbon", label: "True HEPA H13 + Activated Carbon Filter" },
+        { value: "True HEPA H13 + Allergy", label: "True HEPA H13 + Allergy Filter" }, { value: "True HEPA H13 + Carbon + Allergy", label: "True HEPA H13 + Carbon + Allergy Filters" },
+      ]},
+      { key: "coverage", label: "Room Coverage", type: "select", options: [
+        { value: "Small", label: "Small (up to 200 sq ft)" }, { value: "Medium", label: "Medium (200-400 sq ft)" },
+        { value: "Large", label: "Large (400-800 sq ft)" }, { value: "XL", label: "X-Large (800+ sq ft)" },
+      ]},
+      { key: "color", label: "Color", type: "select", options: [
+        { value: "White", label: "White" }, { value: "Black", label: "Black" }, { value: "Gray", label: "Gray" },
+      ]},
+    ],
+    features: ["Auto Mode", "Sleep Mode", "Air Quality Sensor", "Timer", "WiFi Connected", "Child Lock", "Filter Indicator", "Odor Removal", "Allergen Removal", "Pet Hair"],
+    competitors: "dyson levoit coway blueair honeywell winix molekule iqair rabbit air",
+    spanishTerms: "purificador de aire filtro de aire",
+    synonyms: "air cleaner air filter HEPA air purifier H13 air purifier room air purifier allergy air purifier smoke air purifier",
+  },
+  bidet: {
+    label: "Bidet",
+    fields: [
+      { key: "technology", label: "Type", type: "select", options: [
+        { value: "Electronic Seat", label: "Electronic Bidet Seat" }, { value: "Non-Electric Attachment", label: "Non-Electric Attachment" },
+        { value: "Integrated Toilet", label: "Integrated Smart Toilet" }, { value: "Portable", label: "Portable/Travel" },
+      ]},
+      { key: "fitSize", label: "Toilet Shape", type: "select", options: [
+        { value: "Elongated", label: "Elongated" }, { value: "Round", label: "Round" }, { value: "Universal", label: "Universal Fit" },
+      ]},
+      { key: "color", label: "Color", type: "select", options: [
+        { value: "White", label: "White" }, { value: "Beige", label: "Beige" }, { value: "Silver", label: "Silver" },
+      ]},
+    ],
+    features: ["Heated Seat", "Warm Water", "Air Dryer", "Deodorizer", "Night Light", "Remote Control", "Self-Cleaning Nozzle", "Adjustable Pressure", "Oscillating Spray", "Energy Save"],
+    competitors: "toto washlet brondell bio bidet tushy kohler novita smartbidet omigo alpha",
+    spanishTerms: "bidet asiento bidet electronico",
+    synonyms: "bidet toilet seat bidet attachment electric bidet smart toilet seat washlet japanese toilet seat",
+  },
+  other: {
+    label: "Other Product",
+    fields: [
+      { key: "productType", label: "Product Type", type: "text" },
+      { key: "color", label: "Color", type: "select", options: [
+        { value: "White", label: "White" }, { value: "Black", label: "Black" }, { value: "Red", label: "Red" },
+        { value: "Gray", label: "Gray" }, { value: "Silver", label: "Silver" },
+      ]},
+    ],
+    features: ["Smart Features", "WiFi Connected", "Timer", "Auto Mode", "Energy Efficient", "Compact Design"],
+    competitors: "",
+    spanishTerms: "",
+    synonyms: "",
+  },
+};
+const confidenceConfig = {
+  official: { label: "Official Docs", color: "#16a34a", bg: "rgba(22,163,74,0.1)" },
+  partial: { label: "Partial Docs", color: "#d97706", bg: "rgba(217,119,6,0.1)" },
+  limited: { label: "Best Practices", color: "#94a3b8", bg: "rgba(148,163,184,0.1)" },
+};
+
+// Memoized pure components
+const ScoreRing = memo(function ScoreRing({ score }) {
+  const pct = score / 10;
+  const r = 22, circ = 2 * Math.PI * r;
+  const color = score >= 8 ? "#16a34a" : score >= 5 ? "#d97706" : "#dc2626";
+  return (
+    <div style={{ position: "relative", width: 56, height: 56, flexShrink: 0 }}>
+      <svg width={56} height={56} viewBox="0 0 56 56">
+        <circle cx={28} cy={28} r={r} fill="none" stroke="#f0eeeb" strokeWidth={4} />
+        <circle cx={28} cy={28} r={r} fill="none" stroke={color} strokeWidth={4}
+          strokeDasharray={circ} strokeDashoffset={circ * (1 - pct)}
+          strokeLinecap="round" transform="rotate(-90 28 28)"
+          style={{ transition: "stroke-dashoffset 0.6s ease" }} />
+      </svg>
+      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color, fontFamily: "'IBM Plex Mono',monospace" }}>{score}</div>
+    </div>
+  );
+});
+
+const CharBar = memo(function CharBar({ count, limit, accent }) {
+  if (!limit) return null;
+  const pct = Math.min(count / limit, 1.3);
+  const over = count > limit;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ flex: 1, height: 4, background: "#f0eeeb", borderRadius: 2, overflow: "hidden" }}>
+        <div style={{ width: `${Math.min(pct * 100, 100)}%`, height: "100%", background: over ? "#dc2626" : accent, borderRadius: 2, transition: "width 0.4s ease" }} />
+      </div>
+      <span style={{ fontSize: 10, fontFamily: "'IBM Plex Mono',monospace", color: over ? "#dc2626" : "#aaa", fontWeight: over ? 700 : 400, whiteSpace: "nowrap" }}>
+        {count}/{limit}
+      </span>
+    </div>
+  );
+});
+
+// Pre-computed marketplace keys (excluding amazon)
+const MP_KEYS = Object.keys(MARKETPLACES);
+// Ranking Juice: scan a title for exact-match keywords from search volume data.
+// Returns { score: total cumulative volume, matches: [{ keyword, volume, tier }] }
+// Each keyword counted at most once per title. Case-insensitive exact substring match.
+function calcRankingJuice(title, searchData) {
+  if (!title || !searchData?.length) return { score: 0, matches: [] };
+  const lower = title.toLowerCase();
+  const matches = [];
+  const seen = new Set();
+  // Sort by volume descending so higher-volume phrases match first
+  const sorted = [...searchData].sort((a, b) => b.v - a.v);
+  for (const kw of sorted) {
+    const term = kw.t.toLowerCase();
+    if (seen.has(term)) continue;
+    if (lower.includes(term)) {
+      seen.add(term);
+      matches.push({ keyword: kw.t, volume: kw.v, tier: kw.tier });
+    }
+  }
+  return { score: matches.reduce((sum, m) => sum + m.volume, 0), matches };
+}
+
+// --- SHARED UTILITIES ---
+
+// Shared JSON response parser: 3-tier strategy used by all API handlers.
+// 1. Direct parse (clean JSON)
+// 2. Brace-depth extraction (JSON embedded in text)
+// 3. Returns null if unparseable (caller decides: retry, repair, or error)
+function parseJsonResponse(rawText) {
+  if (!rawText || !rawText.trim()) return null;
+  const clean = rawText.replace(/```json|```/g, "").trim();
+  // Tier 1: direct parse
+  try { return JSON.parse(clean); } catch(e) {}
+  // Tier 2: extract outermost JSON object by brace matching
+  const start = clean.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0, end = -1;
+  for (let i = start; i < clean.length; i++) {
+    if (clean[i] === "{") depth++;
+    else if (clean[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end === -1) return null;
+  try { return JSON.parse(clean.slice(start, end + 1)); } catch(e) {}
+  return null;
+}
+
+// Collect text blocks from an API response content array
+function extractTextFromContent(content) {
+  if (!content || !Array.isArray(content)) return "";
+  return content.filter(b => b.type === "text").map(b => b.text).filter(Boolean).join("\n");
+}
+
+// Format API/network errors into user-friendly messages
+function formatApiError(err) {
+  if (!err) return "An unknown error occurred.";
+  const msg = err.message || String(err);
+  if (err.name === "AbortError") {
+    return err.signal?.reason === "timeout" || msg.includes("timeout")
+      ? "Request timed out. The API may be slow — please retry."
+      : "Request was cancelled.";
+  }
+  if (msg.includes("API returned 4")) return "The API rejected the request. Please try again or simplify your input.";
+  if (msg.includes("API returned 5")) return "The API is temporarily unavailable. Please retry in a moment.";
+  if (msg.includes("API returned")) return "API error — please retry. Details: " + msg.slice(0, 150);
+  if (msg.includes("Could not parse") || msg.includes("Invalid JSON") || msg.includes("Empty response")) return "The AI returned an unexpected format. Please retry — this is usually transient.";
+  if (msg.includes("NetworkError") || msg.includes("Failed to fetch")) return "Network error — check your connection and retry.";
+  return "Error: " + msg.slice(0, 200);
+}
+
+// Shared title rules constant (referenced by both SYSTEM_PROMPT and listing audit)
+const CUCKOO_RULES_SUMMARY = "RULE 1 — Every cup capacity MUST have \"Uncooked\" or \"Cooked\" (e.g. \"6-Cup Uncooked\"). Hyphen required.\n" +
+  "RULE 2 — Order: CUCKOO [Tech] Rice Cooker [Cup Size], [Features], [Color] ([Model]). No \"& Warmer\".\n" +
+  "RULE 3 — Model numbers in parentheses, placed LAST. Remove entirely if over char limit.\n" +
+  "RULE 4 — Flowing titles, not keyword lists. \"with\" connects features, \"&\" within groups, 3-4 commas max.\n" +
+  "RULE 5 — ONLY use features from (a) the original title or (b) VERIFIED PRODUCT DATA from the internal database. Never invent.";
+
+const KEYWORD_RESTRICTIONS = "- 'small'/'mini'/'compact': only for 3-cup or smaller\n" +
+  "- 'pressure': only for CRP- models\n" +
+  "- 'induction': only for IH models\n" +
+  "- 'Korean': ONLY allowed as the exact phrase 'Korean Rice Cooker' (never standalone 'Korean'). Only if verified made in Korea.\n" +
+  "- 'Stainless Steel': only if inner pot IS stainless steel\n" +
+  "- 'low carb': only if product has that feature";
+
+// Error boundary component — prevents white screen on render errors
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement("div", { style: { padding: 40, textAlign: "center", fontFamily: "'Outfit',sans-serif" } },
+        React.createElement("div", { style: { fontSize: 48, marginBottom: 16 } }, "\u26A0\uFE0F"),
+        React.createElement("h2", { style: { color: "#6B1C23", marginBottom: 8 } }, "Something went wrong"),
+        React.createElement("p", { style: { color: "#666", marginBottom: 16, fontSize: 13 } }, this.state.error?.message || "An unexpected error occurred."),
+        React.createElement("button", {
+          onClick: () => this.setState({ hasError: false, error: null }),
+          style: { padding: "10px 24px", background: "#6B1C23", color: "#fff", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" }
+        }, "Reload App")
+      );
+    }
+    return this.props.children;
+  }
+}
+// --- BULLET GENERATION HELPERS ---
+
+// DEPRECATED (Chunk B): replaced by tier-specific prompts from getBulletPromptForTier() in title-processing.js.
+// Kept for reference / diff — do not wire in new call sites; use BULLET_TIER_PROMPT_BASIC / _MID / _PREMIUM instead.
+const BULLET_SYSTEM_PROMPT = `Role: Senior ecommerce copywriter for CUCKOO Electronics America.
+
+OUTPUT: Exactly the number of bullet points specified in the user message. Each bullet starts with a CAPITALIZED HEADING (2-4 words) followed by a colon and one concise sentence.
+
+LENGTH: Target 170-200 characters per bullet. Do not exceed 220. Do not leave bullets thin when verified product details can make them stronger. Do not pad with filler.
+
+CAPACITY RULE: When referencing capacity, always use the exact verified values as "X cups uncooked / Y cups cooked" from the product data. Do NOT estimate headcount. Do NOT use vague substitutes like "generous capacity" or "family-sized output".
+
+Capacity context (practical usage language only, not literal headcount):
+- 6 cups cooked: singles, couples, small families
+- 12 cups cooked: average families, meal prep
+- 16 cups cooked: large families, weekly batch cooking
+- 20 cups cooked: extended family gatherings, events
+- 60 cups cooked: restaurants, catering, institutions
+
+ANTI-COLOR/STYLE: Do NOT use color, style, or appearance as a standalone bullet topic. Color and finish are visible from product images. Bullets must earn their space with decision-making information: cooking performance, ease of use, cleanup, capacity, inner pot, menu variety, convenience. Color may only appear inside a bullet as a secondary detail, never the main point.
+
+BENEFIT OVER MECHANISM: Always describe the SHOPPER BENEFIT of a feature, not just the mechanism.
+- Weak: "simple heating plate technology"
+- Strong: "reliable one-touch cooking for perfect rice every day"
+- Weak: "classic finish"
+- Strong: "nonstick inner pot releases rice cleanly and wipes down in seconds"
+
+Do NOT use weak mechanism-led phrasing like "simple heating plate technology", "classic finish", "straightforward design", "basic operation", or "entry-level construction". Rewrite around real shopper value.
+
+ANTI-FILLER: Do not use vague filler like "trusted quality", "premium craftsmanship", "perfect for families", "advanced performance" unless followed by something specific and verified.
+
+ANTI-TEMPLATE: Each bullet must read differently from the others. Do not reuse the same sentence structure across bullets or across products.
+
+SEARCH OPTIMIZATION:
+- Weave provided high-volume search terms into bullet text naturally where accurate. Do not force keywords unnaturally.
+- Write bullets that conceptually address the provided shopper intent clusters. Do not use intent phrases as literal keywords — use them as targets for what each bullet should communicate.
+
+SOURCE OF TRUTH: Use only verified product data. Do not invent claims, materials, certifications, or unsupported benefits. The claim "#1 rice cooker brand in Korea" is approved for use when appropriate.
+
+CRITICAL MODE NAME VERIFICATION: When mentioning cooking modes, use only mode names that appear EXACTLY in the product's cookingModeNames data. Do NOT invent modes like "quinoa", "oatmeal", "multi-grain", "brown rice", "scorched rice", "GABA", or any other specific mode unless that exact name is in cookingModeNames. If the product has no cookingModeNames, you cannot claim any dedicated cooking programs — period.
+
+THREE-TIER CLAIM STRENGTH FOR EVERYDAY USES:
+Tier 1 — General water-based capabilities (always allowed for any rice cooker):
+  - Rice, grains (general), oatmeal, quinoa, porridge, soups, one-pot meals
+  - Use general language: "cook rice and everyday grains", "prepare rice, oatmeal, and quinoa", "make rice and one-pot meals"
+  - These are approved because rice cookers are water-based cooking appliances
+Tier 2 — Equipment-dependent uses (only if feature verified in product):
+  - Steam vegetables / fish / dumplings / eggs: ONLY if "Steam Tray" or "Steamer Basket" is in features array
+  - Water capture benefits: ONLY if "Water Capture" is in features array
+Tier 3 — Dedicated program claims (strongest, only if mode verified in cookingModeNames):
+  - "Dedicated quinoa mode", "GABA brown rice program", "steel-cut oats setting"
+  - These require the exact mode name in cookingModeNames
+
+EVERYDAY POSITIONING: Position CUCKOO rice cookers as daily-use appliances — breakfast through dinner, Monday through Sunday. Use general everyday language like "daily use", "from breakfast to dinner", "seven days a week" regardless of tier. The stronger the mode verification, the more specific the cooking claims can be.
+
+EXTRA BULLETS (when requested count > 5): Extra bullets MUST be product-specific using verified features. Do NOT fill extra slots with generic brand/value/trust padding or repetition. If the product lacks enough distinct verified features to justify the requested count, still comply but avoid weak repetitive padding.
+
+Respond ONLY with valid JSON: {"bullets":[{"heading":"...","text":"..."}]}`;
+
+// Semantic intent clusters by tier (used in user message, not system prompt)
+const SEMANTIC_INTENT = {
+  basic: [
+    "simple daily rice cooking",
+    "first rice cooker",
+    "easy to use rice cooker",
+    "compact kitchen appliance",
+    "reliable everyday cooking",
+    "beginner friendly"
+  ],
+  mid: [
+    "better rice texture",
+    "multiple grain types",
+    "programmable rice cooker",
+    "set and forget cooking",
+    "upgrade from basic rice cooker",
+    "versatile rice and grain cooker"
+  ],
+  premium: [
+    "restaurant quality rice at home",
+    "induction heating precision",
+    "pressure cooking technology",
+    "Korean rice cooker quality",
+    "long-term kitchen investment",
+    "advanced cooking control"
+  ]
+};
+
+// Build tier-aware bullet role instructions for the requested count (1-7).
+// Takes first N roles in priority order. Bullet 5 (brand/origin) drops first on small counts.
+function buildBulletRoleInstructions(count, tier) {
+  const rolesByTier = {
+    basic: [
+      "One-touch ease and reliable daily rice cooking",
+      "Exact 'X cups uncooked / Y cups cooked' capacity with practical daily-use context",
+      "Nonstick inner pot and simple cleanup",
+      "Keep warm or compact convenience",
+      "CUCKOO brand reliability — only if phrased concretely (not puffery)",
+      "Additional verified product feature (must be specific, not filler)",
+      "Another verified product feature (must be specific, not filler)"
+    ],
+    mid: [
+      "Better cooking control and rice texture vs basic cookers",
+      "Exact 'X cups uncooked / Y cups cooked' capacity with practical use context",
+      "Menu variety and cooking versatility",
+      "Programmable timer, auto clean, or convenience feature",
+      "Upgrade value — concrete reasons this is worth stepping up from basic",
+      "Additional verified product feature (must be specific, not filler)",
+      "Another verified product feature (must be specific, not filler)"
+    ],
+    premium: [
+      "Hero technology and the cooking outcome it delivers",
+      "Exact 'X cups uncooked / Y cups cooked' capacity with practical use context",
+      "Inner pot material or premium cooking system story",
+      "Advanced convenience or menu range",
+      "Origin/engineering — only if phrased concretely, never as puffery",
+      "Additional verified premium feature (must be specific, not filler)",
+      "Another verified premium feature (must be specific, not filler)"
+    ]
+  };
+  const roles = rolesByTier[tier] || rolesByTier.basic;
+  const selected = roles.slice(0, Math.max(1, Math.min(7, count)));
+  return selected.map((r, i) => (i + 1) + ". " + r).join("\n");
+}
+
+// Get relevant search keywords for a product from SEARCH_DATA
+function getRelevantKeywords(product, searchData) {
+  if (!product || !Array.isArray(searchData)) return [];
+  const cupSize = (product.cupSize || "").toLowerCase();
+  const innerPot = (product.innerPot || "").toLowerCase();
+  const isPressure = !!product.pressure || (product.type || "").toLowerCase().includes("pressure");
+  const isInduction = (product.heating || "").toLowerCase().includes("induction") || (product.type || "").toLowerCase().includes("induction");
+  const isKorea = product.mfg === "South Korea";
+  const features = (product.features || []).join(" ").toLowerCase();
+  const results = [];
+  for (const kw of searchData) {
+    if (!kw?.t || typeof kw.v !== "number") continue;
+    const t = kw.t.toLowerCase();
+    // Always include general/brand terms
+    if (t === "rice cooker" || t === "cuckoo rice cooker" || t === "rice maker" || t === "rice steamer") { results.push(kw); continue; }
+    // Size-specific
+    if (/\d+\s*cup/.test(t)) {
+      const num = parseInt(t.match(/(\d+)/)[1]);
+      const cupNum = parseInt(cupSize);
+      if (num && cupNum && num === cupNum) { results.push(kw); continue; }
+      continue;
+    }
+    // Keyword restrictions
+    if (t.includes("pressure") && !isPressure) continue;
+    if (t.includes("induction") && !isInduction) continue;
+    if (t.includes("korean") && !isKorea) continue;
+    if (t.includes("stainless steel") && !innerPot.includes("stainless")) continue;
+    if (t.includes("nonstick") && !innerPot.includes("nonstick")) continue;
+    results.push(kw);
+  }
+  // Sort by volume descending, take top 10
+  return results.sort((a, b) => (b.v || 0) - (a.v || 0)).slice(0, 10);
+}
+
+// Build the bullet user message common across all 3 call sites
+// Three-tier claim strength helper. Returns what kinds of everyday-use claims are allowed
+// for this specific product, based on verified DB data only.
+function getVerifiedAlternateUses(product) {
+  // Tier 1 — Category capabilities: always allowed for any rice cooker
+  const categoryUses = ["rice", "grains", "oatmeal", "quinoa", "porridge", "soups", "one-pot meals"];
+
+  // Tier 2 — Equipment-dependent uses: only if verified in features
+  const featuresText = (product?.features || []).join(" ").toLowerCase();
+  const equipmentUses = [];
+  if (/steam\s*tray|steamer\s*basket/i.test(featuresText)) {
+    equipmentUses.push("steam vegetables", "steam fish", "steam dumplings", "steam eggs");
+  }
+  if (/water\s*capture/i.test(featuresText)) {
+    equipmentUses.push("water capture (prevents overflow)");
+  }
+
+  // Tier 3 — Dedicated program claims: only if verified in cookingModeNames
+  const modeNamesRaw = product?.cookingModeNames;
+  const modeNames = Array.isArray(modeNamesRaw) ? modeNamesRaw.join(", ").toLowerCase() : (typeof modeNamesRaw === "string" ? modeNamesRaw.toLowerCase() : "");
+  const dedicatedModes = [];
+  if (modeNames) {
+    const modeMap = [
+      { pattern: /oatmeal|oat|steel.?cut/i, label: "oatmeal mode" },
+      { pattern: /quinoa/i, label: "quinoa mode" },
+      { pattern: /porridge|nu rung ji/i, label: "porridge mode" },
+      { pattern: /soup/i, label: "soup mode" },
+      { pattern: /multi.?grain|brown.?rice|gaba|mixed.?rice|mixed.?grain/i, label: "multi-grain/brown rice mode" },
+      { pattern: /multi.?cook/i, label: "multi-cook mode" },
+      { pattern: /slow.?cook/i, label: "slow cook mode" },
+      { pattern: /baby.?food/i, label: "baby food mode" },
+      { pattern: /steam/i, label: "steam mode" },
+      { pattern: /yogurt/i, label: "yogurt mode" },
+      { pattern: /cake/i, label: "cake mode" },
+      { pattern: /soymilk|soy.?milk/i, label: "soymilk mode" },
+    ];
+    for (const m of modeMap) {
+      if (m.pattern.test(modeNames)) dedicatedModes.push(m.label);
+    }
+  }
+
+  return { categoryUses, equipmentUses, dedicatedModes };
+}
+
+function buildBulletUserMessage(product, sku, finalTitle, count, searchData, requiredHeading) {
+  const tier = classifyProductTier(product);
+  const productCtx = product ? formatProductContext({ sku, ...product }) : "";
+  const roles = buildBulletRoleInstructions(count, tier);
+  const relevantKw = getRelevantKeywords(product, searchData || []);
+  const kwLines = relevantKw.length > 0 ? relevantKw.map(k => "- " + k.t + " (" + (k.v >= 1000 ? Math.round(k.v / 1000) + "K" : k.v) + " volume)").join("\n") : "- (none available)";
+  const intents = SEMANTIC_INTENT[tier] || SEMANTIC_INTENT.basic;
+  const intentLines = intents.map(i => "- " + i).join("\n");
+  // Capacity context
+  const cupMatch = (product?.cupSize || "").match(/(\d+)\s*Cup\s*Uncooked\s*\/\s*(\d+)\s*Cup\s*Cooked/i);
+  const capacityLine = cupMatch ? cupMatch[1] + " cups uncooked / " + cupMatch[2] + " cups cooked" : (product?.cupSize || "unknown");
+
+  // Three-tier claim strength
+  const uses = getVerifiedAlternateUses(product);
+  const tierClaimSection = "APPROVED EVERYDAY-USE CLAIMS (three tiers — use only what is allowed for this specific product):\n" +
+    "TIER 1 (general category, always allowed): " + uses.categoryUses.join(", ") + "\n" +
+    "TIER 2 (equipment-verified, only because product has these features): " + (uses.equipmentUses.length ? uses.equipmentUses.join(", ") : "(none — product has no steam tray or water capture)") + "\n" +
+    "TIER 3 (dedicated program claims, only if verified in cookingModeNames): " + (uses.dedicatedModes.length ? uses.dedicatedModes.join(", ") : "(none — product has no dedicated cooking modes)") + "\n" +
+    "IMPORTANT: For TIER 3, you may only mention dedicated programs that appear exactly in the list above. Do NOT invent mode names like quinoa, oatmeal, multi-grain, etc. unless they are in TIER 3 for this product.";
+
+  // Required Bullet 1 heading — locked for product-family consistency (Chunk B)
+  const headingSection = requiredHeading
+    ? "REQUIRED BULLET 1 HEADING (use this EXACT heading — do not paraphrase or change capitalization):\n\"" + requiredHeading + "\"\n\nAll other bullet headings (bullet 2 onward) are yours to choose.\n\n"
+    : "";
+
+  return "Generate exactly " + count + " bullet points for this CUCKOO product.\n\n" +
+    "Model: " + (sku || "") + "\n" +
+    "Product tier: " + tier + "\n\n" +
+    "VERIFIED PRODUCT DATA:\n" + productCtx + "\n\n" +
+    (finalTitle ? "FINALIZED AMAZON TITLE:\n\"" + finalTitle + "\"\n\n" : "") +
+    "EXACT CAPACITY (use when referencing capacity):\n" + capacityLine + "\n\n" +
+    headingSection +
+    tierClaimSection + "\n\n" +
+    "BULLET ROLES (use in priority order, one role per bullet):\n" + roles + "\n\n" +
+    "RELEVANT SEARCH TERMS (weave naturally where accurate, do not force):\n" + kwLines + "\n\n" +
+    "SHOPPER INTENT (address conceptually, NOT as literal keywords):\n" + intentLines + "\n\n" +
+    "Respond only with valid JSON.";
+}
+// --- APP COMPONENT ---
+
+function AppInner() {
+  const [page, setPage] = useState("title_optimizer"); // "title_optimizer" or "backend_keywords"
+  const isMac = useMemo(() => typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform), []);
+  const [amazonTitle, setAmazonTitle] = useState("");
+  const [inputMode, setInputMode] = useState("model"); // "title" or "model"
+  const [showModelList, setShowModelList] = useState(false);
+  const [category, setCategory] = useState("rice_cooker");
+  const [capacityMode, setCapacityMode] = useState("both"); // "both" | "uncooked" | "cooked"
+  const capacityModeRef = useRef("both");
+  capacityModeRef.current = capacityMode;
+  const [selected, setSelected] = useState([]);
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [loadingElapsed, setLoadingElapsed] = useState(0);
+  const [loadingStatus, setLoadingStatus] = useState("");
+  useEffect(() => { if (!loading) { setLoadingElapsed(0); return; } const t = setInterval(() => setLoadingElapsed(p => p + 1), 1000); return () => clearInterval(t); }, [loading]);
+  const [error, setError] = useState(null);
+  const [expanded, setExpanded] = useState({});
+  const [sources, setSources] = useState({});
+  const [copied, setCopied] = useState(null);
+  const [allExpanded, setAllExpanded] = useState(true);
+  const [mode, setMode] = useState("single"); // "single" or "bulk"
+  const [bulkResults, setBulkResults] = useState([]); // array of { original, results }
+  const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
+  const [toast, setToast] = useState(null); // toast notification message
+  const [editedKeys, setEditedKeys] = useState(new Set()); // tracks which titles were hand-edited
+  // Search volume report state
+  const [svFilter, setSvFilter] = useState("");
+  const [svTier, setSvTier] = useState("all");
+  const [svCat, setSvCat] = useState("all");
+  const [svSort, setSvSort] = useState("v"); // v, g90, g180, cr
+  const [svSortDir, setSvSortDir] = useState("desc");
+  // Product comparison state
+  const [compareModels, setCompareModels] = useState([]);
+  const [compareSearch, setCompareSearch] = useState("");
+  const [enlargedImage, setEnlargedImage] = useState(null); // { sku, src }
+  const [asinSearch, setAsinSearch] = useState("");
+  // Backend keyword generator state
+  const [bkCategory, setBkCategory] = useState("rice_cooker");
+  const [bkFeatures, setBkFeatures] = useState({});
+  const [bkModelNumber, setBkModelNumber] = useState("");
+  const [bkCurrentTitle, setBkCurrentTitle] = useState(""); // current listing title to exclude words from
+  const [bkCurrentBullets, setBkCurrentBullets] = useState(""); // current bullet points to exclude words from
+  const [bkResults, setBkResults] = useState(null);
+  const [bkLoading, setBkLoading] = useState(false);
+  const [bkError, setBkError] = useState(null);
+  const bkLoadingRef = useRef(false);
+  useEffect(() => () => { bkLoadingRef.current = false; }, []);
+  const bkCatConfig = BK_CATEGORY_CONFIG[bkCategory] || BK_CATEGORY_CONFIG.other;
+  // Bullet point generator state
+  const [bpModel, setBpModel] = useState("");
+  const [bpTitle, setBpTitle] = useState(""); // Amazon title to align bullets with
+  const [bpMarketplace, setBpMarketplace] = useState("amazon");
+  const [bulletCount, setBulletCount] = useState(5); // 1-7, default 5
+  const bulletCountRef = useRef(5);
+  bulletCountRef.current = bulletCount;
+  const [bpResults, setBpResults] = useState(null);
+  const [bpLoading, setBpLoading] = useState(false);
+  const [bpError, setBpError] = useState(null);
+  const [bpElapsed, setBpElapsed] = useState(0);
+  const bpAbortRef = useRef(null);
+  const bpTimerRef = useRef(null);
+  // Listing audit scorecard state
+  const [auditAsin, setAuditAsin] = useState("");
+  const [auditTitle, setAuditTitle] = useState("");
+  const [auditBullets, setAuditBullets] = useState("");
+  const [auditBackendKw, setAuditBackendKw] = useState("");
+  const [auditResults, setAuditResults] = useState(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState(null);
+  const [auditElapsed, setAuditElapsed] = useState(0);
+  const auditAbortRef = useRef(null);
+  const auditTimerRef = useRef(null);
+  // Competitor title analyzer state
+  const [ctCuckooTitle, setCtCuckooTitle] = useState("");
+  const [ctCompetitorTitles, setCtCompetitorTitles] = useState("");
+  const [ctResults, setCtResults] = useState(null);
+  const [ctLoading, setCtLoading] = useState(false);
+  const [ctError, setCtError] = useState(null);
+  const [ctElapsed, setCtElapsed] = useState(0);
+  const ctAbortRef = useRef(null);
+  const ctTimerRef = useRef(null);
+  // Listing data extractor state
+  const [ldUrl, setLdUrl] = useState("");
+  const [ldInputMode, setLdInputMode] = useState("url"); // "url" or "pdf"
+  const [ldPdfFile, setLdPdfFile] = useState(null); // { name, text } — text extracted client-side via pdf.js
+  const [ldResults, setLdResults] = useState(null);
+  const [ldLoading, setLdLoading] = useState(false);
+  const [ldError, setLdError] = useState(null);
+  const [ldElapsed, setLdElapsed] = useState(0);
+  const ldAbortRef = useRef(null);
+  const ldTimerRef = useRef(null);
+  const [ldCopied, setLdCopied] = useState(null);
+  const [ldCompareModel, setLdCompareModel] = useState("");
+  const [ldCompareSearch, setLdCompareSearch] = useState("");
+  // Listing Workspace state
+  const [wsModel, setWsModel] = useState("");
+  const [wsMarketplaces, setWsMarketplaces] = useState(["amazon","walmart","target","bestbuy","wayfair","kohls","macys","bloomingdales","tiktokshop","weee"]);
+  const [wsResults, setWsResults] = useState(null); // { titles, bullets, keywords, audit }
+  const [wsLoading, setWsLoading] = useState(null); // null | "titles" | "bullets" | "keywords" | "audit"
+  const [wsError, setWsError] = useState(null);
+  const [wsElapsed, setWsElapsed] = useState(0);
+  const wsAbortRef = useRef(null);
+  const wsTimerRef = useRef(null);
+  // Bulk Export state
+  const [beModels, setBeModels] = useState([]);
+  const [beSearch, setBeSearch] = useState("");
+  const [beResults, setBeResults] = useState([]); // array of { sku, titles, bullets, keywords, audit, error }
+  const [beLoading, setBeLoading] = useState(false);
+  const [beProgress, setBeProgress] = useState({ current: 0, total: 0, sku: "", step: "" });
+  const [beError, setBeError] = useState(null);
+  const [beElapsed, setBeElapsed] = useState(0);
+  const beAbortRef = useRef(null);
+  const beTimerRef = useRef(null);
+  // Review Analyzer state
+  const [raModel, setRaModel] = useState("");
+  const [raResults, setRaResults] = useState(null);
+  const [raLoading, setRaLoading] = useState(false);
+  const [raError, setRaError] = useState(null);
+  const [raElapsed, setRaElapsed] = useState(0);
+  const raAbortRef = useRef(null);
+  const raTimerRef = useRef(null);
+  // Compliance Checker state
+  const [ccModel, setCcModel] = useState("");
+  const [ccTitle, setCcTitle] = useState("");
+  const [ccResults, setCcResults] = useState(null);
+  // Dark mode
+  const [darkMode, setDarkMode] = useState(false);
+  useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} try { const cm = await window.storage.get("capacity_mode"); if (cm?.value && ["both","uncooked","cooked"].includes(cm.value)) { setCapacityMode(cm.value); capacityModeRef.current = cm.value; } } catch(e) {} try { const bc = await window.storage.get("bullet_count"); const n = parseInt(bc?.value); if (n >= 5 && n <= 7) { setBulletCount(n); bulletCountRef.current = n; } } catch(e) {} })(); }, []);
+  const toggleDarkMode = useCallback(() => { setDarkMode(prev => { const next = !prev; document.body.classList.toggle("dark-mode", next); try { window.storage.set("dark_mode", String(next)); } catch(e) {} return next; }); }, []);
+  // Nav group dropdown
+  const [openNavGroup, setOpenNavGroup] = useState(null);
+  const navGroupRef = useRef(null);
+  useEffect(() => { if (!openNavGroup) return; const handler = (e) => { if (navGroupRef.current && !navGroupRef.current.contains(e.target)) setOpenNavGroup(null); }; document.addEventListener("mousedown", handler); return () => document.removeEventListener("mousedown", handler); }, [openNavGroup]);
+  // History state
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  useEffect(() => { (async () => { try { const h = await window.storage.get("generation_history"); if (h?.value) setHistory(JSON.parse(h.value)); } catch(e) {} })(); }, []);
+  const saveToHistory = useCallback(async (input, mode, marketplaces, resultData) => {
+    const entry = { id: Date.now(), input, mode, marketplaces, timestamp: new Date().toISOString(), score: resultData?.amazon_audit?.score || null };
+    setHistory(prev => { const next = [entry, ...prev].slice(0, 20); try { window.storage.set("generation_history", JSON.stringify(next)); } catch(e) {} return next; });
+  }, []);
+  const clearHistory = useCallback(async () => { setHistory([]); try { await window.storage.delete("generation_history"); } catch(e) {} }, []);
+  const [authState, setAuthState] = useState("login");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [authUser, setAuthUser] = useState("");
+  const [authPass, setAuthPass] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [loggedInUser, setLoggedInUser] = useState("");
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const accountMenuRef = useRef(null);
+  const CREDENTIALS = { cuckoo: "cka2026$", admin: "cka2026$" };
+  const authTokenRef = useRef(null);
+  const handleLogin = useCallback(() => { const user = authUser.trim().toLowerCase(); if (CREDENTIALS[user] && CREDENTIALS[user] === authPass) { authTokenRef.current = authPass; setAuthState("authenticated"); setIsAdmin(user === "admin"); setLoggedInUser(user); setAuthError(""); setAuthUser(""); setAuthPass(""); } else { setAuthError("Invalid username or password"); } }, [authUser, authPass]);
+  const handleLogout = useCallback(() => { setAuthState("login"); setIsAdmin(false); setLoggedInUser(""); setShowAccountMenu(false); setPage("title_optimizer"); }, []);
+  const [dbUploadStatus, setDbUploadStatus] = useState(null);
+  const [dbLastUpdated, setDbLastUpdated] = useState(null);
+  const [liveProductDb, setLiveProductDb] = useState(PRODUCT_DB);
+  const liveProductDbRef = useRef(PRODUCT_DB);
+  useEffect(() => { liveProductDbRef.current = liveProductDb; }, [liveProductDb]);
+  const [liveSearchData, setLiveSearchData] = useState(SEARCH_DATA);
+  const [svUploadStatus, setSvUploadStatus] = useState(null);
+  useEffect(() => { if (!showAccountMenu) return; const handler = (e) => { if (accountMenuRef.current && !accountMenuRef.current.contains(e.target)) setShowAccountMenu(false); }; document.addEventListener("mousedown", handler); return () => document.removeEventListener("mousedown", handler); }, [showAccountMenu]);
+  useEffect(() => { (async () => { try { const customDb = await window.storage.get("product_db_custom"); if (customDb && customDb.value) setLiveProductDb(JSON.parse(customDb.value)); } catch(e) {} try { const ts = await window.storage.get("product_db_updated"); if (ts && ts.value) setDbLastUpdated(ts.value); } catch(e) {} try { const customSv = await window.storage.get("search_data_custom"); if (customSv && customSv.value) setLiveSearchData(JSON.parse(customSv.value)); } catch(e) {} })(); }, []);
+  const handleDbUpload = useCallback(async (file) => { setDbUploadStatus(null); if (!file) return; if (file.size > 2*1024*1024) { setDbUploadStatus({type:"error",message:"File too large"}); return; } const ext = file.name.split(".").pop().toLowerCase(); if (!["xlsx","xls","json"].includes(ext)) { setDbUploadStatus({type:"error",message:"Use .xlsx or .json"}); return; } try { let db; const errors = []; let missingParentAsin = 0; if (ext==="json") { db=JSON.parse(await file.text()); /* count missing parentAsin in JSON too */ for (const sku of Object.keys(db)) { if (!db[sku].parentAsin) missingParentAsin++; } } else { const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs"); const wb=XLSX.read(await file.arrayBuffer(),{type:"array"}); const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]); db={}; for (const row of rows) { /* Handle whitespace in column headers (e.g., " SKU") */ const normalizedRow = {}; for (const k of Object.keys(row)) { normalizedRow[k.trim()] = row[k]; } const sku=String(normalizedRow["Model Number"]||normalizedRow["SKU"]||Object.values(normalizedRow)[0]||"").trim(); if(!sku||!sku.startsWith("CR")){errors.push(sku+": invalid"); continue;} const parentAsin = String(normalizedRow["Parent ASIN"]||"").trim(); if (!parentAsin) missingParentAsin++; db[sku]={type:normalizedRow["Type"]||"",heating:normalizedRow["Heating"]||"",pressure:normalizedRow["Pressure"]===true||String(normalizedRow["Pressure"]).toLowerCase()==="yes",cupSize:normalizedRow["Cup Size"]||"",color:normalizedRow["Color"]||"",innerPot:normalizedRow["Inner Pot"]||normalizedRow["Inner Pot Coating"]||"",features:typeof normalizedRow["Features"]==="string"?normalizedRow["Features"].split(",").map(f=>f.trim()).filter(Boolean):[],asin:normalizedRow["ASIN"]||"",parentAsin:parentAsin}; if(normalizedRow["Cooking Modes"])db[sku].cookingModes=String(normalizedRow["Cooking Modes"]); if(normalizedRow["# of Cooking Modes"])db[sku].cookingModes=String(normalizedRow["# of Cooking Modes"]); } } const count=Object.keys(db).length; if(count===0){setDbUploadStatus({type:"error",message:"No valid models"});return;} const warnings = []; if (missingParentAsin > 0) { warnings.push(missingParentAsin + " of " + count + " SKUs missing 'Parent ASIN' — bullet heading rotation will fall back to ASIN/SKU for those. Add the Parent ASIN column for family-consistent headings."); } setDbUploadStatus({type:"preview",message:count+" models parsed",data:db,errors:errors.slice(0,10),count,warnings}); } catch(err){setDbUploadStatus({type:"error",message:"Parse error: "+err.message});} }, []);
+  const applyDbUpload = useCallback(async () => { if(!dbUploadStatus||!dbUploadStatus.data)return; try{await window.storage.set("product_db_backup",JSON.stringify(liveProductDb));await window.storage.set("product_db_custom",JSON.stringify(dbUploadStatus.data));const ts=new Date().toISOString();await window.storage.set("product_db_updated",ts);setLiveProductDb(dbUploadStatus.data);setDbLastUpdated(ts);setDbUploadStatus({type:"success",message:"Updated: "+Object.keys(dbUploadStatus.data).length+" models"});}catch(err){setDbUploadStatus({type:"error",message:"Save failed"});} }, [dbUploadStatus, liveProductDb]);
+  const revertDb = useCallback(async () => { try{const b=await window.storage.get("product_db_backup");if(b&&b.value){const p=JSON.parse(b.value);await window.storage.set("product_db_custom",JSON.stringify(p));setLiveProductDb(p);setDbUploadStatus({type:"success",message:"Reverted"});}else setDbUploadStatus({type:"error",message:"No backup"});}catch(e){setDbUploadStatus({type:"error",message:"Revert failed"});} }, []);
+  const resetDbToDefault = useCallback(async () => { try{await window.storage.delete("product_db_custom");await window.storage.delete("product_db_updated");await window.storage.delete("product_db_backup");setLiveProductDb(PRODUCT_DB);setDbLastUpdated(null);setDbUploadStatus({type:"success",message:"Reset to defaults"});}catch(e){setDbUploadStatus({type:"error",message:"Reset failed"});} }, []);
+  const handleSvUpload = useCallback(async (file) => {
+    setSvUploadStatus(null);
+    if (!file) return;
+    const ext = file.name.split(".").pop().toLowerCase();
+    try {
+      let data;
+      if (ext === "json") { data = JSON.parse(await file.text()); }
+      else if (ext === "csv") {
+        const text = await file.text();
+        const lines = text.trim().split("\n");
+        const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+        data = lines.slice(1).map(line => {
+          const cols = line.split(",").map(c => c.trim().replace(/^"|"$/g, ""));
+          const row = {};
+          headers.forEach((h, i) => row[h] = cols[i] || "");
+          return { t: row.keyword || row.t || row.term || "", v: parseInt(row.volume || row.v || "0") || 0, g90: parseFloat(row.g90 || row["90d_growth"] || "0") || 0, g180: parseFloat(row.g180 || row["180d_growth"] || "0") || 0, cs: parseFloat(row.cs || row.click_share || "0") || 0, cr: parseFloat(row.cr || row.conv_rate || "0") || 0, tier: row.tier || "T4", cat: row.cat || row.category || "general" };
+        }).filter(d => d.t);
+      } else { setSvUploadStatus({ type: "error", message: "Use .json or .csv" }); return; }
+      if (!Array.isArray(data) || !data.length) { setSvUploadStatus({ type: "error", message: "No valid keywords found" }); return; }
+      setSvUploadStatus({ type: "preview", message: data.length + " keywords parsed", data, count: data.length });
+    } catch(e) { setSvUploadStatus({ type: "error", message: "Parse error: " + e.message }); }
+  }, []);
+  const applySvUpload = useCallback(async () => { if(!svUploadStatus?.data)return; try{await window.storage.set("search_data_custom",JSON.stringify(svUploadStatus.data));setLiveSearchData(svUploadStatus.data);setSvUploadStatus({type:"success",message:"Updated: "+svUploadStatus.data.length+" keywords"});}catch(e){setSvUploadStatus({type:"error",message:"Save failed"});} }, [svUploadStatus]);
+  const resetSvToDefault = useCallback(async () => { try{await window.storage.delete("search_data_custom");setLiveSearchData(SEARCH_DATA);setSvUploadStatus({type:"success",message:"Reset to defaults"});}catch(e){setSvUploadStatus({type:"error",message:"Reset failed"});} }, []);
+  const ref = useRef(null);
+  const abortRef = useRef(null);
+
+  // Stable refs for keyboard shortcut (avoids re-registering on every keystroke)
+  const titleRef = useRef(amazonTitle);
+  const selectedRef = useRef(selected);
+  const loadingRef = useRef(loading);
+  const categoryRef = useRef(category);
+  const modeRef = useRef(mode);
+  const inputModeRef = useRef(inputMode);
+  titleRef.current = amazonTitle;
+  selectedRef.current = selected;
+  loadingRef.current = loading;
+  categoryRef.current = category;
+  modeRef.current = mode;
+  inputModeRef.current = inputMode;
+
+  const toggle = useCallback((k, setter) => setter(p => ({ ...p, [k]: !p[k] })), []);
+  const copy = useCallback((t, k) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(t).catch(() => {
+          // Safari iframe fallback
+          const ta = document.createElement("textarea");
+          ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+          document.body.appendChild(ta); ta.select(); document.execCommand("copy");
+          document.body.removeChild(ta);
+        });
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select(); document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+    } catch(e) { /* silently fail */ }
+    setCopied(k); setToast("Copied to clipboard"); setTimeout(() => { setCopied(null); setToast(null); }, 2000);
+  }, []);
+
+  // Refs for edit tracking (no re-renders on storage)
+  const originalTitlesRef = useRef({});
+
+  // Edit a marketplace title — single state update per keystroke
+  const editTitle = useCallback((key, newTitle) => {
+    // Store original on first edit (ref, no re-render)
+    if (!(key in originalTitlesRef.current)) {
+      setResults(prev => {
+        if (!prev?.conversions?.[key]) return prev;
+        originalTitlesRef.current[key] = prev.conversions[key].title;
+        return prev;
+      });
+    }
+    // Single batched update: results + editedKeys
+    setEditedKeys(prev => { if (prev.has(key)) return prev; const next = new Set(prev); next.add(key); return next; });
+    setResults(prev => {
+      if (!prev?.conversions?.[key]) return prev;
+      return { ...prev, conversions: { ...prev.conversions, [key]: { ...prev.conversions[key], title: newTitle, char_count: newTitle.length } } };
+    });
+  }, []);
+
+  // Undo edit - restore original AI-generated title
+  const undoEdit = useCallback((key) => {
+    if (!(key in originalTitlesRef.current)) return;
+    const orig = originalTitlesRef.current[key];
+    setResults(prev => {
+      if (!prev?.conversions?.[key]) return prev;
+      return { ...prev, conversions: { ...prev.conversions, [key]: { ...prev.conversions[key], title: orig, char_count: orig.length } } };
+    });
+    setEditedKeys(prev => { const next = new Set(prev); next.delete(key); return next; });
+    delete originalTitlesRef.current[key];
+  }, []);
+
+  // Edit suggested Amazon title — single state update per keystroke
+  const editSuggestedTitle = useCallback((newTitle) => {
+    if (!("amazon_suggested" in originalTitlesRef.current)) {
+      setResults(prev => {
+        if (!prev?.amazon_audit?.suggested_title) return prev;
+        originalTitlesRef.current.amazon_suggested = prev.amazon_audit.suggested_title;
+        return prev;
+      });
+    }
+    setEditedKeys(prev => { if (prev.has("amazon_suggested")) return prev; const next = new Set(prev); next.add("amazon_suggested"); return next; });
+    setResults(prev => {
+      if (!prev?.amazon_audit) return prev;
+      return { ...prev, amazon_audit: { ...prev.amazon_audit, suggested_title: newTitle, suggested_char_count: newTitle.length } };
+    });
+  }, []);
+
+  const undoSuggestedEdit = useCallback(() => {
+    if (!("amazon_suggested" in originalTitlesRef.current)) return;
+    const orig = originalTitlesRef.current.amazon_suggested;
+    setResults(prev => {
+      if (!prev?.amazon_audit) return prev;
+      return { ...prev, amazon_audit: { ...prev.amazon_audit, suggested_title: orig, suggested_char_count: orig.length } };
+    });
+    setEditedKeys(prev => { const next = new Set(prev); next.delete("amazon_suggested"); return next; });
+    delete originalTitlesRef.current.amazon_suggested;
+  }, []);
+
+  // Edit a bulk result title inline
+  const editBulkTitle = useCallback((bulkIdx, mpKey, newTitle) => {
+    setBulkResults(prev => {
+      const updated = [...prev];
+      if (updated[bulkIdx]?.results?.conversions?.[mpKey]) {
+        updated[bulkIdx] = { ...updated[bulkIdx], results: { ...updated[bulkIdx].results, conversions: { ...updated[bulkIdx].results.conversions, [mpKey]: { ...updated[bulkIdx].results.conversions[mpKey], title: newTitle, char_count: newTitle.length } } } };
+      }
+      return updated;
+    });
+  }, []);
+
+  const toggleAll = useCallback(() => {
+    setAllExpanded(prev => {
+      const next = !prev;
+      setExpanded(ex => {
+        const updated = { amazon_audit: next };
+        selectedRef.current.forEach(k => updated[k] = next);
+        return updated;
+      });
+      return next;
+    });
+  }, []);
+
+  // Bulk mode: process multiple titles sequentially
+  const optimizeBulk = useCallback(async () => {
+    const rawTitles = titleRef.current;
+    const sel = selectedRef.current;
+    if (!rawTitles.trim() || !sel.length || loadingRef.current) return;
+
+    const titles = rawTitles.split("\n").map(t => t.trim()).filter(Boolean);
+    if (!titles.length) return;
+
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setLoading(true); setError(null); setBulkResults([]);
+    setBulkProgress({ current: 0, total: titles.length });
+
+    const callApi = async (title, keys) => {
+      const catRules = CATEGORY_RULES[categoryRef.current] || CATEGORY_RULES.other;
+      const gl = keys.map(k => MARKETPLACES[k].guidelines).join("\n---\n");
+      const isModelMode = inputModeRef.current === "model";
+      const bulkProduct = lookupProduct(title, liveProductDbRef.current);
+      const bulkProductCtx = bulkProduct ? "\n\n" + formatProductContext(bulkProduct) : "";
+      const userMsg = isModelMode
+        ? `Model number: "${title}"\nThis is a CUCKOO product model number. There is NO existing Amazon title — you must CREATE one from scratch.\n${bulkProductCtx}\n1. ${bulkProduct ? "Use the VERIFIED PRODUCT DATA above as your ONLY source for ALL product specs — type, heating, pressure, cup size, color, inner pot, and features are ALL provided. Do NOT add any features, specs, or technologies not in the database." : "The model was not found in the internal database. Use only the information available from the model number and general CUCKOO product knowledge."}\n2. Using the product data, search volume keyword data, and CUCKOO title rules, create a fully optimized Amazon title that maximizes the 200-character limit with high-volume keyword phrases.\n3. Put this title in amazon_audit.suggested_title. Score it based on SEO strength.\n4. Then convert for these marketplaces: ${keys.join(", ")}\n\nGuidelines:\n${gl}\nRespond ONLY with valid JSON.`
+        : `Amazon title: "${title}"${bulkProductCtx}\nConvert for: ${keys.join(", ")}\nGuidelines:\n${gl}\nIf the title is sparse or missing details, use any product data provided above.\nRespond ONLY with valid JSON.`;
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: SYSTEM_PROMPT + catRules,
+          messages: [{ role: "user", content: userMsg }]
+        })
+      });
+      if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error(`API returned ${res.status}: ${errText.slice(0, 200)}`); }
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
+      if (!text) throw new Error("Empty response");
+      let parsed;
+      try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
+      catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("JSON parse failed"); }
+      return parsed;
+    };
+
+    const collected = [];
+    try {
+      for (let i = 0; i < titles.length; i++) {
+        if (controller.signal.aborted) break;
+        setBulkProgress({ current: i + 1, total: titles.length });
+        try {
+          const merged = await callApi(titles[i], sel);
+          const bulkProduct = lookupProduct(titles[i], liveProductDbRef.current);
+          const bulkSku = bulkProduct?.sku || titles[i].trim();
+          // Run the full title post-processing pipeline (includes Chunk A descriptor diversification)
+          if (merged.conversions && bulkProduct) {
+            const onlySkuIfValid = bulkSku && /^CR[A-Z]?-/i.test(bulkSku) ? bulkSku : null;
+            runFullTitlePipeline(merged, bulkProduct, onlySkuIfValid, capacityModeRef.current);
+          }
+          const bulkValidation = validateListingOutput(merged, null, null, bulkProduct);
+          merged._validation = bulkValidation;
+          collected.push({ original: titles[i], results: merged, error: null });
+        } catch (err) {
+          if (err.name === "AbortError") break;
+          collected.push({ original: titles[i], results: null, error: err.message });
+        }
+        setBulkResults([...collected]);
+      }
+    } catch (e) {
+      if (e.name !== "AbortError") setError(e.message);
+    } finally {
+      setLoading(false);
+      abortRef.current = null;
+      setBulkProgress({ current: 0, total: 0 });
+      setTimeout(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+    }
+  }, []);
+
+  const startOver = useCallback(() => { setResults(null); setError(null); setAmazonTitle(""); setBulkResults([]); setEditedKeys(new Set()); originalTitlesRef.current = {}; }, []);
+
+  // Backend keyword generator
+  // Auto-fill BK fields from product database when model number is entered
+  const bkAutoFill = useCallback((modelNum) => {
+    setBkModelNumber(modelNum);
+    const product = lookupProduct(modelNum, liveProductDbRef.current);
+    if (!product) return;
+    // Map DB type to BK technology field values
+    const techMap = { "Basic": "Basic", "Micom": "Micom", "Pressure": "Electric Heating Pressure", "Twin Pressure": "Twin Pressure", "Twin Pressure + Induction": "Twin Pressure Induction Heating", "Induction + Pressure": "Induction Heating Pressure", "Induction + Non Pressure": "Induction Non Pressure", "Commercial": "Commercial", "Commerical": "Commercial" };
+    // Extract uncooked cup number from cupSize string like "6 Cup Uncooked / 12 Cup Cooked"
+    const cupMatch = product.cupSize?.match(/^(\d+)\s*Cup/i);
+    const cupNum = cupMatch ? cupMatch[1] : "";
+    // Map DB innerPot to BK select options
+    const matMap = (v) => { if (!v) return ""; const lv = v.toLowerCase(); if (lv === "stainless steel") return "Stainless Steel"; if (lv.includes("x-wall") || lv.includes("diamond")) return "X-wall Diamond"; if (lv.includes("marble")) return "Marble-Coated"; if (lv.includes("stainless") && lv.includes("nonstick")) return "Stainless Nonstick"; if (lv.includes("ceramic")) return "Ceramic"; return "Nonstick"; };
+    // Map features — normalize DB feature names to BK config names
+    const featureMap = { "Auto Clean": "Auto Clean", "Turbo Mode": "Turbo Mode", "Water Capture": "Water Capture", "Silent Pressure System": "Silent Pressure System", "Ideal for Delicate Grains": "Ideal for Delicate Grains" };
+    const mappedFeatures = product.features.map(f => {
+      if (f.startsWith("Voice Guide")) return "Voice Guide";
+      if (f.startsWith("Preset Timer")) return "Preset Timer";
+      return featureMap[f] || f;
+    }).filter((f, i, arr) => arr.indexOf(f) === i).filter(f => BK_CATEGORY_CONFIG.rice_cooker.features.includes(f));
+    // Add features inferred from type
+    if (product.type?.includes("Micom") || product.type?.includes("Induction")) { if (!mappedFeatures.includes("Smart Algorithm")) mappedFeatures.push("Smart Algorithm"); }
+    setBkFeatures({
+      technology: techMap[product.type] || "",
+      cupSize: cupNum,
+      material: matMap(product.innerPot),
+      color: product.color || "",
+      features: mappedFeatures,
+    });
+    setBkResults(null); setBkError(null);
+  }, []);
+
+  const bkAbortRef = useRef(null);
+  const [bkElapsed, setBkElapsed] = useState(0);
+  const bkTimerRef = useRef(null);
+
+  const cancelBkGeneration = useCallback(() => {
+    if (bkAbortRef.current) bkAbortRef.current.abort();
+    bkLoadingRef.current = false;
+    setBkLoading(false);
+    setBkError("Generation cancelled.");
+    if (bkTimerRef.current) { clearInterval(bkTimerRef.current); bkTimerRef.current = null; }
+  }, []);
+
+  const generateBackendKeywords = useCallback(async () => {
+    if (bkLoadingRef.current) return;
+    bkLoadingRef.current = true;
+    setBkLoading(true); setBkError(null); setBkResults(null);
+    setBkElapsed(0);
+    const startTime = Date.now();
+    bkTimerRef.current = setInterval(() => setBkElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+
+    // AbortController with 30s timeout
+    if (bkAbortRef.current) bkAbortRef.current.abort();
+    const bkAbort = new AbortController();
+    bkAbortRef.current = bkAbort;
+    const timeoutId = setTimeout(() => bkAbort.abort("timeout"), 30000);
+
+    try {
+      const catCfg = BK_CATEGORY_CONFIG[bkCategory] || BK_CATEGORY_CONFIG.other;
+      const featureList = (bkFeatures.features || []).join(", ");
+      const fieldDescs = catCfg.fields.map(f => `${f.label}: ${bkFeatures[f.key] || "not specified"}`).join(". ");
+      const productDesc = "CUCKOO " + catCfg.label + ". " + fieldDescs + ". Selected features: " + (featureList || "none") + ". Model: " + (bkModelNumber || "not specified") + ".";
+
+      // Enrich with full DB context if product found
+      const dbProduct = bkModelNumber ? lookupProduct(bkModelNumber, liveProductDbRef.current) : null;
+      const dbContext = dbProduct ? "\n\n" + formatProductContext(dbProduct) : "";
+
+      const titleExclusion = bkCurrentTitle.trim() ? "\n\nCURRENT LISTING TITLE (do NOT repeat any of these words in backend keywords — Amazon already indexes them from the title):\n\"" + bkCurrentTitle.trim() + "\"" : "";
+      const bulletExclusion = bkCurrentBullets.trim() ? "\n\nCURRENT BULLET POINTS (do NOT repeat any of these words in backend keywords — Amazon already indexes them from bullet points):\n" + bkCurrentBullets.trim() : "";
+
+      const competitorLine = catCfg.competitors ? "\n1. COMPETITOR BRAND NAMES (highest priority): " + catCfg.competitors : "";
+      const spanishLine = catCfg.spanishTerms ? "\n2. ALTERNATE LANGUAGE TERMS: " + catCfg.spanishTerms : "";
+      const synonymLine = catCfg.synonyms ? "\n3. SYNONYM PHRASES not in the title: " + catCfg.synonyms : "";
+
+      const bkSystemPrompt = "Amazon backend keyword specialist for CUCKOO Electronics America. Generate hidden search terms for a CUCKOO " + catCfg.label + " listing (499 byte max). Prioritize:" + competitorLine + spanishLine + synonymLine + "\n- Feature/spec terms not in the title or bullet points\n- Use-case synonyms shoppers actually search\nRules: space-separated only, no punctuation, no words already in listing title or bullet points, no ASINs or promo phrases, stay under 499 bytes.\n\nANTI-FILLER (CRITICAL): Do NOT use vague generic words that provide no search value. Banned words: vessel, container, bowl, dish, utensil, gadget, device, machine, equipment, tool, product, item, goods, merchandise, commodity, article, object, thing, stuff, gear, substance, material, component, element. Every keyword must be a term a real shopper would actually type into Amazon search.\nRespond ONLY with valid JSON: {\"keywords\":\"space-separated string\",\"byte_count\":0,\"strategy\":[\"brief explanation\"],\"excluded\":[]}";
+
+      const bkUserMsg = "Generate Amazon backend keywords for this product:\n" + productDesc + dbContext + titleExclusion + bulletExclusion + "\nRespond ONLY with valid JSON.";
+
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: bkAbort.signal,
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514", max_tokens: 800, temperature: 0.3,
+          system: bkSystemPrompt,
+          messages: [{ role: "user", content: bkUserMsg }]
+        })
+      });
+      if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
+      if (!text) throw new Error("Empty response from API");
+      let parsed;
+      const cleaned = text.replace(/```json|```/g, "").trim();
+      try { parsed = JSON.parse(cleaned); }
+      catch(e) {
+        const m = cleaned.match(/\{[\s\S]*\}/);
+        if (m) { try { parsed = JSON.parse(m[0]); } catch(e2) {} }
+        if (!parsed) {
+          // Try to salvage truncated JSON by extracting keywords field
+          const kwMatch = cleaned.match(/"keywords"\s*:\s*"([^"]*)"/);
+          if (kwMatch) { parsed = { keywords: kwMatch[1], byte_count: 0, strategy: ["Recovered from truncated response"], excluded: [] }; }
+          else throw new Error("Could not parse response as JSON. Raw: " + cleaned.slice(0, 150));
+        }
+      }
+      // Verify byte count client-side and hard-cap at 500 bytes
+      parsed.byte_count = new TextEncoder().encode(parsed.keywords).length;
+      if (parsed.byte_count > 499) {
+        const enc = new TextEncoder();
+        let words = parsed.keywords.split(" ");
+        while (words.length > 1 && enc.encode(words.join(" ")).length > 499) { words.pop(); }
+        parsed.keywords = words.join(" ");
+        parsed.byte_count = enc.encode(parsed.keywords).length;
+      }
+      setBkResults(parsed);
+    } catch (e) {
+      if (e.name !== "AbortError" || bkAbort.signal.reason === "timeout") {
+        setBkError(formatApiError(e));
+      }
+      // user-cancelled: cancelBkGeneration already set the error message
+    } finally {
+      clearTimeout(timeoutId);
+      if (bkTimerRef.current) { clearInterval(bkTimerRef.current); bkTimerRef.current = null; }
+      bkLoadingRef.current = false;
+      setBkLoading(false);
+      bkAbortRef.current = null;
+    }
+  }, [bkCategory, bkFeatures, bkModelNumber, bkCurrentTitle, bkCurrentBullets]);
+
+  // Bullet point generator
+  const generateBulletPoints = useCallback(async () => {
+    if (bpLoading || !bpModel.trim()) return;
+    setBpLoading(true); setBpError(null); setBpResults(null); setBpElapsed(0);
+    const startTime = Date.now();
+    bpTimerRef.current = setInterval(() => setBpElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (bpAbortRef.current) bpAbortRef.current.abort();
+    const controller = new AbortController();
+    bpAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 60000);
+    try {
+      const product = lookupProduct(bpModel, liveProductDbRef.current);
+      const mpConfig = MARKETPLACES[bpMarketplace] || MARKETPLACES.amazon;
+      // Chunk B: pick required heading + tier-specific prompt
+      const bpHeadingSession = createBulletHeadingSession();
+      const bpRequiredHeading = selectBulletOneHeading(product, bpModel.trim(), bpHeadingSession);
+      const bpSysPrompt = getBulletPromptForTier(classifyProductTier(product));
+      const bpUserMsg = buildBulletUserMessage(product, bpModel.trim(), bpTitle.trim(), bulletCountRef.current, liveSearchData, bpRequiredHeading) + "\n\nMarketplace: " + mpConfig.name;
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 2000, temperature: 0.4, system: bpSysPrompt, messages: [{ role: "user", content: bpUserMsg }] })
+      });
+      if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
+      if (!text) throw new Error("Empty response");
+      const parsed = parseJsonResponse(text);
+      if (!parsed) throw new Error("Could not parse response");
+      parsed._productVerified = !!product;
+      parsed._productSku = product?.sku || null;
+      setBpResults(parsed);
+    } catch (e) {
+      setBpError(formatApiError(e));
+    } finally {
+      clearTimeout(timeoutId);
+      if (bpTimerRef.current) { clearInterval(bpTimerRef.current); bpTimerRef.current = null; }
+      setBpLoading(false);
+      bpAbortRef.current = null;
+    }
+  }, [bpModel, bpTitle, bpMarketplace]);
+
+  // Listing audit scorecard
+  const runListingAudit = useCallback(async () => {
+    if (auditLoading || (!auditTitle.trim() && !auditAsin.trim())) return;
+    setAuditLoading(true); setAuditError(null); setAuditResults(null); setAuditElapsed(0);
+    const startTime = Date.now();
+    auditTimerRef.current = setInterval(() => setAuditElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (auditAbortRef.current) auditAbortRef.current.abort();
+    const controller = new AbortController();
+    auditAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 60000);
+    try {
+      const product = auditAsin.trim() ? lookupProduct(auditAsin, liveProductDbRef.current) : null;
+      const productCtx = product ? "\n\nVERIFIED PRODUCT DATA:\n" + formatProductContext(product) : "";
+      const auditSystem = "You are an Amazon listing optimization expert for CUCKOO Electronics America. Premium Korean brand: rice cookers, water purifiers, air purifiers, bidets, kitchen appliances.\n\n" +
+        "CUCKOO TITLE RULES (use these to evaluate brand_compliance AND title_seo):\n" +
+        "RULE 1 — Every cup capacity MUST have \"Uncooked\" or \"Cooked\" (e.g. \"6-Cup Uncooked\"). Hyphen required. NEVER bare \"6-Cup\" without qualifier. Default Uncooked. Include both if known.\n" +
+        "RULE 2 — Order: CUCKOO [Tech] Rice Cooker [Cup Size], [Features], [Color] ([Model]). No \"& Warmer\". Cup size AFTER \"Rice Cooker\". Dual tech (Twin Pressure + Induction Heating): BOTH must appear after CUCKOO in every title — drop model number before dropping tech. When auditing originals, don't flag for not frontloading dual tech.\n" +
+        "RULE 3 — Model numbers in parentheses, placed LAST. Remove entirely if over char limit.\n" +
+        "RULE 4 — Flowing titles, not keyword lists. \"with\" connects features, \"&\" within groups, 3-4 commas max.\n" +
+        "RULE 5 — ONLY use features from (a) the original title or (b) VERIFIED PRODUCT DATA from the internal database. Never invent.\n\n" +
+        "KEYWORD RESTRICTIONS (apply to title, bullets, and backend keywords):\n" +
+        "- 'small'/'mini'/'compact': only for 3-cup or smaller\n" +
+        "- 'pressure': only for CRP- models\n" +
+        "- 'induction': only for IH models\n" +
+        "- 'Korean': ONLY allowed as the exact phrase 'Korean Rice Cooker' (never standalone 'Korean'). Only if verified made in Korea.\n" +
+        "- 'Stainless Steel': only if inner pot IS stainless steel\n" +
+        "- 'low carb': only if product has that feature\n\n" +
+        "AMAZON KEYWORD DATA — Source: Amazon Product Opportunity Explorer, March 2026 (use these to evaluate keyword_coverage):\n" +
+        "HIGH VOLUME: rice cooker, cuckoo rice cooker, rice maker, stainless steel rice cooker, japanese rice cooker, korean rice cooker, rice steamer\n" +
+        "MEDIUM VOLUME: pressure rice cooker, rice warmer, induction rice cooker, induction heating rice cooker, cuckoo pressure rice cooker\n" +
+        "SIZE-SPECIFIC (only if product matches): rice cooker 6 cup, rice cooker 10 cup, rice cooker 4 cup, 3 cup rice cooker\n" +
+        "FEATURE PHRASES: nonstick inner pot, stainless steel inner pot, keep warm, delay timer, fuzzy logic, steamer basket, multi cooker\n\n" +
+        "AMAZON TITLE REQUIREMENTS (Source: Amazon Seller Central, updated Jan 2025):\n" +
+        "- Hard limit: 200 chars. Title Case. Prohibited: !, $, ?, _, {, }, ^. Same word max twice. No promo phrases. Brand first. Numerals for numbers.\n\n" +
+        "SCORING RUBRIC (use these exact anchors — do NOT deviate):\n\n" +
+        "title_seo (keyword coverage against AMAZON KEYWORD DATA above + char usage + structure):\n" +
+        "  10: 180-200 chars, 6+ exact-match keyword phrases from data above, perfect CUCKOO structure\n" +
+        "  8-9: 160-179 chars, 4-5 exact-match phrases, minor structure issues\n" +
+        "  6-7: 120-159 chars, 2-3 exact-match phrases, some structure issues\n" +
+        "  4-5: 80-119 chars, 1 exact-match phrase, multiple structure issues\n" +
+        "  0-3: under 80 chars or no exact-match phrases from the keyword data\n\n" +
+        "bullet_quality (benefit-driven, keyword-rich, complete):\n" +
+        "  10: 5 bullets, each 200-500 chars, keywords from data above woven in, benefit-led, no fluff\n" +
+        "  8-9: 5 bullets, mostly 150+ chars, good keyword inclusion, minor improvements possible\n" +
+        "  6-7: 4-5 bullets, some under 150 chars, weak keyword usage or feature-led instead of benefit-led\n" +
+        "  4-5: 3-4 bullets, thin content, few keywords\n" +
+        "  0-3: fewer than 3 bullets or very thin/generic content\n\n" +
+        "backend_keywords (space-separated, no punctuation, under 500 bytes, no ASINs/promo):\n" +
+        "  10: 400-500 bytes, competitor brands included, alternate language terms, strong synonym coverage beyond title/bullets. Strategic repetition of high-volume keywords from title/bullets is GOOD — exact-match overlap strengthens search visibility. Do NOT penalize keyword overlap. Only penalize if the entire string is just a copy of the title.\n" +
+        "  8-9: 300-499 bytes, good synonym/competitor coverage, minor gaps\n" +
+        "  6-7: 200-299 bytes, some useful terms but missing competitor brands or alternate languages\n" +
+        "  4-5: under 200 bytes or contains punctuation/ASINs/promo terms\n" +
+        "  0-3: empty, mostly duplicate of title, or contains prohibited content\n\n" +
+        "keyword_coverage (exact-match terms from AMAZON KEYWORD DATA above across ALL fields combined — title + bullets + backend):\n" +
+        "  Count the SPECIFIC phrases from the keyword data above that appear as exact matches across all fields combined. Reward the same phrase appearing in multiple fields.\n" +
+        "  10: 15+ unique keyword phrases from the data above found across all fields\n" +
+        "  8-9: 11-14 unique phrases found\n" +
+        "  6-7: 7-10 unique phrases found\n" +
+        "  4-5: 4-6 unique phrases found\n" +
+        "  0-3: fewer than 4 unique phrases found\n\n" +
+        "brand_compliance (CUCKOO rules above — count violations):\n" +
+        "  10: zero violations of any CUCKOO rule or keyword restriction\n" +
+        "  8-9: 1 minor violation (e.g. missing hyphen in cup count)\n" +
+        "  6-7: 2 violations or 1 major violation (e.g. missing Uncooked/Cooked, uses banned term)\n" +
+        "  4-5: 3+ violations\n" +
+        "  0-3: fundamental violations (wrong brand position, invented features, \"& Warmer\")\n\n" +
+        "competitiveness (vs top Amazon rice cooker listings — structure, keyword density, completeness):\n" +
+        "  10: title + bullets + backend are at or above the quality of top-5 rice cooker listings on Amazon\n" +
+        "  8-9: competitive with top-10 listings, minor gaps\n" +
+        "  6-7: average quality, missing elements that top listings include\n" +
+        "  4-5: below average, significant gaps vs competitors\n" +
+        "  0-3: not competitive\n\n" +
+        "completeness (all listing fields filled):\n" +
+        "  10: title present + 5 bullets present + backend keywords present\n" +
+        "  7: one field missing (e.g. no backend keywords)\n" +
+        "  4: two fields missing\n" +
+        "  0: only one field provided\n\n" +
+        "overall_score: weighted average — title_seo 25%, keyword_coverage 20%, bullet_quality 20%, backend_keywords 15%, brand_compliance 10%, competitiveness 5%, completeness 5%.\n\n" +
+        "For EVERY category that scores below 8, provide a concrete 'recommended' rewrite or fix. For title_seo: provide a rewritten title following all CUCKOO rules and maximizing keyword coverage from the data above. For bullet_quality: provide rewritten bullets (all 5). For backend_keywords: provide a rewritten keyword string. For keyword_coverage: list the exact missing high-volume terms from the keyword data above. For brand_compliance: provide the specific fix for each violation. For completeness: list what's missing.\n\n" +
+        "Respond ONLY with valid JSON: {\"overall_score\":<0-10>,\"scores\":{\"title_seo\":<n>,\"bullet_quality\":<n>,\"backend_keywords\":<n>,\"keyword_coverage\":<n>,\"brand_compliance\":<n>,\"competitiveness\":<n>,\"completeness\":<n>},\"details\":{\"title_seo\":{\"strengths\":[],\"issues\":[],\"recommended\":\"rewritten title or null\"},\"bullet_quality\":{\"strengths\":[],\"issues\":[],\"recommended\":[\"bullet 1\",\"bullet 2\",\"bullet 3\",\"bullet 4\",\"bullet 5\"] or null},\"backend_keywords\":{\"strengths\":[],\"issues\":[],\"recommended\":\"rewritten keywords or null\"},\"keyword_coverage\":{\"missing_keywords\":[],\"present_keywords\":[]},\"brand_compliance\":{\"passes\":[],\"violations\":[],\"recommended\":\"specific fixes or null\"},\"competitiveness\":{\"notes\":[]},\"completeness\":{\"notes\":[]}},\"top_actions\":[\"action1\",\"action2\",\"action3\"]}";
+      const auditUserMsg = "Audit this Amazon listing:" + (auditAsin.trim() ? "\nASIN/Model: " + auditAsin.trim() : "") + (auditTitle.trim() ? "\nTitle: " + auditTitle.trim() : "") + (auditBullets.trim() ? "\nBullet Points:\n" + auditBullets.trim() : "") + (auditBackendKw.trim() ? "\nBackend Keywords:\n" + auditBackendKw.trim() : "") + productCtx + "\nFor any category scoring below 8, provide a concrete recommended rewrite.\nRespond ONLY with valid JSON.";
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0, system: auditSystem, messages: [{ role: "user", content: auditUserMsg }] })
+      });
+      if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
+      if (!text) throw new Error("Empty response");
+      const parsed = parseJsonResponse(text);
+      if (!parsed) throw new Error("Could not parse response");
+      setAuditResults(parsed);
+    } catch (e) {
+      setAuditError(formatApiError(e));
+    } finally {
+      clearTimeout(timeoutId);
+      if (auditTimerRef.current) { clearInterval(auditTimerRef.current); auditTimerRef.current = null; }
+      setAuditLoading(false); auditAbortRef.current = null;
+    }
+  }, [auditAsin, auditTitle, auditBullets, auditBackendKw]);
+
+  // Competitor title analyzer
+  const analyzeCompetitors = useCallback(async () => {
+    if (ctLoading || !ctCuckooTitle.trim() || !ctCompetitorTitles.trim()) return;
+    setCtLoading(true); setCtError(null); setCtResults(null); setCtElapsed(0);
+    const startTime = Date.now();
+    ctTimerRef.current = setInterval(() => setCtElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (ctAbortRef.current) ctAbortRef.current.abort();
+    const controller = new AbortController();
+    ctAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 60000);
+    try {
+      const ctSystem = "You are an Amazon listing competitive analyst for CUCKOO Electronics America. Compare a CUCKOO title against competitor titles.\n\nAMAZON TITLE RULES TO EVALUATE AGAINST:\n- Max 200 characters. Title Case.\n- Brand first. No promotional phrases. No !, $, ?, _.\n- Cup counts must include Uncooked or Cooked (e.g. '6-Cup Uncooked').\n- Model numbers in parentheses at end.\n- No '& Warmer'. Tech type should be frontloaded.\n- Features must be real/verified — no invented specs.\n- Use 'with' to connect features, '&' within groups. Flowing style, not keyword lists.\n\nFor EACH title (CUCKOO and competitors), evaluate:\n1. Amazon title rule compliance (score 0-10 per title)\n2. Keyword strategy: which high-value search terms are present\n3. Character usage efficiency\n4. Structural strengths and weaknesses\n5. Keyword gaps: high-value terms competitors use that CUCKOO is missing\n\nProvide a competitive_score (0-10) for the CUCKOO title relative to competitors.\nRespond ONLY with valid JSON: {\"competitive_score\":<0-10>,\"cuckoo_analysis\":{\"char_count\":<n>,\"rule_compliance\":<0-10>,\"strengths\":[],\"weaknesses\":[]},\"competitors\":[{\"title\":\"...\",\"char_count\":<n>,\"rule_compliance\":<0-10>,\"strengths\":[],\"weaknesses\":[]}],\"keyword_gaps\":[\"terms CUCKOO should consider\"],\"shared_keywords\":[\"terms all titles use\"],\"recommendations\":[\"action1\",\"action2\"]}";
+      const competitors = ctCompetitorTitles.split("\n").map(t => t.trim()).filter(Boolean);
+      const ctUserMsg = "Compare this CUCKOO title against " + competitors.length + " competitor title(s):\n\nCUCKOO Title: " + ctCuckooTitle.trim() + "\n\nCompetitor Titles:\n" + competitors.map((t, i) => (i + 1) + ". " + t).join("\n") + "\n\nRespond ONLY with valid JSON.";
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: ctSystem, messages: [{ role: "user", content: ctUserMsg }] })
+      });
+      if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
+      if (!text) throw new Error("Empty response");
+      const parsed = parseJsonResponse(text);
+      if (!parsed) throw new Error("Could not parse response");
+      // Client-side Ranking Juice calculation from search volume data
+      const svData = liveSearchData;
+      parsed._rankingJuice = {};
+      parsed._rankingJuice.cuckoo = calcRankingJuice(ctCuckooTitle.trim(), svData);
+      parsed._rankingJuice.competitors = competitors.map(t => calcRankingJuice(t, svData));
+      setCtResults(parsed);
+    } catch (e) {
+      setCtError(formatApiError(e));
+    } finally {
+      clearTimeout(timeoutId);
+      if (ctTimerRef.current) { clearInterval(ctTimerRef.current); ctTimerRef.current = null; }
+      setCtLoading(false); ctAbortRef.current = null;
+    }
+  }, [ctCuckooTitle, ctCompetitorTitles]);
+
+  // Listing data extractor
+  const LD_EXTRACT_FIELDS = "Extract these fields (use null for any field not found):\n- title: Full product title or product name\n- brand: Brand name\n- price: Current price (as string with currency symbol) if available\n- model_number: Model or item number\n- asin: ASIN (Amazon only)\n- upc: UPC/EAN if available\n- bullet_points: Array of feature bullet points or key features\n- description: Product description text\n- rating: Average star rating (number) if available\n- review_count: Number of reviews (number) if available\n- availability: In stock / Out of stock / etc.\n- seller: Sold by / seller name\n- category: Product category or breadcrumb\n- dimensions: Product dimensions if listed\n- weight: Product weight if listed\n- color: Color/variant\n- images: Array of image URLs if found\n- specifications: Object of ALL technical spec key-value pairs found. IMPORTANT: Always use these EXACT keys when the data is available (in addition to any other specs found): \"type\" (product type e.g. Micom, IH, Pressure IH), \"heating\" (heating method e.g. Induction Heating, Fuzzy Logic), \"pressure\" (has pressure cooking: true/false), \"cup_size\" (capacity e.g. \"6 Cup\", \"10 Cup\"), \"inner_pot\" (inner pot material/coating), \"cooking_modes\" (number of cooking modes/menu settings), \"cooking_mode_names\" (list of mode names if available), \"features\" (key features like Voice Guide, Auto Clean, Turbo Mode, Steam Tray, Preset Timer), \"country_of_manufacture\" (where it's made), \"wattage\" (power consumption), \"voltage\" (voltage rating), \"material\" (body material)\n- marketplace: Which marketplace or source this data is from (Amazon, Walmart, Target, Best Buy, PDF Manual, Brand Website, etc.)\n- url: The URL or filename of the source\n\nRespond ONLY with valid JSON matching this schema. Do NOT include markdown formatting or code fences. Include as much data as you can find.";
+  const fetchListingData = useCallback(async () => {
+    const isPdf = ldInputMode === "pdf";
+    if (ldLoading || (!isPdf && !ldUrl.trim()) || (isPdf && !ldPdfFile)) return;
+    setLdLoading(true); setLdError(null); setLdResults(null); setLdElapsed(0);
+    const startTime = Date.now();
+    ldTimerRef.current = setInterval(() => setLdElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (ldAbortRef.current) ldAbortRef.current.abort();
+    const controller = new AbortController();
+    ldAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 90000);
+    try {
+      let ldSystem, userContent, tools;
+      if (isPdf) {
+        ldSystem = "You are a product data extraction specialist. The user will provide the extracted text content from a PDF product manual, spec sheet, or brochure. Analyze the text and extract ALL available structured product data.\n\n" + LD_EXTRACT_FIELDS;
+        const pdfText = ldPdfFile.text.slice(0, 80000);
+        const wasTruncated = ldPdfFile.text.length > 80000;
+        userContent = "The following text was extracted from a PDF document (" + ldPdfFile.name + ")." + (wasTruncated ? " NOTE: The document was large and has been truncated to the first ~80,000 characters." : "") + " Extract all product data from it. Look for product specifications, features, model numbers, and technical details.\n\nRespond ONLY with valid JSON.\n\n--- PDF CONTENT ---\n" + pdfText;
+        tools = undefined;
+      } else {
+        ldSystem = "You are a product listing data extraction specialist. The user will provide a marketplace product URL. Use the web_search tool to look up the product page, then extract ALL available structured product data.\n\n" + LD_EXTRACT_FIELDS;
+        userContent = "Extract all product listing data from this URL: " + ldUrl.trim();
+        tools = [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }];
+      }
+      const messages = [{ role: "user", content: userContent }];
+      const baseBody = { model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0, system: ldSystem };
+      if (tools) baseBody.tools = tools;
+      // Multi-turn loop: handle tool_use responses (web_search may require multiple turns)
+      let allText = "";
+      for (let turn = 0; turn < 6; turn++) {
+        const res = await fetch("/api/messages", {
+          method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+          body: JSON.stringify({ ...baseBody, messages })
+        });
+        if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error("API returned " + res.status + ": " + errText.slice(0, 200)); }
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message || "API error");
+        // Collect text blocks
+        const textParts = data.content?.filter(b => b.type === "text").map(b => b.text) || [];
+        allText += textParts.join("\n");
+        // If stop_reason is not tool_use, we're done
+        if (data.stop_reason !== "tool_use") break;
+        // Continue conversation: pass back assistant content and acknowledge tool use
+        messages.push({ role: "assistant", content: data.content });
+        // Extract any server-side tool results from the response, or acknowledge tool execution
+        const toolUseBlocks = data.content.filter(b => b.type === "tool_use");
+        const toolResults = toolUseBlocks.map(b => ({
+          type: "tool_result", tool_use_id: b.id,
+          content: "Search completed. Please analyze the results and provide the structured JSON output."
+        }));
+        messages.push({ role: "user", content: toolResults });
+      }
+      const text = allText.trim();
+      if (!text) throw new Error(isPdf ? "Empty response — the PDF may not contain extractable product data" : "Empty response — the URL may not be accessible");
+      let parsed;
+      const cleanText = text.replace(/```json|```/g, "").trim();
+      // Helper: extract JSON object substring by brace matching
+      const extractJson = (s) => {
+        const start = s.indexOf("{");
+        if (start === -1) return null;
+        let depth = 0, end = -1;
+        for (let i = start; i < s.length; i++) {
+          if (s[i] === "{") depth++;
+          else if (s[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+        }
+        return end === -1 ? null : s.slice(start, end + 1);
+      };
+      // Try direct parse, then extract JSON substring, then repair via API
+      try { parsed = JSON.parse(cleanText); }
+      catch(e) {
+        const jsonStr = extractJson(cleanText);
+        if (jsonStr) { try { parsed = JSON.parse(jsonStr); } catch(e2) {} }
+        if (!parsed) {
+          // Fallback: ask the model to repair the malformed JSON
+          const rawSnippet = (jsonStr || cleanText).slice(0, 6000);
+          const repairRes = await fetch("/api/messages", {
+            method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0,
+              system: "You are a JSON repair tool. The user will provide malformed JSON text. Fix it into valid JSON and return ONLY the corrected JSON object. Do not add commentary or markdown formatting.",
+              messages: [{ role: "user", content: "Fix this malformed JSON into valid JSON. Return ONLY the corrected JSON:\n\n" + rawSnippet }]
+            })
+          });
+          if (repairRes.ok) {
+            const repairData = await repairRes.json();
+            const repairText = repairData.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n").replace(/```json|```/g, "").trim();
+            try { parsed = JSON.parse(repairText); }
+            catch(e3) { const rj = extractJson(repairText); if (rj) parsed = JSON.parse(rj); }
+          }
+          if (!parsed) throw new Error("Could not parse response. Raw: " + rawSnippet.slice(0, 300));
+        }
+      }
+      parsed._url = isPdf ? ldPdfFile.name : ldUrl.trim();
+      parsed._source = isPdf ? "pdf" : "url";
+      setLdResults(parsed);
+    } catch (e) {
+      if (e.name === "AbortError") { if (controller.signal.reason === "timeout") setLdError("Request timed out (90s). Please retry."); }
+      else setLdError("Error: " + (e.message || "Something went wrong."));
+    } finally {
+      clearTimeout(timeoutId);
+      if (ldTimerRef.current) { clearInterval(ldTimerRef.current); ldTimerRef.current = null; }
+      setLdLoading(false); ldAbortRef.current = null;
+    }
+  }, [ldUrl, ldInputMode, ldPdfFile]);
+
+  // --- LISTING WORKSPACE: Generate full listing (titles + bullets + keywords + audit) in one flow ---
+  const generateFullListing = useCallback(async () => {
+    if (!wsModel.trim() || wsLoading) return;
+    const product = lookupProduct(wsModel, liveProductDbRef.current);
+    if (!product) { setWsError("Model not found in database"); return; }
+    const productCtx = formatProductContext(product);
+    setWsResults(null); setWsError(null); setWsElapsed(0);
+    const startTime = Date.now();
+    wsTimerRef.current = setInterval(() => setWsElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (wsAbortRef.current) wsAbortRef.current.abort();
+    const controller = new AbortController();
+    wsAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 180000);
+    const callApi = async (system, userMsg, maxTokens, temp) => {
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, temperature: temp, system, messages: [{ role: "user", content: userMsg }] })
+      });
+      if (!res.ok) throw new Error("API returned " + res.status);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = extractTextFromContent(data.content);
+      const parsed = parseJsonResponse(text);
+      if (!parsed) throw new Error("Could not parse response");
+      return parsed;
+    };
+    try {
+      // Step 1: Titles
+      setWsLoading("titles");
+      const catRules = CATEGORY_RULES[categoryRef.current] || CATEGORY_RULES.rice_cooker;
+      const gl = wsMarketplaces.map(k => MARKETPLACES[k]?.guidelines || "").join("\n---\n");
+      const titleMsg = `Model number: "${wsModel.trim()}"\nThis is a CUCKOO product model number. Create an optimized Amazon title from scratch.\n\n${productCtx}\n1. Use the VERIFIED PRODUCT DATA above as your ONLY source.\n2. Create a fully optimized Amazon title that maximizes the 200-character limit.\n3. Put this title in amazon_audit.suggested_title. Score it.\n4. Then convert for these marketplaces: ${wsMarketplaces.join(", ")}\n\nGuidelines:\n${gl}\nRespond ONLY with valid JSON.`;
+      const titles = await callApi(SYSTEM_PROMPT + catRules, titleMsg, 1500, 0.3);
+      // Run the full title post-processing pipeline (Chunk A: canonical core + diversification)
+      if (titles.conversions) {
+        runFullTitlePipeline(titles, product, product.sku, capacityModeRef.current);
+        // Strict facet resample — up to 2 retries for marketplaces whose descriptor fails its facet
+        try {
+          const resampleResult = await resampleInvalidDescriptors(titles, product, product.sku, capacityModeRef.current, callApi, { maxRetries: 2 });
+          if (resampleResult.titlesUpdated) {
+            // Re-run the pipeline so the resampled titles get normalization + SKU appendage
+            runFullTitlePipeline(titles, product, product.sku, capacityModeRef.current);
+          }
+        } catch (resampleErr) {
+          // Resample failure is non-fatal — keep the original titles
+        }
+      }
+      // amazonTitle is now always from the finalized conversions.amazon.title
+      const amazonTitle = titles.conversions?.amazon?.title || "";
+      setWsResults(prev => ({ ...prev, titles, _amazonTitle: amazonTitle, _product: product }));
+
+      // Step 2: Bullets (Chunk B: tier-specific prompt + locked Bullet 1 heading per Parent ASIN family)
+      setWsLoading("bullets");
+      const wsHeadingSession = createBulletHeadingSession();
+      const requiredHeading = selectBulletOneHeading(product, wsModel.trim(), wsHeadingSession);
+      const bulletSysPrompt = getBulletPromptForTier(classifyProductTier(product));
+      const bpMsg = buildBulletUserMessage(product, wsModel.trim(), amazonTitle, bulletCountRef.current, liveSearchData, requiredHeading);
+      const bullets = await callApi(bulletSysPrompt, bpMsg, 2000, 0.4);
+      setWsResults(prev => ({ ...prev, bullets }));
+
+      // Step 3: Backend Keywords
+      setWsLoading("keywords");
+      const bulletText = bullets.bullets?.map(b => b.heading + ": " + b.text).join("\n") || "";
+      const bkSys = "Amazon backend keyword specialist for CUCKOO Electronics America. Generate hidden search terms (499 byte max). Prioritize competitor brand names, alternate language terms, synonym phrases not in the title or bullets. Space-separated only, no punctuation, no words already in title or bullets, no ASINs or promo phrases.\nANTI-FILLER (CRITICAL): Do NOT use vague generic words. Banned: vessel container bowl dish utensil gadget device machine equipment tool product item goods merchandise commodity article object thing stuff gear substance material component element. Every keyword must be a real shopper search term.\nRespond ONLY with valid JSON: {\"keywords\":\"space-separated string\",\"byte_count\":0,\"strategy\":[\"brief explanation\"]}";
+      const bkMsg = "Generate backend keywords for CUCKOO " + wsModel.trim() + ":\n\n" + productCtx + (amazonTitle ? "\n\nCURRENT TITLE (exclude these words):\n\"" + amazonTitle + "\"" : "") + (bulletText ? "\n\nCURRENT BULLETS (exclude these words):\n" + bulletText : "") + "\nRespond ONLY with valid JSON.";
+      let keywords = await callApi(bkSys, bkMsg, 800, 0.3);
+      keywords.byte_count = new TextEncoder().encode(keywords.keywords || "").length;
+      if (keywords.byte_count > 499) {
+        const words = (keywords.keywords || "").split(" ");
+        const enc = new TextEncoder();
+        while (words.length > 1 && enc.encode(words.join(" ")).length > 499) words.pop();
+        keywords.keywords = words.join(" ");
+        keywords.byte_count = enc.encode(keywords.keywords).length;
+      }
+      setWsResults(prev => ({ ...prev, keywords }));
+
+      // Step 4: Audit
+      setWsLoading("audit");
+      const auditSys = "You are an Amazon listing optimization expert for CUCKOO Electronics America. Score this listing across 7 categories (1-10 each): title_seo, keyword_coverage, bullet_quality, backend_keywords, brand_compliance, competitiveness, completeness. Provide overall_score as weighted average. For any category below 8, provide a concrete recommended rewrite.\nRespond ONLY with valid JSON: {\"overall_score\":0,\"categories\":{\"title_seo\":{\"score\":0,\"notes\":\"\"},\"keyword_coverage\":{\"score\":0,\"notes\":\"\"},\"bullet_quality\":{\"score\":0,\"notes\":\"\"},\"backend_keywords\":{\"score\":0,\"notes\":\"\"},\"brand_compliance\":{\"score\":0,\"notes\":\"\"},\"competitiveness\":{\"score\":0,\"notes\":\"\"},\"completeness\":{\"score\":0,\"notes\":\"\"}},\"recommendations\":[]}";
+      const auditMsg = "Audit this Amazon listing:\nTitle: " + amazonTitle + "\nBullet Points:\n" + bulletText + "\nBackend Keywords:\n" + (keywords.keywords || "") + "\n\n" + productCtx + "\nRespond ONLY with valid JSON.";
+      const audit = await callApi(auditSys, auditMsg, 2000, 0);
+      setWsResults(prev => ({ ...prev, audit }));
+
+      // Validation pass — recalculate helper fields and flag issues
+      const validation = validateListingOutput(titles, bullets, keywords, product);
+      setWsResults(prev => ({ ...prev, _validation: validation }));
+      setWsLoading(null);
+    } catch (e) {
+      setWsError(formatApiError(e));
+      setWsLoading(null);
+    } finally {
+      clearTimeout(timeoutId);
+      if (wsTimerRef.current) { clearInterval(wsTimerRef.current); wsTimerRef.current = null; }
+      wsAbortRef.current = null;
+    }
+  }, [wsModel, wsMarketplaces]);
+
+  // --- BULK EXPORT: Generate full listings for multiple products ---
+  const generateBulkExport = useCallback(async () => {
+    if (!beModels.length || beLoading) return;
+    setBeLoading(true); setBeError(null); setBeResults([]); setBeElapsed(0);
+    const startTime = Date.now();
+    beTimerRef.current = setInterval(() => setBeElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (beAbortRef.current) beAbortRef.current.abort();
+    const controller = new AbortController();
+    beAbortRef.current = controller;
+    const allMpKeys = Object.keys(MARKETPLACES);
+    const catRules = CATEGORY_RULES.rice_cooker;
+    const delay = ms => new Promise(r => setTimeout(r, ms));
+    const callApi = async (system, userMsg, maxTokens, temp) => {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const res = await fetch("/api/messages", {
+          method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+          body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, temperature: temp, system, messages: [{ role: "user", content: userMsg }] })
+        });
+        if (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 529) {
+          // 529 (overloaded) gets longer backoff: 5s, 10s, 20s, 40s, 80s
+          const baseDelay = res.status === 529 ? 5000 : 2000;
+          await delay(Math.pow(2, attempt) * baseDelay);
+          continue;
+        }
+        if (!res.ok) throw new Error("API " + res.status);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message || "API error");
+        const text = extractTextFromContent(data.content);
+        return parseJsonResponse(text);
+      }
+      throw new Error("API overloaded after 5 retries — try again in a few minutes");
+    };
+    const results = [];
+    // Chunk B: shared bullet-heading session — all SKUs in this bulk batch share family-consistent heading rotation
+    const bulkHeadingSession = createBulletHeadingSession();
+    for (let i = 0; i < beModels.length; i++) {
+      // Pause between products to avoid rate limiting
+      if (i > 0) await delay(2000);
+      const sku = beModels[i];
+      const product = PRODUCT_DB[sku];
+      if (!product) { results.push({ sku, error: "Not in database" }); continue; }
+      const productCtx = formatProductContext({ sku, ...product });
+      try {
+        // Titles
+        setBeProgress({ current: i + 1, total: beModels.length, sku, step: "titles" });
+        const gl = allMpKeys.map(k => MARKETPLACES[k]?.guidelines || "").join("\n---\n");
+        const titleMsg = `Model number: "${sku}"\nCreate optimized titles.\n\n${productCtx}\n1. Use VERIFIED PRODUCT DATA as ONLY source.\n2. Create Amazon title maximizing 200 chars.\n3. Convert for: ${allMpKeys.join(", ")}\nGuidelines:\n${gl}\nRespond ONLY with valid JSON.`;
+        const titles = await callApi(SYSTEM_PROMPT + catRules, titleMsg, 1500, 0.3);
+        if (!titles) throw new Error("Title parse failed");
+        // Run the full title post-processing pipeline (Chunk A: canonical core + diversification)
+        if (titles.conversions) {
+          runFullTitlePipeline(titles, product, sku, capacityModeRef.current);
+          try {
+            const resampleResult = await resampleInvalidDescriptors(titles, product, sku, capacityModeRef.current, callApi, { maxRetries: 2 });
+            if (resampleResult.titlesUpdated) {
+              runFullTitlePipeline(titles, product, sku, capacityModeRef.current);
+            }
+          } catch (resampleErr) {
+            // Non-fatal
+          }
+        }
+        const amazonTitle = titles.conversions?.amazon?.title || "";
+        // Bullets — Chunk B: locked heading from batch session + tier-specific prompt
+        setBeProgress({ current: i + 1, total: beModels.length, sku, step: "bullets" });
+        // Auto-optimize bullet count by tier: basic=5, mid=6, premium=7
+        // Bullet count is determined by exact product type per merchandising mapping
+        const autoBulletCount = getBulletCountForType(product?.type);
+        const bulkRequiredHeading = selectBulletOneHeading(product, sku, bulkHeadingSession);
+        const bulkBulletSysPrompt = getBulletPromptForTier(classifyProductTier(product));
+        const bpMsg = buildBulletUserMessage(product, sku, amazonTitle, autoBulletCount, liveSearchData, bulkRequiredHeading);
+        const bullets = await callApi(bulkBulletSysPrompt, bpMsg, 2000, 0.4);
+        // Keywords
+        setBeProgress({ current: i + 1, total: beModels.length, sku, step: "keywords" });
+        const bulletText = bullets?.bullets?.map(b => b.heading + ": " + b.text).join("\n") || "";
+        const bkSys = "Amazon backend keyword specialist for CUCKOO. Generate search terms (499 byte max). Space-separated, no punctuation, no words in title/bullets. Every keyword must be a real shopper search term — do NOT use vague filler words like vessel, container, bowl, utensil, gadget, device, machine, equipment, tool, product, item, goods, thing, stuff.\nRespond ONLY with valid JSON: {\"keywords\":\"...\",\"byte_count\":0}";
+        const bkMsg = "Backend keywords for CUCKOO " + sku + ":\n" + productCtx + (amazonTitle ? "\nTitle: \"" + amazonTitle + "\"" : "") + (bulletText ? "\nBullets:\n" + bulletText : "") + "\nRespond ONLY with valid JSON.";
+        let keywords = await callApi(bkSys, bkMsg, 800, 0.3);
+        if (keywords?.keywords) {
+          const enc = new TextEncoder();
+          keywords.byte_count = enc.encode(keywords.keywords).length;
+          if (keywords.byte_count > 499) { const w = keywords.keywords.split(" "); while (w.length > 1 && enc.encode(w.join(" ")).length > 499) w.pop(); keywords.keywords = w.join(" "); keywords.byte_count = enc.encode(keywords.keywords).length; }
+        }
+        // Validation pass
+        const validation = validateListingOutput(titles, bullets, keywords, product);
+        results.push({ sku, titles, bullets, keywords, amazonTitle, error: null, _validation: validation });
+        setBeResults([...results]);
+      } catch (e) {
+        if (e.name === "AbortError") { setBeError("Cancelled at " + sku); break; }
+        results.push({ sku, error: e.message || "Failed" });
+        setBeResults([...results]);
+      }
+    }
+    if (beTimerRef.current) { clearInterval(beTimerRef.current); beTimerRef.current = null; }
+    setBeLoading(false); beAbortRef.current = null;
+    setBeProgress({ current: beModels.length, total: beModels.length, sku: "Done", step: "complete" });
+  }, [beModels]);
+
+  // Bulk export to XLSX
+  const exportBulkXlsx = useCallback(async () => {
+    if (!beResults.length) return;
+    const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs");
+    const mpKeys = Object.keys(MARKETPLACES);
+    const rows = beResults.filter(r => !r.error).map(r => {
+      const row = { SKU: r.sku, "Product Type": PRODUCT_DB[r.sku]?.type || "", "Cup Size": PRODUCT_DB[r.sku]?.cupSize || "" };
+      // Amazon suggested title
+      row["Amazon Title (Suggested)"] = r.amazonTitle || "";
+      row["Amazon Chars"] = (r.amazonTitle || "").length;
+      // Marketplace titles
+      mpKeys.forEach(k => {
+        const t = r.titles?.conversions?.[k];
+        if (t) { row[MARKETPLACES[k].name + " Title"] = t.title || ""; row[MARKETPLACES[k].name + " Chars"] = t.char_count || (t.title || "").length; }
+      });
+      // Bullets — always create Bullet 1 through Bullet 7 columns (unused = blank)
+      const bulletList = r.bullets?.bullets || [];
+      for (let bi = 0; bi < 7; bi++) {
+        const b = bulletList[bi];
+        row["Bullet " + (bi + 1)] = b ? (b.heading + ": " + b.text) : "";
+      }
+      // Keywords
+      row["Backend Keywords"] = r.keywords?.keywords || "";
+      row["Keywords Bytes"] = r.keywords?.byte_count || 0;
+      return row;
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Listings");
+    XLSX.writeFile(wb, "cuckoo-bulk-listings-" + new Date().toISOString().slice(0, 10) + ".xlsx");
+  }, [beResults]);
+
+  // --- REVIEW ANALYZER: Analyze reviews for a product ---
+  const analyzeReviews = useCallback(async () => {
+    if (!raModel.trim() || raLoading) return;
+    setRaLoading(true); setRaError(null); setRaResults(null); setRaElapsed(0);
+    const startTime = Date.now();
+    raTimerRef.current = setInterval(() => setRaElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    if (raAbortRef.current) raAbortRef.current.abort();
+    const controller = new AbortController();
+    raAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 90000);
+    try {
+      // Load reviews from embedded data or fetch from file
+      let allReviews;
+      try { allReviews = (await import("../data/reviews.json")).default || []; }
+      catch { allReviews = []; }
+      if (!allReviews.length) throw new Error("Review database not available");
+      // Find reviews matching the model (fuzzy match on SKU field which may contain multiple SKUs separated by +)
+      const q = raModel.trim().toUpperCase();
+      const reviews = allReviews.filter(r => r.sku && r.sku.toUpperCase().split(/\s*\+\s*/).some(s => s.trim().startsWith(q) || q.startsWith(s.trim().replace(/[- ]/g, ""))));
+      if (!reviews.length) throw new Error("No reviews found for " + raModel.trim() + ". Available SKUs with reviews: " + [...new Set(allReviews.map(r => r.sku))].slice(0, 10).join(", "));
+      // Build review summary for AI analysis (limit to recent 200 reviews to fit in context)
+      const sorted = reviews.sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 200);
+      const avgRating = (reviews.reduce((s, r) => s + (r.rating || 0), 0) / reviews.length).toFixed(1);
+      const ratingDist = {};
+      reviews.forEach(r => { ratingDist[r.rating] = (ratingDist[r.rating] || 0) + 1; });
+      const reviewText = sorted.map(r => `[${r.rating}★] ${r.title}\n${r.body}`).join("\n---\n");
+      const raSys = "You are a customer insights analyst for CUCKOO Electronics America. Analyze product reviews and extract actionable insights for the ecommerce team.\n\nRespond ONLY with valid JSON: {\"summary\":{\"total_reviews\":0,\"avg_rating\":0,\"sentiment\":\"positive/mixed/negative\"},\"themes\":{\"positive\":[{\"theme\":\"...\",\"count\":0,\"example_quotes\":[\"...\"]}],\"negative\":[{\"theme\":\"...\",\"count\":0,\"example_quotes\":[\"...\"],\"suggestion\":\"...\"}],\"questions\":[{\"theme\":\"...\",\"count\":0,\"example_quotes\":[\"...\"]}]},\"keyword_opportunities\":[{\"keyword\":\"...\",\"reason\":\"...\"}],\"bullet_suggestions\":[{\"heading\":\"...\",\"text\":\"...\",\"based_on\":\"...\"}],\"competitor_mentions\":[{\"brand\":\"...\",\"context\":\"...\"}],\"urgent_issues\":[{\"issue\":\"...\",\"frequency\":\"...\",\"impact\":\"...\"}]}";
+      const raMsg = "Analyze these " + reviews.length + " customer reviews for CUCKOO " + raModel.trim() + " (avg rating: " + avgRating + "/5):\n\nRating distribution: " + JSON.stringify(ratingDist) + "\n\n" + reviewText.slice(0, 50000) + "\n\nProvide actionable insights. Respond ONLY with valid JSON.";
+      const res = await fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 3000, temperature: 0.2, system: raSys, messages: [{ role: "user", content: raMsg }] })
+      });
+      if (!res.ok) throw new Error("API returned " + res.status);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "API error");
+      const text = extractTextFromContent(data.content);
+      const parsed = parseJsonResponse(text);
+      if (!parsed) throw new Error("Could not parse analysis");
+      parsed._reviewCount = reviews.length;
+      parsed._avgRating = avgRating;
+      parsed._ratingDist = ratingDist;
+      setRaResults(parsed);
+    } catch (e) {
+      setRaError(formatApiError(e));
+    } finally {
+      clearTimeout(timeoutId);
+      if (raTimerRef.current) { clearInterval(raTimerRef.current); raTimerRef.current = null; }
+      setRaLoading(false); raAbortRef.current = null;
+    }
+  }, [raModel]);
+
+  const optimize = useCallback(async () => {
+    const title = titleRef.current;
+    const sel = selectedRef.current;
+    if (!title.trim() || !sel.length || loadingRef.current) return;
+
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 130000);
+
+    setLoading(true); setError(null); setLoadingStatus("");    // FIX #1: Keep old results visible during loading — don't setResults(null)
+    // Product database lookup
+    const productMatch = lookupProduct(title, liveProductDbRef.current);
+    const productCtx = productMatch ? "\n\n" + formatProductContext(productMatch) : "";
+    try {
+      // Helper: call API for a batch of marketplace keys
+      const callApi = async (keys) => {
+        const catRules = CATEGORY_RULES[categoryRef.current] || CATEGORY_RULES.other;
+        const gl = keys.map(k => MARKETPLACES[k].guidelines).join("\n---\n");
+        const isModelMode = inputModeRef.current === "model";
+        const userMsg = isModelMode
+          ? `Model number: "${title}"\nThis is a CUCKOO product model number. There is NO existing Amazon title — you must CREATE one from scratch.\n${productCtx}\n1. ${productMatch ? "Use the VERIFIED PRODUCT DATA above as your ONLY source for ALL product specs — type, heating, pressure, cup size, color, inner pot, and features are ALL provided. Do NOT add any features, specs, or technologies not in the database." : "The model was not found in the internal database. Use only the information available from the model number and general CUCKOO product knowledge."}\n2. Using the product data, search volume keyword data, and CUCKOO title rules, create a fully optimized Amazon title that maximizes the 200-character limit with high-volume keyword phrases.\n3. Put this title in amazon_audit.suggested_title. Score it based on SEO strength.\n4. Then convert for these marketplaces: ${keys.join(", ")}\n\nGuidelines:\n${gl}\nRespond ONLY with valid JSON.`
+          : `Amazon title: "${title}"${productCtx}\nConvert for: ${keys.join(", ")}\nGuidelines:\n${gl}\nIf the title is sparse or missing details, use any product data provided above.\nRespond ONLY with valid JSON.`;
+        const makeRequest = () => fetch("/api/messages", {
+          method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` }, signal: controller.signal,
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514", max_tokens: 1500, temperature: 0.3, system: SYSTEM_PROMPT + catRules,
+            messages: [{ role: "user", content: userMsg }]
+          })
+        });
+        let res;
+        try {
+          res = await makeRequest();
+        } catch (firstErr) {
+          if (firstErr.name !== "AbortError") {
+            // one automatic retry on network errors
+            res = await makeRequest();
+          } else {
+            throw firstErr;
+          }
+        }
+        if (!res.ok) { const errText = await res.text().catch(() => ""); throw new Error(`API returned ${res.status}: ${errText.slice(0, 200)}`); }
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message || "API error");
+        const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
+        if (!text) throw new Error("Empty response from API");
+        let parsed;
+        try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
+        catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Could not parse response as JSON"); }
+        return parsed;
+      };
+
+      // Single API call for all marketplaces — faster than splitting into parallel calls
+      const merged = await callApi(sel);
+
+      // Attach product verification status
+      merged._productVerified = !!productMatch;
+      merged._productSku = productMatch?.sku || null;
+
+      // Trim titles and override AI-reported char_count with actual client-side measurement
+      if (merged.conversions && productMatch) {
+        const sku = productMatch?.sku || title.trim();
+        const skuForPipeline = sku && /^CR[A-Z]?-/.test(sku.toUpperCase()) ? sku : null;
+        // Run the full title post-processing pipeline (Chunk A: canonical core + diversification)
+        runFullTitlePipeline(merged, productMatch, skuForPipeline, capacityModeRef.current);
+
+        // Strict facet resample — adapter wraps the title-generator callApi into the (system, user, maxTokens, temp) shape
+        const resampleApiCall = async (sysPrompt, userMsg, maxTokens, temp) => {
+          const res = await fetch("/api/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authTokenRef.current}` },
+            signal: controller.signal,
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514", max_tokens: maxTokens, temperature: temp, system: sysPrompt,
+              messages: [{ role: "user", content: userMsg }],
+            }),
+          });
+          if (!res.ok) throw new Error("API " + res.status);
+          const data = await res.json();
+          if (data.error) throw new Error(data.error.message || "API error");
+          const text = data.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
+          const parsed = parseJsonResponse(text);
+          if (!parsed) throw new Error("Could not parse resample response");
+          return parsed;
+        };
+
+        try {
+          const resampleResult = await resampleInvalidDescriptors(merged, productMatch, skuForPipeline, capacityModeRef.current, resampleApiCall, { maxRetries: 2 });
+          if (resampleResult.titlesUpdated) {
+            runFullTitlePipeline(merged, productMatch, skuForPipeline, capacityModeRef.current);
+          }
+        } catch (resampleErr) {
+          // Non-fatal — keep whatever we had
+        }
+      } else if (merged.conversions) {
+        // No product match — still run the basic pipeline pieces that don't require product data
+        for (const key of Object.keys(merged.conversions)) {
+          if (merged.conversions[key]?.title) {
+            merged.conversions[key].title = merged.conversions[key].title.trim();
+            merged.conversions[key].char_count = merged.conversions[key].title.length;
+          }
+        }
+        unifyAmazonTitle(merged);
+      }
+      if (merged.amazon_audit?.suggested_title) {
+        merged.amazon_audit.suggested_char_count = merged.amazon_audit.suggested_title.length;
+      }
+
+      // Validation: instant deterministic checks (no API call)
+      const allTitles = {};
+      if (merged.amazon_audit?.suggested_title) allTitles.amazon_suggested = merged.amazon_audit.suggested_title;
+      if (merged.conversions) { for (const k of Object.keys(merged.conversions)) { if (merged.conversions[k]?.title) allTitles[k] = merged.conversions[k].title; } }
+      for (const [k, t] of Object.entries(allTitles)) {
+        const warnings = [];
+        if (hasBadCupCount(t)) warnings.push("Cup count missing Uncooked/Cooked");
+        const limit = k === "amazon_suggested" ? 200 : (CHAR_LIMITS[k] || 150);
+        if (t.length > limit) warnings.push("Over " + limit + " char limit (" + t.length + ")");
+        if (/&\s*Warmer/i.test(t)) warnings.push("Contains '& Warmer'");
+        if (warnings.length) {
+          const label = "\u26A0 " + warnings.join("; ");
+          if (k === "amazon_suggested" && merged.amazon_audit) { if (!merged.amazon_audit.improvements) merged.amazon_audit.improvements = []; merged.amazon_audit.improvements.push(label); }
+          else if (merged.conversions?.[k]) { if (!merged.conversions[k].changes) merged.conversions[k].changes = []; merged.conversions[k].changes.push(label); }
+        }
+      }
+
+      // Full validation pass on finalized titles
+      merged._validation = validateListingOutput(merged, null, null, productMatch);
+
+      setResults(merged); setEditedKeys(new Set()); originalTitlesRef.current = {};
+      saveToHistory(title, inputModeRef.current, sel, merged);
+      const ex = { amazon_audit: true }; sel.forEach(k => ex[k] = true);
+      setExpanded(ex); setAllExpanded(true);
+      setTimeout(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+    } catch (e) {
+      if (e.name === "AbortError") {
+        setError("Request cancelled.");
+      } else {
+        setError(e.message || "Something went wrong.");
+      }
+    } finally {
+      clearTimeout(timeoutId);
+      setLoading(false);
+      setLoadingStatus("");
+      abortRef.current = null;
+    }
+  }, []);
+
+  // Keyboard shortcut — registered once, never re-registers
+  useEffect(() => {
+    const handler = (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); if (document.querySelector('[data-page="title_optimizer"]')) { modeRef.current === "bulk" ? optimizeBulk() : optimize(); } } };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [optimize, optimizeBulk]);
+
+  // Cleanup abort on unmount
+  useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
+
+  const allSel = selected.length === MP_KEYS.length;
+  const resultCount = results ? Object.keys(results.conversions || {}).filter(k => results.conversions[k]).length : 0;
+
+  // Memoize search volume filtering/sorting to avoid recalculating on unrelated re-renders
+  const svMaxVol = useMemo(() => Math.max(...liveSearchData.map(d => d.v)), [liveSearchData]);
+  const svFiltered = useMemo(() => {
+    return liveSearchData.filter(d => {
+      if (svTier !== "all" && d.tier !== svTier) return false;
+      if (svCat !== "all" && d.cat !== svCat) return false;
+      if (svFilter && !d.t.toLowerCase().includes(svFilter.toLowerCase())) return false;
+      return true;
+    }).sort((a, b) => svSortDir === "desc" ? b[svSort] - a[svSort] : a[svSort] - b[svSort]);
+  }, [liveSearchData, svTier, svCat, svFilter, svSort, svSortDir]);
+
+  // Memoize marketplace chip data to avoid re-filtering every render
+  const mpEntries = useMemo(() => MP_KEYS.map(k => [k, MARKETPLACES[k]]), []);
+
+  if (authState === "login") return (
+    <div style={{ fontFamily: "'Outfit','Helvetica Neue',sans-serif", minHeight: "100vh", background: "#f7f5f3", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+      <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 16, padding: "40px 32px", boxShadow: "0 4px 24px rgba(0,0,0,0.06)", maxWidth: 360, width: "100%", textAlign: "center", margin: "0 16px" }}>
+        <div style={{ background: MAROON, borderRadius: 12, padding: "12px 24px", display: "inline-block", margin: "0 auto 16px" }}><img src="data:image/png;base64,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" alt="CUCKOO" style={{ height: 28, objectFit: "contain" }} /></div>
+        <div style={{ fontSize: 16, fontWeight: 600, color: "#1a1a1a", marginBottom: 4 }}>Marketplace Tools</div>
+        <div style={{ fontSize: 12, color: "#999", marginBottom: 24 }}>Sign in to continue</div>
+        <input type="text" value={authUser} onChange={e => { setAuthUser(e.target.value); setAuthError(""); }} placeholder="Username" autoComplete="username" style={{ width: "100%", padding: "12px 16px", border: "1px solid #e8e5e0", borderRadius: 8, fontSize: 14, fontFamily: "'Outfit',sans-serif", boxSizing: "border-box", marginBottom: 8, outline: "none" }} />
+        <input type="password" value={authPass} onChange={e => { setAuthPass(e.target.value); setAuthError(""); }} onKeyDown={e => e.key === "Enter" && handleLogin()} placeholder="Password" autoComplete="current-password" style={{ width: "100%", padding: "12px 16px", border: "1px solid #e8e5e0", borderRadius: 8, fontSize: 14, fontFamily: "'Outfit',sans-serif", boxSizing: "border-box", marginBottom: 10, outline: "none" }} />
+        {authError && <div style={{ fontSize: 11, color: "#dc2626", marginBottom: 10 }}>{authError}</div>}
+        <button onClick={handleLogin} style={{ width: "100%", padding: 14, background: MAROON, color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Sign In</button>
+        <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid #f0eeeb" }}><div style={{ fontSize: 9, color: "#ccc", lineHeight: 1.5 }}>Authorized access only. CUCKOO Electronics America, Inc.</div></div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="cuckoo-app" style={{ fontFamily: "'Outfit','Helvetica Neue',sans-serif", minHeight: "100vh", background: "#f7f5f3", color: "#1a1a1a" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes slideIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}} @keyframes toastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}} .cuckoo-btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 8px 24px rgba(107,28,35,0.3)!important} .cuckoo-btn:active:not(:disabled){transform:translateY(0);opacity:0.9} .mp-chip:hover{opacity:0.85} .mp-chip:active{opacity:0.7;transform:scale(0.97)} .result-card{animation:slideIn .3s ease forwards} .src-link:hover{color:${MAROON}!important} .editable-title{border-bottom:1px dashed #ddd!important} .editable-title:focus{border-bottom:1px solid currentColor!important;border-color:inherit!important} .nav-scroll{overflow:visible} .nav-scroll::-webkit-scrollbar{display:none} @media(max-width:600px){.audit-grid{grid-template-columns:1fr!important} input,textarea,select{font-size:16px!important}}`}</style>
+
+      {/* HEADER */}
+      <div style={{ background: MAROON, position: "relative", overflow: "hidden" }}>
+        <div style={{ position: "absolute", inset: 0, opacity: 0.04, backgroundImage: "repeating-linear-gradient(45deg,transparent,transparent 24px,#fff 24px,#fff 25px),repeating-linear-gradient(-45deg,transparent,transparent 24px,#fff 24px,#fff 25px)" }} />
+        <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 24px", position: "relative", zIndex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+            <img src="data:image/png;base64,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" alt="CUCKOO" style={{ height: 28, objectFit: "contain" }} />
+            <div style={{ borderLeft: "1px solid rgba(255,255,255,0.2)", paddingLeft: 20 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.45)", letterSpacing: "0.18em", textTransform: "uppercase", marginBottom: 2 }}>Internal Tool {"\u00B7"} Guidelines Mar 2026</div>
+              <h1 style={{ fontSize: "clamp(16px,3vw,20px)", fontWeight: 600, color: "rgba(255,255,255,0.9)", margin: 0 }}>Marketplace Tools</h1>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* NAV BAR */}
+      <div style={{ background: "#fff", borderBottom: "1px solid #e8e5e0", position: "sticky", top: 0, zIndex: 50 }}>
+        <div style={{ maxWidth: 940, margin: "0 auto", padding: "0 24px", display: "flex", alignItems: "center" }}>
+          <nav ref={navGroupRef} className="nav-scroll" role="tablist" aria-label="Tool navigation" style={{ flex: 1, display: "flex", gap: 0 }}>
+          {[
+            { group: "generate", label: "Generate", icon: "\u270F\uFE0F", items: [
+              { key: "listing_workspace", label: "Listing Workspace", icon: "\u{1F680}" },
+              { key: "bulk_export", label: "Bulk Export", icon: "\u{1F4E6}" },
+              { key: "title_optimizer", label: "Marketplace Titles", icon: "\u270F\uFE0F" },
+              { key: "bullet_points", label: "Bullet Points", icon: "\u{1F4DD}" },
+              { key: "backend_keywords", label: "Backend Keywords", icon: "\u{1F50D}" },
+              { key: "listing_audit", label: "Listing Audit", icon: "\u{1F4CB}" },
+            ]},
+            { group: "analyze", label: "Analyze", icon: "\u{1F4CA}", items: [
+              { key: "competitor_analyzer", label: "Competitor Analyzer", icon: "\u{1F3C6}" },
+              { key: "listing_extractor", label: "Listing Extractor", icon: "\u{1F310}" },
+              { key: "review_analyzer", label: "Review Analyzer", icon: "\u{2B50}" },
+              { key: "compliance_checker", label: "Compliance Checker", icon: "\u2705" },
+            ]},
+            { group: "reference", label: "Reference", icon: "\u{1F4D6}", items: [
+              { key: "search_volume", label: "Search Volume", icon: "\u{1F4CA}" },
+              { key: "product_compare", label: "Product Comparison", icon: "\u{1F4CB}" },
+              { key: "asin_reference", label: "ASIN Reference", icon: "\u{1F517}" },
+            ]},
+          ].map(group => {
+            const isActive = group.items.some(i => i.key === page);
+            const isOpen = openNavGroup === group.group;
+            return (
+              <div key={group.group} style={{ position: "relative" }}>
+                <button onClick={() => setOpenNavGroup(isOpen ? null : group.group)}
+                  style={{ padding: "14px 20px", background: "transparent", border: "none", borderBottom: isActive ? `2px solid ${MAROON}` : "2px solid transparent", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontSize: 13, fontWeight: isActive ? 700 : 400, color: isActive ? MAROON : "#999", transition: "all .15s", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                  <span style={{ fontSize: 14 }}>{group.icon}</span>{group.label}<span style={{ fontSize: 9, opacity: 0.6, transform: isOpen ? "rotate(180deg)" : "rotate(0)", transition: "transform .15s" }}>{"\u25BC"}</span>
+                </button>
+                {isOpen && (
+                  <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 200, minWidth: 220, overflow: "hidden", marginTop: 2 }}>
+                    {group.items.map(item => (
+                      <button key={item.key} role="tab" aria-selected={page === item.key} onClick={() => { setPage(item.key); setOpenNavGroup(null); window.scrollTo(0, 0); }}
+                        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", background: page === item.key ? "rgba(107,28,35,0.06)" : "transparent", border: "none", borderLeft: page === item.key ? `3px solid ${MAROON}` : "3px solid transparent", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontSize: 12, fontWeight: page === item.key ? 700 : 400, color: page === item.key ? MAROON : "#555", textAlign: "left", transition: "background .1s" }}
+                        onMouseEnter={e => { if (page !== item.key) e.target.style.background = "#faf9f7"; }}
+                        onMouseLeave={e => { if (page !== item.key) e.target.style.background = "transparent"; }}>
+                        <span style={{ fontSize: 14 }}>{item.icon}</span>{item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          </nav>
+          <div ref={accountMenuRef} style={{ position: "relative", flexShrink: 0, marginLeft: 12 }}>
+            <button aria-label="Account menu" aria-expanded={showAccountMenu} onClick={() => setShowAccountMenu(p => !p)}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "transparent", border: "1px solid #e8e5e0", borderRadius: 8, cursor: "pointer", transition: "border-color .15s" }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = "#ccc"} onMouseLeave={e => e.currentTarget.style.borderColor = "#e8e5e0"}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isAdmin ? MAROON : "#888"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#555", fontFamily: "'Outfit',sans-serif" }}>{loggedInUser}</span>
+              {isAdmin && <span style={{ fontSize: 8, fontWeight: 700, color: "#16a34a", background: "rgba(22,163,74,0.1)", padding: "1px 5px", borderRadius: 3 }}>ADMIN</span>}
+            </button>
+            {showAccountMenu && (<div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.1)", width: 220, zIndex: 100, overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0eeeb", display: "flex", alignItems: "center", gap: 10 }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={isAdmin ? MAROON : "#888"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <div><div style={{ fontSize: 12, fontWeight: 700, color: "#1a1a1a" }}>{loggedInUser}</div><div style={{ fontSize: 10, color: isAdmin ? "#16a34a" : "#999", fontWeight: 600 }}>{isAdmin ? "Admin" : "Team Member"}</div></div>
+              </div>
+              {/* Dark mode toggle */}
+              <div style={{ padding: "10px 16px", borderBottom: "1px solid #f0eeeb", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 12, color: "#666" }}>Dark Mode</span>
+                <button aria-label="Toggle dark mode" role="switch" aria-checked={darkMode} onClick={toggleDarkMode}
+                  style={{ position: "relative", width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer", background: darkMode ? MAROON : "#e0ddd8", transition: "background .2s", padding: 0, flexShrink: 0 }}>
+                  <span style={{ position: "absolute", top: 2, left: darkMode ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", transition: "left .2s", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>
+                    {darkMode ? "\u{1F319}" : "\u2600\uFE0F"}
+                  </span>
+                </button>
+              </div>
+              {isAdmin && <button onClick={() => { setPage("settings"); setShowAccountMenu(false); window.scrollTo(0,0); }} style={{ width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderBottom: "1px solid #f0eeeb", cursor: "pointer", fontSize: 12, color: "#666", textAlign: "left", display: "flex", alignItems: "center", gap: 8 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                Settings
+              </button>}
+              <button onClick={handleLogout} style={{ width: "100%", padding: "10px 16px", background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "#dc2626", textAlign: "left", display: "flex", alignItems: "center", gap: 8 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                Log Out
+              </button>
+            </div>)}
+          </div>
+        </div>
+      </div>
+
+      {page === "settings" && isAdmin && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Product Database</div>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 16 }}>{Object.keys(liveProductDb).length} models loaded{dbLastUpdated && <span> {"·"} Updated {new Date(dbLastUpdated).toLocaleDateString()}</span>}</div>
+          <div style={{ border: "2px dashed #e0ddd8", borderRadius: 10, padding: 24, textAlign: "center", marginBottom: 16, background: "#faf9f7" }}>
+            <input type="file" accept=".xlsx,.xls,.json" id="db-upload" onChange={e => handleDbUpload(e.target.files[0])} style={{ display: "none" }} />
+            <label htmlFor="db-upload" style={{ display: "inline-block", padding: "8px 20px", background: MAROON, color: "#fff", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Choose File</label>
+          </div>
+          {dbUploadStatus && <div style={{ padding: 16, borderRadius: 10, marginBottom: 16, background: dbUploadStatus.type === "error" ? "#fef2f2" : dbUploadStatus.type === "success" ? "#f0fdf4" : "#fffbeb" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: dbUploadStatus.type === "error" ? "#dc2626" : dbUploadStatus.type === "success" ? "#16a34a" : "#92400e" }}>{dbUploadStatus.message}</div>
+            {Array.isArray(dbUploadStatus.warnings) && dbUploadStatus.warnings.length > 0 && <div style={{ marginTop: 10, padding: 10, background: "rgba(217,119,6,0.08)", borderRadius: 6, fontSize: 11, color: "#92400e", lineHeight: 1.5 }}>{dbUploadStatus.warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}</div>}
+            {dbUploadStatus.type === "preview" && <div style={{ marginTop: 12, display: "flex", gap: 8 }}><button onClick={applyDbUpload} style={{ padding: "8px 16px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Apply {dbUploadStatus.count} Models</button><button onClick={() => setDbUploadStatus(null)} style={{ padding: "8px 16px", background: "#fff", color: "#666", border: "1px solid #e0ddd8", borderRadius: 6, fontSize: 12, cursor: "pointer" }}>Cancel</button></div>}
+          </div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={revertDb} style={{ padding: "6px 14px", background: "#fff", border: "1px solid #e0ddd8", borderRadius: 6, fontSize: 11, color: "#666", cursor: "pointer" }}>Revert to Previous</button>
+            <button onClick={resetDbToDefault} style={{ padding: "6px 14px", background: "#fff", border: "1px solid #e0ddd8", borderRadius: 6, fontSize: 11, color: "#666", cursor: "pointer" }}>Reset to Defaults</button>
+          </div>
+        </div>
+        {/* Search Volume Data */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Search Volume Data</div>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 16 }}>{liveSearchData.length} keywords loaded{liveSearchData !== SEARCH_DATA ? " (custom)" : " (default)"}</div>
+          <div style={{ border: "2px dashed #e0ddd8", borderRadius: 10, padding: 24, textAlign: "center", marginBottom: 16, background: "#faf9f7" }}>
+            <input type="file" accept=".json,.csv" id="sv-upload" onChange={e => handleSvUpload(e.target.files[0])} style={{ display: "none" }} />
+            <label htmlFor="sv-upload" style={{ display: "inline-block", padding: "8px 20px", background: MAROON, color: "#fff", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Choose File (.json or .csv)</label>
+            <div style={{ fontSize: 10, color: "#aaa", marginTop: 8 }}>CSV: keyword, volume, g90, g180, cs, cr, tier, cat</div>
+          </div>
+          {svUploadStatus && <div style={{ padding: 16, borderRadius: 10, marginBottom: 16, background: svUploadStatus.type === "error" ? "#fef2f2" : svUploadStatus.type === "success" ? "#f0fdf4" : "#fffbeb" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: svUploadStatus.type === "error" ? "#dc2626" : svUploadStatus.type === "success" ? "#16a34a" : "#92400e" }}>{svUploadStatus.message}</div>
+            {svUploadStatus.type === "preview" && <div style={{ marginTop: 12, display: "flex", gap: 8 }}><button onClick={applySvUpload} style={{ padding: "8px 16px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Apply {svUploadStatus.count} Keywords</button><button onClick={() => setSvUploadStatus(null)} style={{ padding: "8px 16px", background: "#fff", color: "#666", border: "1px solid #e0ddd8", borderRadius: 6, fontSize: 12, cursor: "pointer" }}>Cancel</button></div>}
+          </div>}
+          <button onClick={resetSvToDefault} style={{ padding: "6px 14px", background: "#fff", border: "1px solid #e0ddd8", borderRadius: 6, fontSize: 11, color: "#666", cursor: "pointer" }}>Reset to Defaults</button>
+        </div>
+        {/* Downloads */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Downloads</div>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 16 }}>Export the current product database and ASIN-to-SKU mapping as JSON files.</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => {
+              const blob = new Blob([JSON.stringify(liveProductDb, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url;
+              a.download = "cuckoo-product-db-" + new Date().toISOString().slice(0, 10) + ".json";
+              a.click(); URL.revokeObjectURL(url);
+            }} style={{ padding: "8px 20px", background: MAROON, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+              {"\u{1F4E5}"} Product Database ({Object.keys(liveProductDb).length} models)
+            </button>
+            <button onClick={() => {
+              const existingAsins = new Set(ASIN_DATA.map(r => r.asin));
+              const dbExtras = Object.entries(liveProductDb).filter(([sku, d]) => d.asin && !existingAsins.has(d.asin)).map(([sku, d]) => ({ asin: d.asin, sku }));
+              const merged = [...ASIN_DATA, ...dbExtras];
+              const blob = new Blob([JSON.stringify(merged, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url;
+              a.download = "cuckoo-asin-sku-" + new Date().toISOString().slice(0, 10) + ".json";
+              a.click(); URL.revokeObjectURL(url);
+            }} style={{ padding: "8px 20px", background: MAROON, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+              {"\u{1F4E5}"} ASIN-to-SKU Mapping ({(() => { const s = new Set(ASIN_DATA.map(r => r.asin)); return ASIN_DATA.length + Object.entries(liveProductDb).filter(([, d]) => d.asin && !s.has(d.asin)).length; })()} entries)
+            </button>
+            <button onClick={() => {
+              const blob = new Blob([JSON.stringify(liveSearchData, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url;
+              a.download = "cuckoo-search-volume-" + new Date().toISOString().slice(0, 10) + ".json";
+              a.click(); URL.revokeObjectURL(url);
+            }} style={{ padding: "8px 20px", background: MAROON, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+              {"\u{1F4E5}"} Search Volume Data ({liveSearchData.length} keywords)
+            </button>
+          </div>
+        </div>
+      </div>}
+
+      {/* LISTING WORKSPACE PAGE */}
+      {page === "listing_workspace" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Generate a <strong>complete listing package</strong> for any CUCKOO product in one flow — marketplace titles, bullet points, backend keywords, and an audit score. Enter a model number and click Generate.
+          </p>
+        </div>
+
+        {/* Model Input */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>CUCKOO Model Number</label>
+          <input value={wsModel} onChange={e => setWsModel(e.target.value)} placeholder="e.g. CRP-LHTR0609FW"
+            style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 14, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"}
+            onKeyDown={e => { if (e.key === "Enter" && wsModel.trim() && !wsLoading) generateFullListing(); }} />
+          {wsModel.trim() && lookupProduct(wsModel, liveProductDbRef.current) && <div style={{ marginTop: 6, fontSize: 10, color: "#16a34a" }}>{"\u2713"} Found in database: {lookupProduct(wsModel, liveProductDbRef.current)?.type} — {lookupProduct(wsModel, liveProductDbRef.current)?.cupSize}</div>}
+          {wsModel.trim() && !lookupProduct(wsModel, liveProductDbRef.current) && <div style={{ marginTop: 6, fontSize: 10, color: "#e57373" }}>Model not found in database</div>}
+        </div>
+
+        {/* Title Capacity Mode */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Title Capacity Mode</label>
+          <div style={{ display: "flex", gap: 0 }}>
+            {[{ key: "both", label: "Both" }, { key: "uncooked", label: "Uncooked Only" }, { key: "cooked", label: "Cooked Only" }].map((m, idx) => (
+              <button key={m.key} onClick={() => { setCapacityMode(m.key); try { window.storage.set("capacity_mode", m.key); } catch(e) {} }}
+                style={{ flex: 1, padding: "7px 12px", background: capacityMode === m.key ? MAROON : "#fff", border: `1px solid ${capacityMode === m.key ? MAROON : "#e0ddd8"}`, borderRadius: idx === 0 ? "8px 0 0 8px" : idx === 2 ? "0 8px 8px 0" : "0", color: capacityMode === m.key ? "#fff" : "#888", fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "all .15s" }}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Bullet Count */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Bullet Count <span style={{ fontWeight: 400, color: "#bbb" }}>({bulletCount})</span></label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[5,6,7].map(n => (
+              <button key={n} onClick={() => { setBulletCount(n); try { window.storage.set("bullet_count", String(n)); } catch(e) {} }}
+                style={{ flex: 1, padding: "7px 0", background: bulletCount === n ? MAROON : "#fff", border: `1px solid ${bulletCount === n ? MAROON : "#e0ddd8"}`, borderRadius: 6, color: bulletCount === n ? "#fff" : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s" }}>
+                {n}
+              </button>
+            ))}
+          </div>
+          {bulletCount > 5 && (() => {
+            const p = lookupProduct(wsModel, liveProductDbRef.current);
+            const tier = classifyProductTier(p);
+            if (tier === "basic") return <div style={{ marginTop: 8, fontSize: 10, color: "#92400e", fontFamily: "'Outfit',sans-serif" }}>{"\u26A0"} {bulletCount} bullets requested for a basic-tier product — may produce weaker/repetitive bullets beyond #5</div>;
+            return null;
+          })()}
+        </div>
+
+        {/* Generate Button */}
+        {(() => {
+          const ready = wsModel.trim() && lookupProduct(wsModel, liveProductDbRef.current) && !wsLoading;
+          const steps = ["titles", "bullets", "keywords", "audit"];
+          const stepLabels = { titles: "Generating titles...", bullets: "Generating bullet points...", keywords: "Generating backend keywords...", audit: "Running audit..." };
+          const currentStep = wsLoading ? steps.indexOf(wsLoading) + 1 : 0;
+          return (<>
+            <button disabled={!ready && !wsLoading} onClick={generateFullListing}
+              style={{ width: "100%", padding: 16, background: !ready && !wsLoading ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: !ready && !wsLoading ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: !ready && !wsLoading ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: !ready && !wsLoading ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
+              {wsLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                {stepLabels[wsLoading]} (Step {currentStep}/4)
+              </span>) : "Generate Full Listing"}
+            </button>
+            {wsLoading && <div style={{ textAlign: "center", marginBottom: 12 }}>
+              <div style={{ height: 4, background: "#e8e5e0", borderRadius: 2, overflow: "hidden", marginBottom: 6 }}><div style={{ width: `${(currentStep / 4) * 100}%`, height: "100%", background: MAROON, borderRadius: 2, transition: "width .4s ease" }} /></div>
+              <span style={{ fontSize: 10, color: "#aaa" }}>{wsElapsed}s</span>
+              <button onClick={() => { if (wsAbortRef.current) wsAbortRef.current.abort(); setWsLoading(null); setWsError("Cancelled."); if (wsTimerRef.current) { clearInterval(wsTimerRef.current); wsTimerRef.current = null; } }}
+                style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer", marginLeft: 8 }}>Cancel</button>
+            </div>}
+          </>);
+        })()}
+
+        {wsError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 16, color: "#dc2626", fontSize: 13 }}>{wsError}</div>}
+
+        {/* Results */}
+        {wsResults && (<div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Audit Score Header */}
+          {wsResults.audit && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)", display: "flex", alignItems: "center", gap: 20 }}>
+            <div style={{ width: 64, height: 64, borderRadius: "50%", border: `4px solid ${(wsResults.audit.overall_score || 0) >= 8 ? "#16a34a" : (wsResults.audit.overall_score || 0) >= 5 ? "#d97706" : "#dc2626"}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <span style={{ fontSize: 22, fontWeight: 800, color: (wsResults.audit.overall_score || 0) >= 8 ? "#16a34a" : (wsResults.audit.overall_score || 0) >= 5 ? "#d97706" : "#dc2626", fontFamily: "'IBM Plex Mono',monospace" }}>{wsResults.audit.overall_score || "—"}</span>
+            </div>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a" }}>Listing Quality Score</div>
+              <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{wsResults._product?.sku} — {wsResults._product?.type} {wsResults._product?.cupSize}</div>
+            </div>
+          </div>}
+
+          {/* Amazon Title */}
+          {wsResults._amazonTitle && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Amazon Title ({wsResults._amazonTitle.length} chars)</div>
+              <button onClick={() => { navigator.clipboard.writeText(wsResults._amazonTitle); setToast("Copied"); setTimeout(() => setToast(null), 1500); }} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "4px 10px", fontSize: 10, color: "#888", cursor: "pointer" }}>Copy</button>
+            </div>
+            <div style={{ fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", color: "#1a1a1a", lineHeight: 1.6 }}>{wsResults._amazonTitle}</div>
+          </div>}
+
+          {/* Marketplace Titles */}
+          {wsResults.titles?.conversions && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Marketplace Titles ({Object.keys(wsResults.titles.conversions).length})</div>
+            {Object.entries(wsResults.titles.conversions).map(([key, val]) => (
+              <div key={key} style={{ padding: "10px 0", borderBottom: "1px solid #f5f3f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: MARKETPLACES[key]?.accent || "#888", textTransform: "uppercase" }}>{MARKETPLACES[key]?.name || key}</span>
+                  <span style={{ fontSize: 10, color: "#ccc", marginLeft: 8 }}>{val.char_count || val.title?.length || 0} chars</span>
+                  <div style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#555", marginTop: 4, lineHeight: 1.5 }}>{val.title}</div>
+                </div>
+                <button onClick={() => { navigator.clipboard.writeText(val.title); setToast("Copied"); setTimeout(() => setToast(null), 1500); }} style={{ background: "none", border: "none", fontSize: 10, color: "#ccc", cursor: "pointer", flexShrink: 0 }}>copy</button>
+              </div>
+            ))}
+          </div>}
+
+          {/* Bullet Points */}
+          {wsResults.bullets?.bullets && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Bullet Points ({wsResults.bullets.bullets.length})</div>
+              <button onClick={() => { const txt = wsResults.bullets.bullets.map(b => b.heading + ": " + b.text).join("\n\n"); navigator.clipboard.writeText(txt); setToast("Copied all bullets"); setTimeout(() => setToast(null), 1500); }} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "4px 10px", fontSize: 10, color: "#888", cursor: "pointer" }}>Copy all</button>
+            </div>
+            {wsResults.bullets.bullets.map((b, i) => (
+              <div key={i} style={{ padding: "8px 0", borderBottom: i < wsResults.bullets.bullets.length - 1 ? "1px solid #f5f3f0" : "none" }}>
+                <span style={{ fontWeight: 700, color: MAROON, fontSize: 12 }}>{b.heading}:</span>
+                <span style={{ fontSize: 12, color: "#555", marginLeft: 6 }}>{b.text}</span>
+              </div>
+            ))}
+          </div>}
+
+          {/* Backend Keywords */}
+          {wsResults.keywords?.keywords && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Backend Keywords ({wsResults.keywords.byte_count}/500 bytes)</div>
+              <button onClick={() => { navigator.clipboard.writeText(wsResults.keywords.keywords); setToast("Copied keywords"); setTimeout(() => setToast(null), 1500); }} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "4px 10px", fontSize: 10, color: "#888", cursor: "pointer" }}>Copy</button>
+            </div>
+            <div style={{ padding: "10px 14px", background: "#faf9f7", borderRadius: 8, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#555", lineHeight: 1.7 }}>{wsResults.keywords.keywords}</div>
+          </div>}
+
+          {/* Audit Categories */}
+          {wsResults.audit?.categories && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Audit Breakdown</div>
+            {Object.entries(wsResults.audit.categories).map(([key, val]) => (
+              <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 0", borderBottom: "1px solid #f5f3f0" }}>
+                <span style={{ fontSize: 16, fontWeight: 800, fontFamily: "'IBM Plex Mono',monospace", width: 32, textAlign: "center", color: (val.score || 0) >= 8 ? "#16a34a" : (val.score || 0) >= 5 ? "#d97706" : "#dc2626" }}>{val.score}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#555", textTransform: "capitalize" }}>{key.replace(/_/g, " ")}</div>
+                  {val.notes && <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>{val.notes}</div>}
+                </div>
+              </div>
+            ))}
+          </div>}
+
+          {/* Validation Warnings */}
+          {wsResults._validation?.warnings?.length > 0 && <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{"\u26A0\uFE0F"} Validation Warnings ({wsResults._validation.warnings.length})</div>
+            {wsResults._validation.warnings.map((w, i) => (
+              <div key={i} style={{ fontSize: 11, color: "#78350f", padding: "3px 0", fontFamily: "'IBM Plex Mono',monospace" }}>{"\u2022"} {w}</div>
+            ))}
+          </div>}
+          {wsResults._validation && wsResults._validation.warnings?.length === 0 && <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 12, padding: 12, textAlign: "center" }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#16a34a" }}>{"\u2705"} All validation checks passed</span>
+          </div>}
+
+          {/* Export */}
+          <button onClick={() => {
+            const ws = wsResults;
+            const lines = ["CUCKOO Listing Package — " + (ws._product?.sku || wsModel)];
+            lines.push("\n=== AMAZON TITLE ===\n" + (ws._amazonTitle || ""));
+            if (ws.titles?.conversions) { lines.push("\n=== MARKETPLACE TITLES ==="); Object.entries(ws.titles.conversions).forEach(([k, v]) => lines.push(k.toUpperCase() + " (" + (v.char_count || "") + " chars): " + v.title)); }
+            if (ws.bullets?.bullets) { lines.push("\n=== BULLET POINTS ==="); ws.bullets.bullets.forEach((b, i) => lines.push((i+1) + ". " + b.heading + ": " + b.text)); }
+            if (ws.keywords?.keywords) lines.push("\n=== BACKEND KEYWORDS (" + ws.keywords.byte_count + "/500 bytes) ===\n" + ws.keywords.keywords);
+            if (ws.audit) lines.push("\n=== AUDIT SCORE: " + (ws.audit.overall_score || "—") + "/10 ===");
+            navigator.clipboard.writeText(lines.join("\n"));
+            setToast("Full listing copied to clipboard");
+            setTimeout(() => setToast(null), 2000);
+          }} style={{ width: "100%", padding: 14, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, color: "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+            {"\u{1F4CB}"} Copy Full Listing Package
+          </button>
+        </div>)}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Generates titles for {wsMarketplaces.length} marketplaces + bullets + keywords + audit in one flow</span>
+        </div>
+      </div>}
+
+      {/* BULK EXPORT PAGE */}
+      {page === "bulk_export" && <div style={{ maxWidth: 1060, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Select products and generate <strong>optimized titles, bullet points, and backend keywords</strong> for all 10 marketplaces at once. Export as an XLSX spreadsheet ready for upload.
+          </p>
+          <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
+            {Object.keys(PRODUCT_DB).length} models available {"\u00B7"} Generates titles + bullets + keywords per product
+          </p>
+        </div>
+
+        {/* Product selector */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "16px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Select Products <span style={{ color: "#ccc", fontWeight: 400 }}>({beModels.length} selected)</span></label>
+            <div style={{ display: "flex", gap: 8 }}>
+              {beModels.length > 0 && <button onClick={() => setBeModels([])} style={{ background: "none", border: "none", fontSize: 11, color: MAROON, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>Clear all</button>}
+              <button onClick={() => setBeModels(Object.keys(PRODUCT_DB))} style={{ background: "none", border: "none", fontSize: 11, color: MAROON, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>Select all</button>
+            </div>
+          </div>
+          <input value={beSearch} onChange={e => setBeSearch(e.target.value)} placeholder="Search models..."
+            style={{ width: "100%", padding: "8px 12px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 6, fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", color: "#1a1a1a", boxSizing: "border-box", marginBottom: 10 }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 200, overflowY: "auto" }}>
+            {Object.entries(PRODUCT_DB).filter(([sku, d]) => {
+              if (!beSearch.trim()) return true;
+              const q = beSearch.toLowerCase();
+              return sku.toLowerCase().includes(q) || d.type.toLowerCase().includes(q) || (d.cupSize || "").toLowerCase().includes(q);
+            }).map(([sku, d]) => {
+              const sel = beModels.includes(sku);
+              return (
+                <button key={sku} onClick={() => setBeModels(prev => sel ? prev.filter(m => m !== sku) : [...prev, sku])}
+                  style={{ padding: "5px 10px", background: sel ? MAROON : "#fff", border: `1.5px solid ${sel ? MAROON : "#e0ddd8"}`, borderRadius: 6, cursor: "pointer", color: sel ? "#fff" : "#555", fontSize: 11, fontWeight: 500, fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s" }}>
+                  {sku} <span style={{ fontSize: 9, opacity: 0.7 }}>{d.type}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Title Capacity Mode */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Title Capacity Mode</label>
+          <div style={{ display: "flex", gap: 0 }}>
+            {[{ key: "both", label: "Both" }, { key: "uncooked", label: "Uncooked Only" }, { key: "cooked", label: "Cooked Only" }].map((m, idx) => (
+              <button key={m.key} onClick={() => { setCapacityMode(m.key); try { window.storage.set("capacity_mode", m.key); } catch(e) {} }}
+                style={{ flex: 1, padding: "7px 12px", background: capacityMode === m.key ? MAROON : "#fff", border: `1px solid ${capacityMode === m.key ? MAROON : "#e0ddd8"}`, borderRadius: idx === 0 ? "8px 0 0 8px" : idx === 2 ? "0 8px 8px 0" : "0", color: capacityMode === m.key ? "#fff" : "#888", fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "all .15s" }}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Bullet Count — auto-optimized per product type */}
+        <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Bullet Count {"\u00B7"} Auto-optimized per product type</div>
+          <div style={{ fontSize: 11, color: "#666", lineHeight: 1.7 }}>
+            <div><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>5 bullets</span> <span style={{ color: "#888" }}>{"\u2192"} Basic, Commercial</span></div>
+            <div><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>6 bullets</span> <span style={{ color: "#888" }}>{"\u2192"} Micom, Pressure, Twin Pressure, Induction (Non-Pressure)</span></div>
+            <div><span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#555" }}>7 bullets</span> <span style={{ color: "#888" }}>{"\u2192"} Induction + Pressure, Twin Pressure + Induction</span></div>
+          </div>
+        </div>
+
+        {/* Generate Button */}
+        {(() => {
+          const dis = beLoading || !beModels.length;
+          return (<>
+            <button disabled={dis} onClick={generateBulkExport}
+              style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: dis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
+              {beLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                {beProgress.sku} — {beProgress.step} ({beProgress.current}/{beProgress.total})
+              </span>) : "Generate All Listings (" + beModels.length + " products \u00D7 10 marketplaces)"}
+            </button>
+            {beLoading && <div style={{ marginBottom: 12 }}>
+              <div style={{ height: 4, background: "#e8e5e0", borderRadius: 2, overflow: "hidden", marginBottom: 6 }}><div style={{ width: `${(beProgress.current / Math.max(beProgress.total, 1)) * 100}%`, height: "100%", background: MAROON, borderRadius: 2, transition: "width .4s ease" }} /></div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#aaa" }}>
+                <span>{beElapsed}s elapsed</span>
+                <button onClick={() => { if (beAbortRef.current) beAbortRef.current.abort(); }} style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer" }}>Cancel</button>
+              </div>
+            </div>}
+          </>);
+        })()}
+
+        {beError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 16, color: "#dc2626", fontSize: 13 }}>{beError}</div>}
+
+        {/* Results summary + Export */}
+        {beResults.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)", marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Results ({beResults.filter(r => !r.error).length} succeeded, {beResults.filter(r => r.error).length} failed)</div>
+                <button onClick={exportBulkXlsx} style={{ padding: "8px 20px", background: MAROON, border: "none", borderRadius: 8, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 2px 8px rgba(107,28,35,0.2)" }}>
+                  {"\u{1F4E5}"} Download XLSX
+                </button>
+              </div>
+              {/* Per-product status */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
+                {beResults.map(r => (
+                  <div key={r.sku} style={{ padding: "10px 14px", background: r.error ? "#fef2f2" : "#f0fdf4", border: `1px solid ${r.error ? "#fecaca" : "#bbf7d0"}`, borderRadius: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", color: r.error ? "#dc2626" : "#166534" }}>{r.sku}</div>
+                    <div style={{ fontSize: 10, color: r.error ? "#dc2626" : "#16a34a", marginTop: 2 }}>
+                      {r.error ? r.error : (
+                        (r.titles?.conversions ? Object.keys(r.titles.conversions).length + " titles" : "") +
+                        (r.bullets?.bullets ? " \u00B7 " + r.bullets.bullets.length + " bullets" : "") +
+                        (r.keywords?.keywords ? " \u00B7 " + r.keywords.byte_count + "B keywords" : "")
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Preview first successful result */}
+            {(() => {
+              const first = beResults.find(r => !r.error);
+              if (!first) return null;
+              return (
+                <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Preview: {first.sku}</div>
+                  {first.amazonTitle && <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "#888", marginBottom: 4 }}>Amazon Title ({first.amazonTitle.length} chars)</div>
+                    <div style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#1a1a1a", lineHeight: 1.6, padding: "8px 12px", background: "#faf9f7", borderRadius: 6 }}>{first.amazonTitle}</div>
+                  </div>}
+                  {first.titles?.conversions && <div style={{ marginBottom: 12 }}>
+                    {Object.entries(first.titles.conversions).slice(0, 3).map(([k, v]) => (
+                      <div key={k} style={{ fontSize: 11, color: "#666", padding: "4px 0" }}>
+                        <span style={{ fontWeight: 700, color: MARKETPLACES[k]?.accent || "#888", fontSize: 10, textTransform: "uppercase" }}>{MARKETPLACES[k]?.name || k}</span>
+                        <span style={{ color: "#ccc", marginLeft: 6 }}>{(v.title || "").length} chars</span>
+                        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "#555", marginTop: 2 }}>{v.title}</div>
+                      </div>
+                    ))}
+                    {Object.keys(first.titles.conversions).length > 3 && <div style={{ fontSize: 10, color: "#bbb", marginTop: 4 }}>+ {Object.keys(first.titles.conversions).length - 3} more marketplaces in XLSX</div>}
+                  </div>}
+                  {first.bullets?.bullets && <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "#888", marginBottom: 4 }}>Bullets ({first.bullets.bullets.length})</div>
+                    {first.bullets.bullets.slice(0, 2).map((b, i) => <div key={i} style={{ fontSize: 11, color: "#555", padding: "2px 0" }}><strong style={{ color: MAROON }}>{b.heading}:</strong> {b.text?.slice(0, 80)}...</div>)}
+                  </div>}
+                  {first.keywords?.keywords && <div>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "#888", marginBottom: 4 }}>Keywords ({first.keywords.byte_count}/500 bytes)</div>
+                    <div style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: "#888", padding: "6px 10px", background: "#faf9f7", borderRadius: 4 }}>{first.keywords.keywords.slice(0, 120)}...</div>
+                  </div>}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Generates titles + bullets + keywords per product {"\u00B7"} ~45-90 seconds per product {"\u00B7"} Export as XLSX</span>
+        </div>
+      </div>}
+
+      {page === "title_optimizer" && <div data-page="title_optimizer" style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        {/* INTRO */}
+        <div style={{ marginBottom: 16, padding: "0 2px" }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Enter a CUCKOO model number to generate SEO-optimized titles for each marketplace. The tool pulls verified specs from an <strong>internal product database</strong> of 46 rice cooker models — including type, cup size, color, features, and inner pot — so titles are accurate by default. For models not in the database, enter an existing Amazon title to audit and optimize. You can also paste an existing Amazon title to audit and optimize it.
+          </p>
+          <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
+            <strong>Bulk mode</strong> processes multiple {inputMode === "model" ? "model numbers" : "titles"} at once. All results are editable, exportable as CSV, and tagged as <strong style={{ color: "#16a34a" }}>{"\u2713"} Verified</strong> when matched to the database.
+          </p>
+        </div>
+
+        {/* HISTORY */}
+        {history.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <button onClick={() => setShowHistory(p => !p)} style={{ background: "none", border: "none", fontSize: 11, color: "#999", fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", padding: 0, display: "flex", alignItems: "center", gap: 4 }}>
+              {showHistory ? "\u25BE" : "\u25B8"} Recent Generations ({history.length})
+            </button>
+            {showHistory && (
+              <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, padding: "10px 16px", marginTop: 8, maxHeight: 200, overflowY: "auto" }}>
+                {history.map((h, i) => (
+                  <button key={h.id} onClick={() => { setAmazonTitle(h.input); setInputMode(h.mode || "model"); if (h.marketplaces) setSelected(h.marketplaces); setShowHistory(false); }}
+                    style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: i < history.length - 1 ? "1px solid #f5f3f0" : "none", background: "none", border: "none", borderBottomWidth: i < history.length - 1 ? 1 : 0, borderBottomStyle: "solid", borderBottomColor: "#f5f3f0", cursor: "pointer", textAlign: "left" }}>
+                    <span style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>{h.input}</span>
+                    <span style={{ fontSize: 9, color: "#bbb", flexShrink: 0 }}>{h.score ? h.score + "/10 \u00B7 " : ""}{new Date(h.timestamp).toLocaleDateString()}</span>
+                  </button>
+                ))}
+                <button onClick={clearHistory} style={{ marginTop: 6, background: "none", border: "none", fontSize: 10, color: "#dc2626", cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>Clear History</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* INPUT */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              {/* Input mode toggle: Title vs Model */}
+              <div style={{ display: "flex", background: "#f0eeeb", borderRadius: 6, padding: 2 }}>
+                {[{ key: "model", label: "Model #" }, { key: "title", label: "Amazon Title" }].map(m => (
+                  <button key={m.key} onClick={() => { setInputMode(m.key); setAmazonTitle(""); setResults(null); setBulkResults([]); setError(null); }}
+                    style={{ padding: "4px 12px", fontSize: 10, fontWeight: 600, fontFamily: "'Outfit',sans-serif", borderRadius: 4, border: "none", cursor: "pointer", background: inputMode === m.key ? "#fff" : "transparent", color: inputMode === m.key ? MAROON : "#aaa", boxShadow: inputMode === m.key ? "0 1px 3px rgba(0,0,0,0.1)" : "none", transition: "all .15s", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              {/* Single/Bulk toggle */}
+              <div style={{ display: "flex", background: "#f0eeeb", borderRadius: 6, padding: 2 }}>
+                {["single", "bulk"].map(m => (
+                  <button key={m} onClick={() => { setMode(m); setResults(null); setBulkResults([]); setError(null); }}
+                    style={{ padding: "4px 12px", fontSize: 10, fontWeight: 600, fontFamily: "'Outfit',sans-serif", borderRadius: 4, border: "none", cursor: "pointer", background: mode === m ? "#fff" : "transparent", color: mode === m ? MAROON : "#aaa", boxShadow: mode === m ? "0 1px 3px rgba(0,0,0,0.1)" : "none", transition: "all .15s", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                    {m === "single" ? "Single" : "Bulk"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {amazonTitle && <button onClick={() => setAmazonTitle("")} style={{ background: "none", border: "none", fontSize: 11, color: "#ccc", cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>Clear</button>}
+              {inputMode === "title" && mode === "single" && <span style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: amazonTitle.length > 200 ? "#dc2626" : "#bbb" }}>{amazonTitle.length}/200</span>}
+              {mode === "bulk" && amazonTitle.trim() && (() => { const c = amazonTitle.split("\n").filter(l => l.trim()).length; return <span style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: "#bbb" }}>{c} {inputMode === "model" ? "model #" : "title"}{c !== 1 ? "s" : ""}</span>; })()}
+            </div>
+          </div>
+          {inputMode === "title" ? (
+            <textarea value={amazonTitle} onChange={e => setAmazonTitle(e.target.value)}
+              placeholder={mode === "bulk" ? "Paste multiple Amazon titles, one per line...\n\nExample:\nCUCKOO CRP-P0609S 6 Cup Electric Pressure Rice Cooker...\nCUCKOO CR-3032 12 Cup Micom Rice Cooker and Warmer..." : "Paste your Amazon product title here..."}
+              rows={mode === "bulk" ? 6 : 3}
+              style={{ width: "100%", padding: "14px 16px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: mode === "bulk" ? 12 : 14, fontFamily: "'IBM Plex Mono',monospace", resize: "vertical", outline: "none", boxSizing: "border-box", lineHeight: 1.7 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          ) : (
+            <div>
+              {mode === "bulk" ? (
+                <textarea value={amazonTitle} onChange={e => setAmazonTitle(e.target.value)}
+                  placeholder={"Enter model numbers, one per line...\n\nExample:\nCRP-P0609S\nCR-0675FW\nCMC-QSN501S"}
+                  rows={6}
+                  style={{ width: "100%", padding: "14px 16px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", resize: "vertical", outline: "none", boxSizing: "border-box", lineHeight: 1.7 }}
+                  onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+              ) : (
+                <input value={amazonTitle} onChange={e => setAmazonTitle(e.target.value)}
+                  placeholder="Enter model number (e.g. CRP-P0609S)"
+                  style={{ width: "100%", padding: "14px 16px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 14, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+                  onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+              )}
+              <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: "#aaa", fontStyle: "italic" }}>The tool will use the internal product database to look up specs and generate titles from scratch.</span>
+                <button onClick={() => setShowModelList(!showModelList)} style={{ background: "none", border: "none", fontSize: 11, color: MAROON, cursor: "pointer", textDecoration: "underline", whiteSpace: "nowrap", marginLeft: 8 }}>{showModelList ? "Hide models" : `View ${Object.keys(liveProductDb).length} available models`}</button>
+              </div>
+              {showModelList && <div style={{ marginTop: 8, padding: 10, background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, maxHeight: 200, overflowY: "auto" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {Object.entries(liveProductDb).map(([sku, p]) => (
+                    <button key={sku} onClick={() => { setAmazonTitle(sku); setShowModelList(false); }} style={{ background: "#fff", border: "1px solid #e0ddd8", borderRadius: 4, padding: "3px 8px", fontSize: 10, fontFamily: "'IBM Plex Mono',monospace", color: "#333", cursor: "pointer" }} title={`${p.type} · ${p.cupSize} · ${p.color}`}>{sku}</button>
+                  ))}
+                </div>
+              </div>}
+            </div>
+          )}
+          {/* Input validation warning - only for title mode */}
+          {inputMode === "title" && amazonTitle.trim() && !/cuckoo/i.test(amazonTitle) && !/\b(CRP|CR|CP|CMC|CCR)\b/i.test(amazonTitle) && (
+            <div style={{ marginTop: 8, padding: "6px 10px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 11, color: "#92400e" }}>{"\u26A0"} This doesn't look like a CUCKOO title</div>
+          )}
+        </div>
+
+        {/* CONFIGURATION: Category + Marketplaces combined */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          {/* Product Category */}
+          <div style={{ marginBottom: 18 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Product Category</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {Object.entries(CATEGORY_LABELS).map(([k, label]) => (
+                <button key={k} onClick={() => setCategory(k)}
+                  style={{ padding: "6px 14px", background: category === k ? MAROON : "#fff", border: `1.5px solid ${category === k ? MAROON : "#e0ddd8"}`, borderRadius: 100, color: category === k ? "#fff" : "#777", fontSize: 11, fontWeight: 500, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "background .15s, color .15s, border-color .15s" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Title Capacity Mode */}
+          <div style={{ marginBottom: 18 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Title Capacity Mode</label>
+            <div style={{ display: "flex", gap: 0 }}>
+              {[{ key: "both", label: "Both (6-Cup Uncooked / 12-Cup Cooked)" }, { key: "uncooked", label: "Uncooked Only (6-Cup Uncooked)" }, { key: "cooked", label: "Cooked Only (12-Cup Cooked)" }].map((m, idx) => (
+                <button key={m.key} onClick={() => { setCapacityMode(m.key); try { window.storage.set("capacity_mode", m.key); } catch(e) {} }}
+                  style={{ flex: 1, padding: "7px 12px", background: capacityMode === m.key ? MAROON : "#fff", border: `1px solid ${capacityMode === m.key ? MAROON : "#e0ddd8"}`, borderRadius: idx === 0 ? "8px 0 0 8px" : idx === 2 ? "0 8px 8px 0" : "0", color: capacityMode === m.key ? "#fff" : "#888", fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "all .15s" }}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Marketplace Selection */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Target Marketplaces <span style={{ color: "#ccc", fontWeight: 400 }}>({selected.length} selected)</span></label>
+            <button onClick={() => setSelected(allSel ? [] : [...MP_KEYS])} style={{ background: "none", border: "none", fontSize: 11, color: MAROON, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>{allSel ? "Deselect All" : "Select All"}</button>
+          </div>
+          <div role="group" aria-label="Marketplace selection" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {mpEntries.map(([key, mp], idx) => {
+              const sel = selected.includes(key); const conf = confidenceConfig[mp.confidence];
+              return (<button key={key} className="mp-chip" role="checkbox" aria-checked={sel} aria-label={`${mp.name} marketplace`} onClick={() => setSelected(p => p.includes(key) ? p.filter(k => k !== key) : [...p, key])}
+                onKeyDown={e => { if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); const chips = e.target.parentElement.querySelectorAll(".mp-chip"); chips[(idx + 1) % chips.length]?.focus(); } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); const chips = e.target.parentElement.querySelectorAll(".mp-chip"); chips[(idx - 1 + chips.length) % chips.length]?.focus(); } }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", background: sel ? MAROON : "#fff", border: `1.5px solid ${sel ? MAROON : "#e0ddd8"}`, borderRadius: 100, cursor: "pointer", color: sel ? "#fff" : "#777", fontSize: 12, fontWeight: 500, fontFamily: "'Outfit',sans-serif", transition: "background .15s, color .15s, border-color .15s" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 5, background: mp.accent, color: "#fff", fontSize: 8, fontWeight: 800, fontFamily: "'Outfit',sans-serif", flexShrink: 0, letterSpacing: "-0.02em" }}>{mp.badge}</span>{mp.name}
+                {sel && <span style={{ width: 6, height: 6, borderRadius: "50%", background: conf.color, display: "inline-block", flexShrink: 0 }} />}
+              </button>);
+            })}
+          </div>
+          {!selected.length && <div style={{ marginTop: 10, fontSize: 11, color: "#d97706", fontStyle: "italic" }}>Select at least one marketplace to continue</div>}
+        </div>
+
+        {/* BUTTON */}
+        {(() => {
+          const bulkTitleCount = mode === "bulk" ? amazonTitle.split("\n").filter(l => l.trim()).length : 0;
+          const dis = loading || !amazonTitle.trim() || !selected.length;
+          const onClickFn = mode === "bulk" ? optimizeBulk : optimize;
+          return (
+            <button className="cuckoo-btn" aria-label="Generate optimized titles" onClick={onClickFn} disabled={dis}
+              style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, fontFamily: "'Outfit',sans-serif", cursor: dis ? "not-allowed" : "pointer", marginBottom: 8, transition: "all .2s", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)" }}>
+              {loading && mode === "bulk" ? <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}><span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin .7s linear infinite", display: "inline-block" }} />{inputMode === "model" ? "Looking up" : "Processing"} {bulkProgress.current} of {bulkProgress.total}...</span>
+                : loading ? <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}><span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin .7s linear infinite", display: "inline-block" }} />{inputMode === "model" ? "Looking up product & generating" : "Analyzing title & generating"} {selected.length} conversions...</span>
+                : mode === "bulk" ? <>{"\u{1F4E6}"} Generate for {bulkTitleCount} {inputMode === "model" ? "Model #" : "Title"}{bulkTitleCount !== 1 ? "s" : ""} × {selected.length} Marketplace{selected.length !== 1 ? "s" : ""} <span style={{ opacity: 0.5, fontWeight: 400, fontSize: 12, marginLeft: 8 }}>{isMac ? "\u2318" : "Ctrl"}+Enter</span></>
+                : !amazonTitle.trim() ? (inputMode === "model" ? "Enter a model number above to get started" : "Paste a title above to get started")
+                : !selected.length ? "Select marketplaces above"
+                : <>Generate for {selected.length} Marketplace{selected.length !== 1 ? "s" : ""} <span style={{ opacity: 0.5, fontWeight: 400, fontSize: 12, marginLeft: 8 }}>{isMac ? "\u2318" : "Ctrl"}+Enter</span></>}
+            </button>
+          );
+        })()}
+
+        {/* Single mode progress bar */}
+        {loading && mode === "single" && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ height: 4, background: "#f0eeeb", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: `${Math.min(95, loadingElapsed < 5 ? loadingElapsed * 4 : loadingElapsed < 20 ? 20 + (loadingElapsed - 5) * 3 : loadingElapsed < 60 ? 65 + (loadingElapsed - 20) * 0.5 : 85 + Math.min(10, (loadingElapsed - 60) * 0.1))}%`, height: "100%", background: MAROON, borderRadius: 2, transition: "width 1s ease" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+              <div style={{ fontSize: 11, color: "#999" }}>
+                {loadingStatus ? loadingStatus : loadingElapsed < 5 ? "Preparing request..." : loadingElapsed < 20 ? `Generating ${selected.length} marketplace titles...` : loadingElapsed < 90 ? "Waiting for API response..." : loadingElapsed < 110 ? "Taking longer than usual..." : "Almost done..."}
+              </div>
+              <div style={{ fontSize: 11, color: "#ccc", fontFamily: "'IBM Plex Mono',monospace", display: "flex", alignItems: "center", gap: 8 }}>{loadingElapsed}s
+                <button onClick={() => { if (abortRef.current) abortRef.current.abort(); setLoading(false); }} style={{ background: "none", border: "1px solid #e0ddd8", borderRadius: 4, padding: "2px 8px", fontSize: 10, color: "#999", cursor: "pointer" }}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bulk progress bar */}
+        {loading && mode === "bulk" && bulkProgress.total > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ height: 4, background: "#f0eeeb", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: `${(bulkProgress.current / bulkProgress.total) * 100}%`, height: "100%", background: MAROON, borderRadius: 2, transition: "width 0.4s ease" }} />
+            </div>
+            <div style={{ fontSize: 10, color: "#aaa", fontFamily: "'IBM Plex Mono',monospace", marginTop: 4, textAlign: "center" }}>{bulkProgress.current}/{bulkProgress.total} complete{bulkProgress.current > 0 && loadingElapsed > 0 ? ` · ~${Math.max(1, Math.round((loadingElapsed / bulkProgress.current) * (bulkProgress.total - bulkProgress.current)))}s remaining` : ""}</div>
+          </div>
+        )}
+        {!loading && mode === "bulk" && <div style={{ height: 20 }} />}
+        {!loading && mode === "single" && <div style={{ height: 20 }} />}
+
+        {/* ERROR */}
+        {error && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 24, color: "#dc2626", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{error}</span>
+          <button onClick={mode === "bulk" ? optimizeBulk : optimize} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", whiteSpace: "nowrap", marginLeft: 12 }}>Retry</button>
+        </div>}
+
+        {/* BULK RESULTS */}
+        {mode === "bulk" && bulkResults.length > 0 && (<div ref={ref}>
+          {/* Bulk CSV Export */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1a1a1a", fontFamily: "'Outfit',sans-serif" }}>{bulkResults.length} Title{bulkResults.length !== 1 ? "s" : ""} Processed</div>
+            <button onClick={() => {
+              const escape = (s) => '"' + (s || '').replace(/"/g, '""') + '"';
+              const rows = [["Original Amazon Title", "Marketplace", "Confidence", "Optimized Title", "Char Count", "Char Limit", "Key Changes", "Sources"].join(",")];
+              bulkResults.forEach(({ original, results: r }) => {
+                if (!r) return;
+                if (r.amazon_audit?.suggested_title) {
+                  rows.push([escape(original), escape("Amazon (Suggested)"), escape("Official"), escape(r.amazon_audit.suggested_title), r.amazon_audit.suggested_title.length, 200, escape((r.amazon_audit.improvements || []).join("; ")), ""].join(","));
+                }
+                selected.forEach(k => {
+                  const c = r.conversions?.[k]; const m = MARKETPLACES[k]; if (!c) return;
+                  rows.push([escape(original), escape(m.name), escape(confidenceConfig[m.confidence].label), escape(c.title), c.char_count, CHAR_LIMITS[k] || "", escape((c.changes || []).join("; ")), escape(m.sources.map(s => s.url).join(" | "))].join(","));
+                });
+              });
+              const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a"); a.href = url;
+              a.download = "cuckoo-bulk-optimization-" + new Date().toISOString().slice(0, 10) + ".csv";
+              a.click(); URL.revokeObjectURL(url);
+            }} style={{ padding: "10px 20px", background: MAROON, border: "none", borderRadius: 8, color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 2px 8px rgba(107,28,35,0.2)" }}>
+              {"\u{1F4E5}"} Download All as CSV
+            </button>
+          </div>
+
+          {/* Bulk navigation - jump links */}
+          {bulkResults.length > 3 && (
+            <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Jump to title</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {bulkResults.map((item, idx) => (
+                  <button key={idx} onClick={() => document.getElementById(`bulk-${idx}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                    style={{ padding: "3px 10px", background: item.error ? "#fef2f2" : "#fff", border: "1px solid #e0ddd8", borderRadius: 4, fontSize: 10, color: item.error ? "#dc2626" : "#666", cursor: "pointer", fontFamily: "'IBM Plex Mono',monospace", fontWeight: 500 }}>
+                    {idx + 1}. {item.original.slice(0, 35)}{item.original.length > 35 ? "..." : ""}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Individual bulk result cards */}
+          {bulkResults.map((item, idx) => (
+            <div key={idx} id={`bulk-${idx}`} style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, marginBottom: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Title {idx + 1}</div>
+                  <div style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#1a1a1a", lineHeight: 1.5 }}>{item.original}</div>
+                </div>
+                {item.results?.amazon_audit && <ScoreRing score={item.results.amazon_audit.score} />}
+              </div>
+              {item.error && <div style={{ padding: "6px 10px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6, fontSize: 11, color: "#dc2626" }}>{"\u26A0"} {item.error}</div>}
+              {item.results?.conversions && (
+                <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+                  {selected.map(key => {
+                    const conv = item.results.conversions[key]; const mp = MARKETPLACES[key]; if (!conv) return null;
+                    return (
+                      <div key={key} style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderLeft: `3px solid ${mp.accent}`, borderRadius: 8, padding: "10px 12px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 5, background: mp.accent, color: "#fff", fontSize: 8, fontWeight: 800, fontFamily: "'Outfit',sans-serif", flexShrink: 0, letterSpacing: "-0.02em" }}>{mp.badge}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>{mp.name}</span>
+                          <span style={{ fontSize: 9, fontFamily: "'IBM Plex Mono',monospace", color: conv.title.length > (CHAR_LIMITS[key] || 999) ? "#dc2626" : "#bbb" }}>{conv.title.length}{CHAR_LIMITS[key] ? `/${CHAR_LIMITS[key]}` : ""}</span>
+                        </div>
+                        <textarea value={conv.title} onChange={e => editBulkTitle(idx, key, e.target.value)} rows={2}
+                          style={{ width: "100%", fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: "#1a1a1a", lineHeight: 1.5, background: "transparent", border: "1px solid transparent", borderRadius: 4, padding: "2px 4px", resize: "vertical", outline: "none", boxSizing: "border-box", transition: "border-color .15s" }}
+                          onFocus={e => e.target.style.borderColor = mp.accent} onBlur={e => e.target.style.borderColor = "transparent"} />
+                        {hasBadCupCount(conv.title) && <div style={{ marginTop: 4, fontSize: 9, color: "#dc2626", fontWeight: 600 }}>{"\u26A0"} Missing Uncooked/Cooked</div>}
+                        <button onClick={() => copy(conv.title, `bulk-${idx}-${key}`)} style={{ marginTop: 6, padding: "3px 8px", background: copied === `bulk-${idx}-${key}` ? "#16a34a" : MAROON, border: "none", borderRadius: 4, color: "#fff", fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>{copied === `bulk-${idx}-${key}` ? "\u2713" : "Copy"}</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>)}
+
+        {/* SINGLE RESULTS */}
+        {mode === "single" && results && (<div ref={ref} style={{ position: "relative" }}>
+          {/* Loading overlay on old results */}
+          {loading && <div style={{ position: "absolute", inset: 0, background: "rgba(247,245,243,0.75)", zIndex: 10, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(2px)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", padding: "12px 24px", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.1)", fontSize: 13, fontWeight: 600, color: MAROON, fontFamily: "'Outfit',sans-serif" }}>
+              <span style={{ width: 16, height: 16, border: `2px solid rgba(107,28,35,0.2)`, borderTopColor: MAROON, borderRadius: "50%", animation: "spin .7s linear infinite", display: "inline-block" }} />
+              Generating new titles...
+            </div>
+          </div>}
+          {/* Results summary bar */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#666", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {resultCount} title{resultCount !== 1 ? "s" : ""} generated {results.amazon_audit ? `\u00B7 Amazon score: ${results.amazon_audit.score}/10` : ""}
+              {results._productVerified && <span style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", background: "rgba(22,163,74,0.1)", padding: "2px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 4 }}>{"\u2713"} Verified: {results._productSku}</span>}
+              {results._productVerified === false && results._productSku === null && inputMode === "model" && <span style={{ fontSize: 9, fontWeight: 600, color: "#d97706", background: "rgba(217,119,6,0.08)", padding: "2px 8px", borderRadius: 4 }}>Model not in database</span>}
+            </div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <button onClick={toggleAll} style={{ background: "none", border: "none", fontSize: 11, color: MAROON, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", padding: "6px 10px", margin: "-6px -10px", borderRadius: 4 }}>{allExpanded ? "Collapse All" : "Expand All"}</button>
+              <button onClick={startOver} style={{ background: "#fff", border: "1px solid #e0ddd8", borderRadius: 6, padding: "5px 12px", fontSize: 11, color: "#888", fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>New Title</button>
+            </div>
+          </div>
+
+          {/* Amazon Audit */}
+          {results.amazon_audit && (() => { const ex = expanded.amazon_audit; return (
+            <div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, marginBottom: 10, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)", borderLeft: "3px solid #FF9900" }}>
+              <button onClick={() => toggle("amazon_audit", setExpanded)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: "transparent", border: "none", cursor: "pointer", color: "#1a1a1a", fontFamily: "'Outfit',sans-serif" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                  <ScoreRing score={results.amazon_audit.score} />
+                  <div style={{ textAlign: "left" }}><div style={{ fontSize: 14, fontWeight: 700 }}>{inputMode === "model" ? "Amazon Title" : "Amazon Title Audit"}</div><div style={{ fontSize: 11, color: "#999", marginTop: 1 }}>{inputMode === "model" ? "Generated from product data & keyword research" : "SEO strength & keyword coverage"}</div></div>
+                </div>
+                <span style={{ transform: ex ? "rotate(180deg)" : "rotate(0)", transition: "transform .2s", fontSize: 11, color: "#ccc" }}>{"\u25BC"}</span>
+              </button>
+              {ex && (<div style={{ padding: "0 20px 20px" }}>
+                <div className="audit-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                  <div><div style={{ fontSize: 10, fontWeight: 700, color: "#16a34a", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{"\u2713"} Strengths</div>{results.amazon_audit.strengths?.map((s, i) => <div key={i} style={{ fontSize: 12, color: "#666", padding: "5px 0", borderBottom: "1px solid #f5f3f0" }}>{s}</div>)}</div>
+                  <div><div style={{ fontSize: 10, fontWeight: 700, color: "#d97706", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{"\u2191"} Improvements</div>{results.amazon_audit.improvements?.map((s, i) => <div key={i} style={{ fontSize: 12, color: "#666", padding: "5px 0", borderBottom: "1px solid #f5f3f0" }}>{s}</div>)}</div>
+                </div>
+                {results.amazon_audit.suggested_title && (
+                  <div style={{ background: "#fffbf5", border: "1px solid #ffe8c4", borderRadius: 8, padding: "14px 16px" }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#FF9900", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{inputMode === "model" ? "Optimized Amazon Title" : "Suggested Amazon Title"}</div>
+                    <textarea className="editable-title" value={results.amazon_audit.suggested_title} onChange={e => editSuggestedTitle(e.target.value)} rows={Math.max(2, Math.ceil(results.amazon_audit.suggested_title.length / 70))}
+                      style={{ width: "100%", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "#1a1a1a", lineHeight: 1.7, background: "transparent", border: "none", borderBottom: "1px dashed #e8d5b8", borderRadius: 0, padding: "4px 2px", resize: "vertical", outline: "none", boxSizing: "border-box" }}
+                      onFocus={e => e.target.style.borderBottomColor = "#FF9900"} onBlur={e => e.target.style.borderBottomColor = "#e8d5b8"} />
+                    {hasBadCupCount(results.amazon_audit.suggested_title) && <div style={{ marginTop: 8, padding: "6px 10px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6, fontSize: 11, color: "#dc2626", fontWeight: 600 }}>{"\u26A0"} Cup count missing Uncooked/Cooked designation</div>}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                      <button onClick={() => copy(results.amazon_audit.suggested_title, "amz")} style={{ padding: "5px 12px", background: copied === "amz" ? "#16a34a" : "#FF9900", border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>{copied === "amz" ? "\u2713 Copied" : "Copy"}</button>
+                      <span style={{ fontSize: 11, color: "#aaa", fontFamily: "'IBM Plex Mono',monospace" }}>{results.amazon_audit.suggested_title.length} chars</span>
+                      {editedKeys.has("amazon_suggested") && <span style={{ fontSize: 9, fontWeight: 600, color: "#d97706", background: "rgba(217,119,6,0.08)", padding: "2px 8px", borderRadius: 4 }}>edited</span>}
+                      {editedKeys.has("amazon_suggested") && <button onClick={undoSuggestedEdit} style={{ background: "none", border: "none", fontSize: 10, color: "#999", cursor: "pointer", fontFamily: "'Outfit',sans-serif", textDecoration: "underline" }}>undo</button>}
+                    </div>
+                    <CharBar count={results.amazon_audit.suggested_title.length} limit={CHAR_LIMITS.amazon} accent="#FF9900" />
+                  </div>
+                )}
+                <div style={{ marginTop: 14 }}>
+                  <button onClick={() => toggle("amazon", setSources)} className="src-link" style={{ background: "none", border: "none", fontSize: 11, color: "#bbb", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontWeight: 500, padding: 0 }}>{sources.amazon ? "\u25BE" : "\u25B8"} Sources ({MARKETPLACES.amazon.sources.length})</button>
+                  {sources.amazon && <div style={{ marginTop: 6 }}>{MARKETPLACES.amazon.sources.map((s, i) => <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" className="src-link" style={{ display: "block", fontSize: 11, color: "#999", textDecoration: "none", padding: "3px 0" }}>{i + 1}. {s.title} {"\u2197"}</a>)}</div>}
+                </div>
+              </div>)}
+            </div>); })()}
+
+          {/* Marketplace Results */}
+          {results.conversions && selected.filter(k => k !== "amazon").map((key, idx) => {
+            const mp = MARKETPLACES[key]; const conv = results.conversions[key];
+            if (!conv) return (
+              <div key={key} style={{ background: "#fffbeb", border: "1px solid #fde68a", borderLeft: `3px solid ${mp.accent}`, borderRadius: 12, padding: "14px 20px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 5, background: mp.accent, color: "#fff", fontSize: 8, fontWeight: 800, fontFamily: "'Outfit',sans-serif", flexShrink: 0, letterSpacing: "-0.02em" }}>{mp.badge}</span>
+                <span style={{ fontSize: 12, color: "#92400e", fontFamily: "'Outfit',sans-serif" }}><strong>{mp.name}</strong> — no title generated. Try re-running with fewer marketplaces selected.</span>
+              </div>
+            );
+            const ex = expanded[key]; const conf = confidenceConfig[mp.confidence];
+            return (
+              <div key={key} className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderLeft: `3px solid ${mp.accent}`, borderRadius: 12, marginBottom: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)", animationDelay: `${idx * 0.04}s` }}>
+                <button onClick={() => toggle(key, setExpanded)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", background: "transparent", border: "none", cursor: "pointer", color: "#1a1a1a", fontFamily: "'Outfit',sans-serif" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}><span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 5, background: mp.accent, color: "#fff", fontSize: 8, fontWeight: 800, fontFamily: "'Outfit',sans-serif", flexShrink: 0, letterSpacing: "-0.02em" }}>{mp.badge}</span><div style={{ textAlign: "left" }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 13, fontWeight: 700 }}>{mp.name}</span><span style={{ fontSize: 8, fontWeight: 700, color: conf.color, background: conf.bg, padding: "2px 6px", borderRadius: 4 }}>{conf.label}</span></div><div style={{ fontSize: 11, color: "#bbb", fontFamily: "'IBM Plex Mono',monospace", marginTop: 1 }}>{conv.title.length} chars{CHAR_LIMITS[key] ? ` / ${CHAR_LIMITS[key]} limit` : ""}</div></div></div>
+                  <span style={{ transform: ex ? "rotate(180deg)" : "rotate(0)", transition: "transform .2s", fontSize: 11, color: "#ccc" }}>{"\u25BC"}</span>
+                </button>
+                {ex && (<div style={{ padding: "0 20px 18px" }}>
+                  <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, padding: "14px 16px", marginBottom: 12 }}>
+                    <textarea className="editable-title" value={conv.title} onChange={e => editTitle(key, e.target.value)} rows={Math.max(2, Math.ceil(conv.title.length / 70))}
+                      style={{ width: "100%", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "#1a1a1a", lineHeight: 1.7, background: "transparent", border: "none", borderBottom: "1px dashed #ddd", borderRadius: 0, padding: "4px 2px", resize: "vertical", outline: "none", boxSizing: "border-box" }}
+                      onFocus={e => e.target.style.borderBottomColor = mp.accent} onBlur={e => e.target.style.borderBottomColor = "#ddd"} />
+                    {hasBadCupCount(conv.title) && <div style={{ marginTop: 8, padding: "6px 10px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6, fontSize: 11, color: "#dc2626", fontWeight: 600 }}>{"\u26A0"} Cup count missing Uncooked/Cooked designation</div>}
+                    <CharBar count={conv.title.length} limit={CHAR_LIMITS[key]} accent={mp.accent} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                      <button onClick={() => copy(conv.title, key)} style={{ padding: "5px 12px", background: copied === key ? "#16a34a" : MAROON, border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>{copied === key ? "\u2713 Copied" : "Copy Title"}</button>
+                      {editedKeys.has(key) && <span style={{ fontSize: 9, fontWeight: 600, color: "#d97706", background: "rgba(217,119,6,0.08)", padding: "2px 8px", borderRadius: 4 }}>edited</span>}
+                      {editedKeys.has(key) && <button onClick={() => undoEdit(key)} style={{ background: "none", border: "none", fontSize: 10, color: "#999", cursor: "pointer", fontFamily: "'Outfit',sans-serif", textDecoration: "underline" }}>undo</button>}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#bbb", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Key Changes</div>
+                  {conv.changes?.map((c, i) => <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, color: "#666", padding: "3px 0" }}><span style={{ color: mp.accent, fontWeight: 700 }}>{"\u2192"}</span>{c}</div>)}
+                  <div style={{ marginTop: 12 }}>
+                    <button onClick={() => toggle(key, setSources)} className="src-link" style={{ background: "none", border: "none", fontSize: 11, color: "#bbb", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontWeight: 500, padding: 0 }}>{sources[key] ? "\u25BE" : "\u25B8"} Sources ({mp.sources.length})</button>
+                    {sources[key] && <div style={{ marginTop: 6 }}>{mp.sources.map((s, i) => <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" className="src-link" style={{ display: "block", fontSize: 11, color: "#999", textDecoration: "none", padding: "3px 0" }}>{i + 1}. {s.title} {"\u2197"}</a>)}</div>}
+                  </div>
+                </div>)}
+              </div>
+            );
+          })}
+
+          {/* Export All */}
+          <button onClick={() => {
+            let t = "CUCKOO \u2014 MARKETPLACE TITLE OPTIMIZATION\n" + "\u2550".repeat(50) + "\n\nORIGINAL: " + amazonTitle + "\n\n";
+            if (results.amazon_audit) { t += "AMAZON AUDIT (" + results.amazon_audit.score + "/10)\n"; if (results.amazon_audit.suggested_title) t += "Suggested: " + results.amazon_audit.suggested_title + "\n"; t += "\n"; }
+            selected.forEach(k => { const c = results.conversions?.[k]; const m = MARKETPLACES[k]; if (c) { t += m.name.toUpperCase() + " [" + confidenceConfig[m.confidence].label + "] (" + c.char_count + " chars):\n" + c.title + "\nSources: " + m.sources.map(s => s.url).join(", ") + "\n\n"; } });
+            copy(t, "all");
+          }} style={{ width: "100%", marginTop: 10, padding: 14, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, color: copied === "all" ? "#16a34a" : "#999", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            {copied === "all" ? "\u2713 All Titles Copied" : "\u{1F4CB} Copy All Titles + Sources to Clipboard"}
+          </button>
+
+          {/* CSV Export */}
+          <button onClick={() => {
+            const escape = (s) => '"' + (s || '').replace(/"/g, '""') + '"';
+            const rows = [["Marketplace", "Confidence", "Title", "Char Count", "Char Limit", "Key Changes", "Sources"].join(",")];
+            rows.push([escape("Amazon (Original)"), escape(""), escape(amazonTitle), amazonTitle.length, 200, escape(""), escape("")].join(","));
+            if (results.amazon_audit?.suggested_title) {
+              rows.push([escape("Amazon (Suggested)"), escape("Official Docs"), escape(results.amazon_audit.suggested_title), results.amazon_audit.suggested_title.length, 200, escape((results.amazon_audit.improvements || []).join("; ")), escape(MARKETPLACES.amazon.sources.map(s => s.url).join(" | "))].join(","));
+            }
+            selected.forEach(k => {
+              const c = results.conversions?.[k]; const m = MARKETPLACES[k]; if (!c) return;
+              rows.push([escape(m.name), escape(confidenceConfig[m.confidence].label), escape(c.title), c.char_count, CHAR_LIMITS[k] || "", escape((c.changes || []).join("; ")), escape(m.sources.map(s => s.url).join(" | "))].join(","));
+            });
+            const csvContent = rows.join("\n");
+            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "cuckoo-title-optimization-" + new Date().toISOString().slice(0, 10) + ".csv";
+            a.click();
+            URL.revokeObjectURL(url);
+          }} style={{ width: "100%", marginTop: 6, padding: 14, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, color: "#999", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            {"\u{1F4E5}"} Download CSV (Marketplace / Title / Chars / Sources)
+          </button>
+        </div>)}
+
+        {/* Next Step: Title Gen → Bullet Points */}
+        {results && results.amazon_audit?.suggested_title && !loading && mode === "single" && (
+          <button onClick={() => {
+            const model = results._productSku || (inputMode === "model" ? amazonTitle.trim() : "");
+            if (model) setBpModel(model);
+            // Pre-fill bullet point title and BK current title for downstream pipeline
+            if (results.amazon_audit?.suggested_title) {
+              setBpTitle(results.amazon_audit.suggested_title);
+              setBkCurrentTitle(results.amazon_audit.suggested_title);
+            }
+            setPage("bullet_points"); window.scrollTo(0, 0);
+          }} style={{ width: "100%", marginTop: 10, padding: 14, background: MAROON, border: "none", borderRadius: 10, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(107,28,35,0.2)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            Next: Generate Bullet Points {"\u2192"}
+          </button>
+        )}
+
+        {/* FOOTER */}
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Guidelines researched March 2026 {"\u00B7"} Verify with marketplace docs before publishing</span>
+        </div>
+      </div>}
+
+      {/* BULLET POINT GENERATOR PAGE */}
+      {page === "bullet_points" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16, padding: "0 2px" }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Generate optimized bullet points for any CUCKOO product listing. Enter a model number and select a marketplace to get 5 benefit-driven bullet points tailored to that platform's style and requirements.
+          </p>
+          <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
+            Amazon allows up to <strong>5 bullet points</strong> with max 500 characters each. Other marketplaces vary.
+          </p>
+        </div>
+
+        {/* Model input */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Product Model Number</label>
+          <input value={bpModel} onChange={e => { setBpModel(e.target.value); setBpResults(null); setBpError(null); }} placeholder="e.g. CRP-LHTR0609FW, CR-0675FW, CRP-P0609S"
+            style={{ width: "100%", padding: "12px 16px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 14, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          {(() => { const m = bpModel.trim() ? lookupProduct(bpModel, liveProductDbRef.current) : null; return (<>
+            {m && <div style={{ marginTop: 6, fontSize: 10, color: "#16a34a", fontWeight: 600 }}>{"\u2713"} Matched: {m.sku} — {m.type}, {m.cupSize}, {m.color}</div>}
+            {!m && bpModel.trim().length >= 3 && <div style={{ marginTop: 6, fontSize: 10, color: "#d97706" }}>Model not in database — bullet points will use general CUCKOO product knowledge</div>}
+          </>); })()}
+        </div>
+
+        {/* Amazon Title */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Amazon Title <span style={{ fontWeight: 400, color: "#bbb", textTransform: "none", letterSpacing: 0 }}>(optional — bullets will align with title keywords)</span></label>
+          <textarea value={bpTitle} onChange={e => setBpTitle(e.target.value)}
+            placeholder="Paste your Amazon listing title here to align bullet point keywords..."
+            rows={2}
+            style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+        </div>
+
+        {/* Marketplace selector */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "16px 24px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Target Marketplace</label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {Object.entries(MARKETPLACES).map(([key, mp]) => (
+              <button key={key} onClick={() => { setBpMarketplace(key); setBpResults(null); }}
+                style={{ padding: "6px 14px", background: bpMarketplace === key ? MAROON : "#fff", border: `1.5px solid ${bpMarketplace === key ? MAROON : "#e0ddd8"}`, borderRadius: 100, color: bpMarketplace === key ? "#fff" : "#777", fontSize: 11, fontWeight: 500, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "all .15s" }}>
+                {mp.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Bullet Count */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "16px 24px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Bullet Count <span style={{ fontWeight: 400, color: "#bbb" }}>({bulletCount})</span></label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[5,6,7].map(n => (
+              <button key={n} onClick={() => { setBulletCount(n); try { window.storage.set("bullet_count", String(n)); } catch(e) {} }}
+                style={{ flex: 1, padding: "7px 0", background: bulletCount === n ? MAROON : "#fff", border: `1px solid ${bulletCount === n ? MAROON : "#e0ddd8"}`, borderRadius: 6, color: bulletCount === n ? "#fff" : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s" }}>
+                {n}
+              </button>
+            ))}
+          </div>
+          {bulletCount > 5 && (() => {
+            const p = lookupProduct(bpModel, liveProductDbRef.current);
+            const tier = classifyProductTier(p);
+            if (tier === "basic") return <div style={{ marginTop: 8, fontSize: 10, color: "#92400e", fontFamily: "'Outfit',sans-serif" }}>{"\u26A0"} {bulletCount} bullets requested for a basic-tier product — may produce weaker/repetitive bullets beyond #5</div>;
+            return null;
+          })()}
+        </div>
+
+        {/* Generate button */}
+        {(() => {
+          const bpDis = bpLoading || !bpModel.trim();
+          return (<>
+            <button className="cuckoo-btn" aria-label="Generate bullet points" disabled={bpDis} onClick={generateBulletPoints}
+              style={{ width: "100%", padding: 16, background: bpDis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: bpDis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: bpDis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: bpDis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", transition: "all .2s", marginBottom: 8 }}>
+              {bpLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                {bpElapsed < 5 ? "Generating bullet points..." : bpElapsed < 20 ? "Crafting compelling copy..." : "Almost done..."}
+              </span>) : bpDis ? "Enter a model number to get started" : `Generate Bullet Points for ${(MARKETPLACES[bpMarketplace] || {}).name || "Amazon"}`}
+            </button>
+            {bpLoading && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ height: 4, background: "#f0eeeb", borderRadius: 2, overflow: "hidden", marginBottom: 8 }}>
+                  <div style={{ width: `${Math.min(bpElapsed / 60 * 100, 95)}%`, height: "100%", background: MAROON, borderRadius: 2, transition: "width 1s linear" }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#aaa" }}>
+                  <span>{bpElapsed}s</span>
+                  <button onClick={() => { if (bpAbortRef.current) bpAbortRef.current.abort(); setBpLoading(false); setBpError("Cancelled."); if (bpTimerRef.current) { clearInterval(bpTimerRef.current); bpTimerRef.current = null; } }}
+                    style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer" }}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </>);
+        })()}
+
+        {/* Error */}
+        {bpError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 24, color: "#dc2626", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{bpError}</span>
+          <button onClick={generateBulletPoints} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", whiteSpace: "nowrap", marginLeft: 12 }}>Retry</button>
+        </div>}
+
+        {/* Results */}
+        {bpResults && (
+          <div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>Bullet Points for {(MARKETPLACES[bpMarketplace] || {}).name || "Amazon"}</div>
+                {bpResults._productVerified && <span style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", background: "rgba(22,163,74,0.1)", padding: "2px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 4, marginTop: 4 }}>{"\u2713"} Verified: {bpResults._productSku}</span>}
+              </div>
+              <button onClick={() => {
+                const text = (bpResults.bullets || []).map((b, i) => `${b.heading}: ${b.text}`).join("\n\n");
+                try { navigator.clipboard.writeText(text); } catch(e) { const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); }
+                setCopied("bp-all"); setToast("All bullet points copied"); setTimeout(() => { setCopied(null); setToast(null); }, 2000);
+              }} style={{ padding: "8px 16px", background: copied === "bp-all" ? "#16a34a" : MAROON, border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                {copied === "bp-all" ? "\u2713 Copied All" : "Copy All"}
+              </button>
+            </div>
+
+            {(bpResults.bullets || []).map((bullet, i) => (
+              <div key={i} style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderLeft: `3px solid ${MAROON}`, borderRadius: 8, padding: "14px 16px", marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#1a1a1a", textTransform: "uppercase" }}>{bullet.heading}</span>
+                    <span style={{ fontSize: 12, color: "#666" }}>: {bullet.text}</span>
+                  </div>
+                  <button onClick={() => {
+                    const t = `${bullet.heading}: ${bullet.text}`;
+                    try { navigator.clipboard.writeText(t); } catch(e) { const ta = document.createElement("textarea"); ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); }
+                    setCopied("bp-" + i); setToast("Bullet point copied"); setTimeout(() => { setCopied(null); setToast(null); }, 2000);
+                  }} style={{ padding: "3px 8px", background: copied === "bp-" + i ? "#16a34a" : MAROON, border: "none", borderRadius: 4, color: "#fff", fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", flexShrink: 0 }}>
+                    {copied === "bp-" + i ? "\u2713" : "Copy"}
+                  </button>
+                </div>
+                <div style={{ marginTop: 6, fontSize: 10, color: "#aaa", fontFamily: "'IBM Plex Mono',monospace" }}>
+                  {(bullet.heading + ": " + bullet.text).length} chars
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Next Step: Bullet Points → Backend Keywords */}
+        {bpResults && !bpLoading && (
+          <button onClick={() => {
+            const model = bpResults._productSku || bpModel.trim();
+            if (model) { bkAutoFill(model); }
+            if (bpResults.bullets?.length) setBkCurrentBullets(bpResults.bullets.map(b => b.heading + ": " + b.text).join("\n"));
+            setPage("backend_keywords"); window.scrollTo(0, 0);
+          }} style={{ width: "100%", marginTop: 16, padding: 14, background: MAROON, border: "none", borderRadius: 10, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(107,28,35,0.2)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            Next: Generate Backend Keywords {"\u2192"}
+          </button>
+        )}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Bullet points generated from verified product data {"\u00B7"} Review before publishing</span>
+        </div>
+      </div>}
+
+      {/* BACKEND KEYWORDS PAGE */}
+      {page === "backend_keywords" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        {/* Intro */}
+        <div style={{ marginBottom: 16, padding: "0 2px" }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Generate optimized Amazon backend search terms for any CUCKOO product. Select a category, enter your product details, and the tool builds a keyword string that prioritizes competitor brand names, alternate language terms, and high-volume synonyms that can't fit in the visible title.
+          </p>
+          <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
+            Amazon allows up to <strong>500 bytes</strong> for backend keywords. Words from your Amazon title are automatically excluded to avoid wasting space on already-indexed terms.
+          </p>
+        </div>
+
+        {/* Category Selection */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "16px 24px", marginBottom: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 10 }}>Product Category</label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {Object.entries(BK_CATEGORY_CONFIG).map(([k, cfg]) => (
+              <button key={k} onClick={() => { setBkCategory(k); setBkFeatures({}); setBkResults(null); setBkError(null); }}
+                style={{ padding: "6px 14px", background: bkCategory === k ? MAROON : "#fff", border: `1.5px solid ${bkCategory === k ? MAROON : "#e0ddd8"}`, borderRadius: 100, color: bkCategory === k ? "#fff" : "#777", fontSize: 11, fontWeight: 500, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "background .15s, color .15s, border-color .15s" }}>
+                {cfg.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Feature Selectors */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 16 }}>Product Details</label>
+
+          {/* Amazon Title */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Amazon Title <span style={{ fontWeight: 400, color: "#bbb" }}>(words in this title will be excluded from backend keywords)</span></label>
+            <textarea value={bkCurrentTitle} onChange={e => setBkCurrentTitle(e.target.value)}
+              placeholder="Paste your current Amazon listing title here..."
+              rows={2}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {bkCurrentTitle.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{bkCurrentTitle.trim().split(/\s+/).length} words will be excluded from backend keywords</div>}
+          </div>
+
+          {/* Bullet Points */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Bullet Points <span style={{ fontWeight: 400, color: "#bbb" }}>(words in bullets will also be excluded from backend keywords)</span></label>
+            <textarea value={bkCurrentBullets} onChange={e => setBkCurrentBullets(e.target.value)}
+              placeholder="Paste your current bullet points here (one per line)..."
+              rows={4}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {bkCurrentBullets.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{bkCurrentBullets.trim().split(/\s+/).length} words will be excluded from backend keywords</div>}
+          </div>
+
+          {/* Model Number */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Model Number <span style={{ fontWeight: 400, color: "#bbb" }}>(auto-fills fields when matched to product database)</span></label>
+            <input value={bkModelNumber} onChange={e => bkAutoFill(e.target.value)} placeholder="e.g. CRP-P0609S, CR-0675FW, CRP-LHTR0609FW"
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {(() => { const bkMatch = bkModelNumber.trim() ? lookupProduct(bkModelNumber, liveProductDbRef.current) : null; return (<>
+              {bkMatch && <div style={{ marginTop: 4, fontSize: 10, color: "#16a34a", fontWeight: 600 }}>{"\u2713"} Matched: {bkMatch.sku} — fields auto-filled from database</div>}
+              {!bkMatch && bkModelNumber.trim().length >= 3 && <div style={{ marginTop: 4, fontSize: 10, color: "#d97706" }}>Model not in database — fill in fields manually for best results</div>}
+            </>); })()}
+          </div>
+
+          {/* Dynamic Fields from Category Config */}
+          <div className="audit-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+            {bkCatConfig.fields.map(field => (
+              <div key={field.key}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>{field.label}</label>
+                {field.type === "select" ? (
+                  <select value={bkFeatures[field.key] || ""} onChange={e => setBkFeatures(p => ({ ...p, [field.key]: e.target.value }))}
+                    style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'Outfit',sans-serif", outline: "none", cursor: "pointer" }}>
+                    <option value="">Select {field.label.toLowerCase()}...</option>
+                    {field.options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                  </select>
+                ) : (
+                  <input value={bkFeatures[field.key] || ""} onChange={e => setBkFeatures(p => ({ ...p, [field.key]: e.target.value }))}
+                    placeholder={`Enter ${field.label.toLowerCase()}...`}
+                    style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'Outfit',sans-serif", outline: "none", boxSizing: "border-box" }}
+                    onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Feature Checkboxes - Dynamic per Category */}
+          {bkCatConfig.features.length > 0 && (
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 10 }}>Features</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {bkCatConfig.features.map(feat => {
+                  const active = (bkFeatures.features || []).includes(feat);
+                  return (
+                    <button key={feat} onClick={() => setBkFeatures(p => ({ ...p, features: active ? (p.features || []).filter(f => f !== feat) : [...(p.features || []), feat] }))}
+                      style={{ padding: "6px 14px", background: active ? MAROON : "#fff", border: `1.5px solid ${active ? MAROON : "#e0ddd8"}`, borderRadius: 100, color: active ? "#fff" : "#777", fontSize: 11, fontWeight: 500, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "all .15s" }}>
+                      {feat}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Generate Button */}
+        {(() => {
+          const hasAnyField = bkCatConfig.fields.some(f => bkFeatures[f.key]);
+          const bkDis = bkLoading || (!hasAnyField && !bkModelNumber.trim());
+          return (<>
+            <button className="cuckoo-btn" disabled={bkDis}
+              onClick={generateBackendKeywords}
+              style={{ width: "100%", padding: 16, background: bkDis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: bkDis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: bkDis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: bkDis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", transition: "all .2s", marginBottom: 8 }}>
+              {bkLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                {bkElapsed < 5 ? "Generating keywords..." : bkElapsed < 15 ? "Almost there..." : bkElapsed < 25 ? "Taking longer than usual..." : "Still waiting — will timeout at 30s"}
+              </span>) : bkDis && !bkLoading ? "Fill in at least one product detail or enter a model number" : `Generate ${bkCatConfig.label} Backend Keywords`}
+            </button>
+            {bkLoading && (
+              <div style={{ textAlign: "center", marginBottom: 12 }}>
+                <div style={{ height: 4, background: "#f0eeeb", borderRadius: 2, overflow: "hidden", marginBottom: 8 }}>
+                  <div style={{ width: `${Math.min(bkElapsed / 30 * 100, 100)}%`, height: "100%", background: bkElapsed >= 20 ? "#d97706" : MAROON, borderRadius: 2, transition: "width 1s linear" }} />
+                </div>
+                <button onClick={cancelBkGeneration} style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "4px 14px", fontSize: 11, color: "#666", cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>Cancel</button>
+              </div>
+            )}
+            {!bkDis && !bkLoading && <div style={{ textAlign: "center", fontSize: 10, color: "#bbb", marginBottom: 16 }}>Tip: entering a model number auto-fills product details from the internal database</div>}
+          </>);
+        })()}
+
+        {/* Error */}
+        {bkError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 24, color: "#dc2626", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{bkError}</span>
+          <button onClick={generateBackendKeywords} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", whiteSpace: "nowrap", marginLeft: 12 }}>Retry</button>
+        </div>}
+
+        {/* Results */}
+        {bkResults && (
+          <div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>Backend Search Terms</div>
+              <div style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: bkResults.byte_count > 499 ? "#dc2626" : bkResults.byte_count > 400 ? "#d97706" : "#16a34a", fontWeight: 700 }}>
+                {bkResults.byte_count} / 500 bytes
+              </div>
+            </div>
+
+            {/* Byte bar */}
+            <div style={{ height: 6, background: "#f0eeeb", borderRadius: 3, overflow: "hidden", marginBottom: 16 }}>
+              <div style={{ width: `${Math.min(bkResults.byte_count / 499 * 100, 100)}%`, height: "100%", background: bkResults.byte_count > 499 ? "#dc2626" : bkResults.byte_count > 400 ? "#d97706" : MAROON, borderRadius: 3, transition: "width .4s ease" }} />
+            </div>
+
+            {/* Keyword string - editable */}
+            <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, padding: "14px 16px", marginBottom: 16 }}>
+              <textarea value={bkResults.keywords}
+                onChange={e => { const v = e.target.value; const bc = new TextEncoder().encode(v).length; if (bc <= 500) { setBkResults(prev => ({ ...prev, keywords: v, byte_count: bc })); } }}
+                rows={4}
+                style={{ width: "100%", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "#1a1a1a", lineHeight: 1.7, background: "transparent", border: "none", borderBottom: "1px dashed #ddd", borderRadius: 0, padding: "4px 2px", resize: "vertical", outline: "none", boxSizing: "border-box" }}
+                onFocus={e => e.target.style.borderBottomColor = MAROON} onBlur={e => e.target.style.borderBottomColor = "#ddd"} />
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+              <button onClick={() => { copy(bkResults.keywords, "bk"); }} style={{ padding: "5px 12px", background: copied === "bk" ? "#16a34a" : MAROON, border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                {copied === "bk" ? "\u2713 Copied" : "Copy Keywords"}
+              </button>
+              {bkResults.byte_count > 499 && <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 600, display: "flex", alignItems: "center" }}>{"\u26A0"} Over 499 byte limit — remove some terms</span>}
+            </div>
+
+            {/* Strategy */}
+            {bkResults.strategy?.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#16a34a", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Strategy</div>
+                {bkResults.strategy.map((s, i) => <div key={i} style={{ fontSize: 12, color: "#666", padding: "4px 0", borderBottom: "1px solid #f5f3f0", lineHeight: 1.5 }}>{s}</div>)}
+              </div>
+            )}
+
+            {/* Excluded terms */}
+            {bkResults.excluded?.length > 0 && (
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#d97706", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Excluded Terms</div>
+                {bkResults.excluded.map((s, i) => <div key={i} style={{ fontSize: 12, color: "#999", padding: "4px 0", borderBottom: "1px solid #f5f3f0", lineHeight: 1.5 }}>{s}</div>)}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Next Step: Backend Keywords → Listing Audit */}
+        {bkResults && !bkLoading && (
+          <button onClick={() => {
+            if (bkModelNumber.trim()) setAuditAsin(bkModelNumber.trim());
+            if (bkCurrentTitle.trim()) setAuditTitle(bkCurrentTitle.trim());
+            // Carry bullet points from earlier in pipeline if available
+            if (bpResults?.bullets?.length) setAuditBullets(bpResults.bullets.map(b => b.heading + ": " + b.text).join("\n"));
+            if (bkResults.keywords) setAuditBackendKw(bkResults.keywords);
+            setPage("listing_audit"); window.scrollTo(0, 0);
+          }} style={{ width: "100%", marginTop: 16, padding: 14, background: MAROON, border: "none", borderRadius: 10, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(107,28,35,0.2)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            Next: Run Listing Audit {"\u2192"}
+          </button>
+        )}
+
+        {/* FOOTER */}
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Guidelines researched March 2026 {"\u00B7"} Verify with marketplace docs before publishing</span>
+        </div>
+      </div>}
+      {/* SEARCH VOLUME REPORT PAGE */}
+      {page === "search_volume" && <div style={{ maxWidth: 1060, margin: "0 auto", padding: "28px 24px 60px" }}>
+        {/* Intro */}
+        <div style={{ marginBottom: 16, padding: "0 2px" }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Amazon search volume data for <strong>{liveSearchData.length} rice cooker keywords</strong> from Product Opportunity Explorer. This data can be utilized directly for <strong>Sponsored Ads campaigns</strong> on Amazon and directionally for keyword strategy across other retailers. Filter by tier, category, or search for specific terms.
+          </p>
+          <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
+            Source: Amazon Product Opportunity Explorer {"\u00B7"} Last updated <strong>March 14, 2026</strong> {"\u00B7"} Search volume = past 360 days
+          </p>
+        </div>
+
+        {/* Tier summary cards */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+          {Object.entries(SV_TIER_CONFIG).map(([k, cfg]) => {
+            const count = liveSearchData.filter(d => d.tier === k).length;
+            const totalVol = liveSearchData.filter(d => d.tier === k).reduce((s, d) => s + d.v, 0);
+            return (
+              <button key={k} onClick={() => setSvTier(svTier === k ? "all" : k)}
+                style={{ background: svTier === k ? cfg.bg : "#fff", border: `1.5px solid ${svTier === k ? cfg.color : "#e8e5e0"}`, borderRadius: 10, padding: "12px 14px", cursor: "pointer", textAlign: "left", transition: "all .15s" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: cfg.color, textTransform: "uppercase", letterSpacing: "0.06em" }}>{cfg.label} <span style={{ fontWeight: 400 }}>({cfg.desc})</span></div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: "#1a1a1a", fontFamily: "'IBM Plex Mono',monospace", marginTop: 2 }}>{count}</div>
+                <div style={{ fontSize: 9, color: "#aaa" }}>{(totalVol / 1000000).toFixed(1)}M total searches</div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Filters */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "14px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <input value={svFilter} onChange={e => setSvFilter(e.target.value)} placeholder="Search keywords..."
+            style={{ flex: 1, minWidth: 180, padding: "8px 12px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 6, fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", color: "#1a1a1a" }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          <select value={svCat} onChange={e => setSvCat(e.target.value)}
+            style={{ padding: "8px 12px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 6, fontSize: 12, fontFamily: "'Outfit',sans-serif", color: "#1a1a1a", cursor: "pointer" }}>
+            <option value="all">All Categories</option>
+            {Object.entries(SV_CAT_CONFIG).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+          {(svFilter || svTier !== "all" || svCat !== "all") && <button onClick={() => { setSvFilter(""); setSvTier("all"); setSvCat("all"); }}
+            style={{ background: "none", border: "none", fontSize: 11, color: MAROON, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>Clear filters</button>}
+        </div>
+
+        {/* Results table */}
+        {(() => {
+          const filtered = svFiltered;
+          const maxVol = svMaxVol;
+          const sortBtn = (key, label) => (
+            <button onClick={() => { if (svSort === key) { setSvSortDir(d => d === "desc" ? "asc" : "desc"); } else { setSvSort(key); setSvSortDir("desc"); } }}
+              style={{ background: "none", border: "none", cursor: "pointer", fontSize: 9, fontWeight: 700, color: svSort === key ? MAROON : "#999", fontFamily: "'Outfit',sans-serif", textTransform: "uppercase", letterSpacing: "0.06em", padding: "4px 0", display: "flex", alignItems: "center", gap: 2 }}>
+              {label}{svSort === key ? (svSortDir === "desc" ? " \u25BC" : " \u25B2") : ""}
+            </button>
+          );
+
+          return (
+            <div className="sv-table-wrap" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+              <div style={{ padding: "10px 16px", borderBottom: "1px solid #f0eeeb", fontSize: 11, color: "#999", fontWeight: 600 }}>{filtered.length} keyword{filtered.length !== 1 ? "s" : ""}</div>
+              {/* Header */}
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 80px 80px 80px 80px", padding: "8px 16px", borderBottom: "1px solid #f0eeeb", background: "#faf9f7", gap: 8, alignItems: "center" }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.06em" }}>Keyword</div>
+                {sortBtn("v", "Search Volume")}
+                {sortBtn("g90", "90d Growth")}
+                {sortBtn("g180", "180d Growth")}
+                {sortBtn("cs", "Click Share")}
+                {sortBtn("cr", "Conv. Rate")}
+              </div>
+              {/* Rows */}
+              <div style={{ maxHeight: 600, overflowY: "auto" }}>
+                {filtered.map((d, i) => {
+                  const tierCfg = SV_TIER_CONFIG[d.tier];
+                  return (
+                    <div key={d.t + i} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 80px 80px 80px 80px", padding: "8px 16px", borderBottom: "1px solid #f5f3f0", gap: 8, alignItems: "center", background: i % 2 === 0 ? "#fff" : "#fdfcfb" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 8, fontWeight: 700, color: tierCfg.color, background: tierCfg.bg, padding: "1px 5px", borderRadius: 3, flexShrink: 0 }}>{d.tier}</span>
+                        <span style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#1a1a1a" }}>{d.t}</span>
+                        <span style={{ fontSize: 8, color: "#bbb", flexShrink: 0 }}>{SV_CAT_CONFIG[d.cat]}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ flex: 1, height: 4, background: "#f0eeeb", borderRadius: 2, overflow: "hidden" }}>
+                          <div style={{ width: `${Math.min((d.v / maxVol) * 100, 100)}%`, height: "100%", background: tierCfg.color, borderRadius: 2 }} />
+                        </div>
+                        <span style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", fontWeight: 600, color: "#1a1a1a", minWidth: 60, textAlign: "right" }}>{d.v >= 1000000 ? (d.v / 1000000).toFixed(1) + "M" : d.v >= 1000 ? (d.v / 1000).toFixed(0) + "K" : d.v}</span>
+                      </div>
+                      <span style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: d.g90 > 0 ? "#16a34a" : d.g90 < -20 ? "#dc2626" : "#999", textAlign: "right" }}>{d.g90 > 0 ? "+" : ""}{d.g90}%</span>
+                      <span style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: d.g180 > 0 ? "#16a34a" : d.g180 < -20 ? "#dc2626" : "#999", textAlign: "right" }}>{d.g180 > 0 ? "+" : ""}{d.g180}%</span>
+                      <span style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: "#666", textAlign: "right" }}>{d.cs}%</span>
+                      <span style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: d.cr > 3 ? "#16a34a" : "#666", fontWeight: d.cr > 3 ? 700 : 400, textAlign: "right" }}>{d.cr}%</span>
+                    </div>
+                  );
+                })}
+                {filtered.length === 0 && <div style={{ padding: 24, textAlign: "center", fontSize: 12, color: "#aaa" }}>No keywords match your filters</div>}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* FOOTER */}
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Data from Amazon Product Opportunity Explorer {"\u00B7"} March 2026 {"\u00B7"} Volume = past 360 days</span>
+        </div>
+      </div>}
+
+      {/* PRODUCT COMPARISON PAGE */}
+      {page === "product_compare" && <div style={{ maxWidth: 1060, margin: "0 auto", padding: "28px 24px 60px" }}>
+        {/* Intro */}
+        <div style={{ marginBottom: 16, padding: "0 2px" }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Select up to <strong>4 CUCKOO rice cooker models</strong> to compare specs side by side. All data is pulled from the internal product database — the same verified source used by the Title Generator.
+          </p>
+          <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
+            {Object.keys(PRODUCT_DB).length} models available {"\u00B7"} Source: Rice Cooker Categorization (March 2026)
+          </p>
+        </div>
+
+        {/* Model selector */}
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: "16px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Select Models <span style={{ color: "#ccc", fontWeight: 400 }}>({compareModels.length}/4 selected)</span></label>
+            {compareModels.length > 0 && <button onClick={() => setCompareModels([])} style={{ background: "none", border: "none", fontSize: 11, color: MAROON, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>Clear all</button>}
+          </div>
+          <input value={compareSearch} onChange={e => setCompareSearch(e.target.value)} placeholder="Search models (e.g. CRP-P0609S, LHTAR, Micom, 10 Cup)..."
+            style={{ width: "100%", padding: "8px 12px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 6, fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", color: "#1a1a1a", boxSizing: "border-box", marginBottom: 10 }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 180, overflowY: "auto" }}>
+            {Object.entries(PRODUCT_DB).filter(([sku, d]) => {
+              if (!compareSearch.trim()) return true;
+              const q = compareSearch.toLowerCase();
+              return sku.toLowerCase().includes(q) || d.type.toLowerCase().includes(q) || (d.cupSize || "").toLowerCase().includes(q) || (d.color || "").toLowerCase().includes(q);
+            }).map(([sku, d]) => {
+              const sel = compareModels.includes(sku);
+              return (
+                <button key={sku} onClick={() => setCompareModels(prev => sel ? prev.filter(m => m !== sku) : prev.length >= 4 ? prev : [...prev, sku])}
+                  style={{ padding: "5px 10px", background: sel ? MAROON : "#fff", border: `1.5px solid ${sel ? MAROON : "#e0ddd8"}`, borderRadius: 6, cursor: compareModels.length >= 4 && !sel ? "not-allowed" : "pointer", color: sel ? "#fff" : "#555", fontSize: 11, fontWeight: 500, fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s", opacity: compareModels.length >= 4 && !sel ? 0.4 : 1 }}>
+                  {sku} <span style={{ fontSize: 9, opacity: 0.7 }}>{d.type}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Comparison Table */}
+        {compareModels.length >= 2 && (() => {
+          const models = compareModels.map(sku => ({ sku, ...PRODUCT_DB[sku] }));
+          // Collect all unique features across selected models for dynamic rows
+          const allFeatures = [...new Set(models.flatMap(m => m.features || []))];
+          const standardFeats = ["Auto Clean", "Turbo Mode", "Water Capture", "Steam Tray", "Steam Plate"];
+          const extraFeats = allFeatures.filter(f => !standardFeats.includes(f) && !f.startsWith("Voice Guide") && !f.startsWith("Preset Timer"));
+          const rows = [
+            { label: "Type", key: "type" },
+            { label: "Heating", key: "heating" },
+            { label: "Pressure", key: "pressure", fmt: v => v ? "Yes" : "No" },
+            { label: "Cup Size", key: "cupSize" },
+            { label: "Color", key: "color" },
+            { label: "Wattage", key: "wattage" },
+            { label: "Dimensions", key: "dimensions" },
+            { label: "Weight", key: "weight" },
+            { label: "Price", key: "price" },
+            { label: "Cooking Modes", key: "cookingModes" },
+            { label: "Cooking Mode Names", key: "cookingModeNames", fmt: v => typeof v === "string" ? v : Array.isArray(v) && v.length ? v.join(", ") : "—" },
+            { label: "Other Menu Modes", key: "otherMenuModes" },
+            { label: "Inner Pot", key: "innerPot" },
+            { label: "Country of Origin", key: "mfg" },
+            { label: "Auto Clean", key: "_feat_Auto Clean", feat: true },
+            { label: "Turbo Mode", key: "_feat_Turbo Mode", feat: true },
+            { label: "Voice Guide", key: "_feat_voice", feat: true },
+            { label: "Water Capture", key: "_feat_Water Capture", feat: true },
+            { label: "Steam Tray", key: "_feat_Steam Tray", feat: true },
+            { label: "Steam Plate", key: "_feat_Steam Plate", feat: true },
+            { label: "Preset Timer", key: "_feat_timer", feat: true },
+            ...extraFeats.map(f => ({ label: f, key: "_feat_extra_" + f, feat: true, extraFeat: f })),
+            { label: "ASIN", key: "asin" },
+          ];
+          const getVal = (m, row) => {
+            if (row.fmt) return row.fmt(m[row.key]);
+            if (row.feat) {
+              if (row.key === "_feat_voice") { const vf = m.features.find(f => f.startsWith("Voice Guide")); return vf || "No"; }
+              if (row.key === "_feat_timer") { const tf = m.features.find(f => f.startsWith("Preset Timer")); return tf || "No"; }
+              if (row.extraFeat) return m.features.includes(row.extraFeat) ? "Yes" : "No";
+              return m.features.includes(row.key.replace("_feat_", "")) ? "Yes" : "No";
+            }
+            return m[row.key] || "—";
+          };
+          return (
+            <div className="compare-table-wrap result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+              {/* Header row */}
+              <div style={{ display: "grid", gridTemplateColumns: `140px repeat(${models.length}, 1fr)`, borderBottom: "2px solid #e8e5e0" }}>
+                <div style={{ padding: "14px 16px", background: "#faf9f7", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.06em" }}>Spec</div>
+                {models.map(m => (
+                  <div key={m.sku} style={{ padding: "14px 16px", background: "#faf9f7", borderLeft: "1px solid #f0eeeb", textAlign: "center" }}>
+                    {PRODUCT_IMAGES[m.sku] && <img src={PRODUCT_IMAGES[m.sku]} alt={m.sku} onClick={() => setEnlargedImage({ sku: m.sku, src: PRODUCT_IMAGES[m.sku] })} style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 6, borderRadius: 6, cursor: "pointer", transition: "transform .15s" }} onMouseEnter={e => e.target.style.transform = "scale(1.1)"} onMouseLeave={e => e.target.style.transform = "scale(1)"} />}
+                    <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", color: MAROON }}>{m.sku}</div>
+                    <div style={{ fontSize: 9, color: "#aaa", marginTop: 2 }}>{m.type}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Data rows */}
+              {rows.map((row, i) => {
+                const vals = models.map(m => getVal(m, row));
+                const allSame = vals.every(v => v === vals[0]);
+                return (
+                  <div key={row.key} style={{ display: "grid", gridTemplateColumns: `140px repeat(${models.length}, 1fr)`, borderBottom: "1px solid #f5f3f0", background: i % 2 === 0 ? "#fff" : "#fdfcfb" }}>
+                    <div style={{ padding: "8px 16px", fontSize: 11, fontWeight: 600, color: "#888" }}>{row.label}</div>
+                    {vals.map((val, j) => (
+                      <div key={j} style={{ padding: "8px 16px", borderLeft: "1px solid #f0eeeb", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: val === "No" || val === "—" ? "#ccc" : allSame ? "#666" : "#1a1a1a", fontWeight: !allSame && val !== "No" && val !== "—" ? 700 : 400, textAlign: "center" }}>
+                        {val === "Yes" ? "\u2713" : val === "No" ? "\u2717" : val}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
+        {/* Export comparison */}
+        {compareModels.length >= 2 && (
+          <button onClick={() => {
+            const models = compareModels.map(sku => ({ sku, ...PRODUCT_DB[sku] }));
+            const specRows = [
+              { label: "Type", get: m => m.type || "" }, { label: "Heating", get: m => m.heating || "" },
+              { label: "Pressure", get: m => m.pressure ? "Yes" : "No" }, { label: "Cup Size", get: m => m.cupSize || "" },
+              { label: "Color", get: m => m.color || "" }, { label: "Wattage", get: m => m.wattage || "" },
+              { label: "Dimensions", get: m => m.dimensions || "" }, { label: "Weight", get: m => m.weight || "" },
+              { label: "Price", get: m => m.price || "" }, { label: "Cooking Modes", get: m => m.cookingModes || "" },
+              { label: "Cooking Mode Names", get: m => typeof m.cookingModeNames === "string" ? m.cookingModeNames : Array.isArray(m.cookingModeNames) ? m.cookingModeNames.join(", ") : "" },
+              { label: "Other Menu Modes", get: m => m.otherMenuModes || "" }, { label: "Inner Pot", get: m => m.innerPot || "" },
+              { label: "Country of Origin", get: m => m.mfg || "" },
+              { label: "Features", get: m => (m.features || []).join(", ") }, { label: "ASIN", get: m => m.asin || "" },
+            ];
+            const esc = s => '"' + (s || "").replace(/"/g, '""') + '"';
+            const csvRows = [["Spec", ...models.map(m => m.sku)].join(",")];
+            specRows.forEach(r => csvRows.push([esc(r.label), ...models.map(m => esc(r.get(m)))].join(",")));
+            const blob = new Blob([csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url;
+            a.download = "cuckoo-comparison-" + compareModels.join("-vs-") + ".csv"; a.click(); URL.revokeObjectURL(url);
+          }} style={{ width: "100%", marginTop: 12, padding: 14, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, color: "#999", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            {"\u{1F4E5}"} Download Comparison as CSV
+          </button>
+        )}
+
+        {compareModels.length === 1 && <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 16, fontSize: 12, color: "#92400e", textAlign: "center" }}>Select at least one more model to compare</div>}
+        {compareModels.length === 0 && <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 10, padding: 24, fontSize: 12, color: "#aaa", textAlign: "center" }}>Select 2–4 models above to see a side-by-side comparison</div>}
+
+        {/* FOOTER */}
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Data from Rice Cooker Categorization {"\u00B7"} {Object.keys(PRODUCT_DB).length} verified models {"\u00B7"} March 2026</span>
+        </div>
+      </div>}
+
+      {/* COMPETITOR TITLE ANALYZER PAGE */}
+      {page === "competitor_analyzer" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Compare your CUCKOO title against competitor listings. Each title gets a <strong>Ranking Juice</strong> score — the cumulative search volume of exact-match keywords found in the title, sourced from the Amazon Search Volume Report ({liveSearchData.length} keywords). Titles are also evaluated against Amazon title rules.
+          </p>
+        </div>
+
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Your CUCKOO Title</label>
+            <textarea value={ctCuckooTitle} onChange={e => setCtCuckooTitle(e.target.value)} placeholder="Paste your CUCKOO Amazon title here..." rows={2}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {ctCuckooTitle.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{ctCuckooTitle.trim().length} chars</div>}
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Competitor Titles <span style={{ fontWeight: 400, color: "#bbb" }}>(one per line)</span></label>
+            <textarea value={ctCompetitorTitles} onChange={e => setCtCompetitorTitles(e.target.value)} placeholder={"Paste competitor titles here, one per line...\ne.g. Zojirushi NP-HCC10XH Induction Heating System Rice Cooker...\nTiger JBV-A10U-W 5.5-Cup Micom Rice Cooker..."} rows={5}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {ctCompetitorTitles.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{ctCompetitorTitles.split("\n").filter(l => l.trim()).length} competitor title(s)</div>}
+          </div>
+        </div>
+
+        {(() => {
+          const dis = ctLoading || !ctCuckooTitle.trim() || !ctCompetitorTitles.trim();
+          return (<>
+            <button className="cuckoo-btn" disabled={dis} onClick={analyzeCompetitors}
+              style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: dis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
+              {ctLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                Analyzing competitors...
+              </span>) : dis ? "Enter both titles to analyze" : "Analyze Competitors"}
+            </button>
+            {ctLoading && <div style={{ textAlign: "center", fontSize: 10, color: "#aaa", marginBottom: 12 }}>{ctElapsed}s
+              <button onClick={() => { if (ctAbortRef.current) ctAbortRef.current.abort(); setCtLoading(false); setCtError("Cancelled."); if (ctTimerRef.current) { clearInterval(ctTimerRef.current); ctTimerRef.current = null; } }}
+                style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer", marginLeft: 8 }}>Cancel</button>
+            </div>}
+          </>);
+        })()}
+
+        {ctError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 24, color: "#dc2626", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{ctError}</span>
+          <button onClick={analyzeCompetitors} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Retry</button>
+        </div>}
+
+        {ctResults && (() => {
+          const scoreColor = s => s >= 8 ? "#16a34a" : s >= 5 ? "#d97706" : "#dc2626";
+          const rj = ctResults._rankingJuice || {};
+          const cuckooJuice = rj.cuckoo || { score: 0, matches: [] };
+          const compJuices = rj.competitors || [];
+          const competitors = ctCompetitorTitles.split("\n").map(t => t.trim()).filter(Boolean);
+          // Build leaderboard sorted by ranking juice
+          const leaderboard = [
+            { label: "CUCKOO", title: ctCuckooTitle.trim(), juice: cuckooJuice, isCuckoo: true, compliance: ctResults.cuckoo_analysis?.rule_compliance },
+            ...competitors.map((t, i) => ({ label: "Competitor " + (i + 1), title: t, juice: compJuices[i] || { score: 0, matches: [] }, isCuckoo: false, compliance: ctResults.competitors?.[i]?.rule_compliance }))
+          ].sort((a, b) => b.juice.score - a.juice.score);
+          const maxJuice = Math.max(...leaderboard.map(e => e.juice.score), 1);
+          const fmt = n => n >= 1000000 ? (n / 1000000).toFixed(1) + "M" : n >= 1000 ? (n / 1000).toFixed(0) + "K" : String(n);
+
+          return (<div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            {/* Competitive score header */}
+            <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 20, paddingBottom: 16, borderBottom: "1px solid #f0eeeb" }}>
+              <div style={{ width: 64, height: 64, borderRadius: "50%", border: `4px solid ${scoreColor(ctResults.competitive_score)}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <span style={{ fontSize: 22, fontWeight: 800, color: scoreColor(ctResults.competitive_score), fontFamily: "'IBM Plex Mono',monospace" }}>{ctResults.competitive_score}</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a" }}>Competitive Score</div>
+                <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{ctResults.competitive_score >= 8 ? "Your title is highly competitive" : ctResults.competitive_score >= 5 ? "Room for improvement vs competitors" : "Competitors have significant advantages"}</div>
+              </div>
+            </div>
+
+            {/* RANKING JUICE LEADERBOARD */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Ranking Juice Leaderboard</div>
+              <div style={{ fontSize: 10, color: "#bbb", marginBottom: 12 }}>Cumulative search volume from exact-match keywords found in each title (source: Amazon Product Opportunity Explorer)</div>
+              {leaderboard.map((entry, i) => (
+                <div key={i} style={{ background: entry.isCuckoo ? "rgba(107,28,35,0.04)" : "#faf9f7", border: `1px solid ${entry.isCuckoo ? MAROON : "#e8e5e0"}`, borderRadius: 10, padding: "14px 16px", marginBottom: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 16, fontWeight: 800, color: i === 0 ? "#d97706" : "#999", fontFamily: "'IBM Plex Mono',monospace", width: 24 }}>#{i + 1}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: entry.isCuckoo ? MAROON : "#1a1a1a" }}>{entry.label}</span>
+                      {entry.compliance != null && <span style={{ fontSize: 9, fontWeight: 600, color: scoreColor(entry.compliance), background: entry.compliance >= 8 ? "rgba(22,163,74,0.1)" : entry.compliance >= 5 ? "rgba(217,119,6,0.1)" : "rgba(220,38,38,0.1)", padding: "2px 6px", borderRadius: 4 }}>Rules: {entry.compliance}/10</span>}
+                      <span style={{ fontSize: 10, color: "#bbb" }}>{entry.title.length} chars</span>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: entry.isCuckoo ? MAROON : "#1a1a1a", fontFamily: "'IBM Plex Mono',monospace" }}>{fmt(entry.juice.score)}</div>
+                      <div style={{ fontSize: 9, color: "#aaa" }}>{entry.juice.matches.length} keyword{entry.juice.matches.length !== 1 ? "s" : ""} matched</div>
+                    </div>
+                  </div>
+                  {/* Volume bar */}
+                  <div style={{ height: 6, background: "#e8e5e0", borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
+                    <div style={{ width: `${(entry.juice.score / maxJuice) * 100}%`, height: "100%", background: entry.isCuckoo ? MAROON : "#6366f1", borderRadius: 3, transition: "width .4s ease" }} />
+                  </div>
+                  {/* Title text */}
+                  <div style={{ fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: "#555", lineHeight: 1.6, marginBottom: 8, padding: "6px 8px", background: "rgba(255,255,255,0.6)", borderRadius: 4 }}>{entry.title}</div>
+                  {/* Matched keywords as pills */}
+                  {entry.juice.matches.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {entry.juice.matches.map((m, j) => {
+                        const tierColors = { T1: "#16a34a", T2: "#d97706", T3: "#6366f1", T4: "#94a3b8" };
+                        return (<span key={j} style={{ padding: "2px 8px", background: "#fff", border: `1px solid ${tierColors[m.tier] || "#e0ddd8"}`, borderRadius: 4, fontSize: 9, color: tierColors[m.tier] || "#666", fontFamily: "'IBM Plex Mono',monospace", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          {m.keyword} <span style={{ fontWeight: 700 }}>{fmt(m.volume)}</span>
+                        </span>);
+                      })}
+                    </div>
+                  )}
+                  {entry.juice.matches.length === 0 && <div style={{ fontSize: 10, color: "#ccc", fontStyle: "italic" }}>No exact-match keywords from search volume data</div>}
+                </div>
+              ))}
+            </div>
+
+            {/* CUCKOO analysis — strengths/weaknesses from AI */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: MAROON, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>CUCKOO Title Analysis</div>
+              {ctResults.cuckoo_analysis?.strengths?.map((s, i) => <div key={i} style={{ fontSize: 12, color: "#16a34a", padding: "2px 0", display: "flex", gap: 6 }}>{"\u2713"} {s}</div>)}
+              {ctResults.cuckoo_analysis?.weaknesses?.map((s, i) => <div key={i} style={{ fontSize: 12, color: "#dc2626", padding: "2px 0", display: "flex", gap: 6 }}>{"\u2717"} {s}</div>)}
+            </div>
+
+            {/* Keyword gaps */}
+            {ctResults.keyword_gaps?.length > 0 && (
+              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "12px 16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#dc2626", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Keyword Gaps</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {ctResults.keyword_gaps.map((kw, i) => <span key={i} style={{ padding: "3px 10px", background: "#fff", border: "1px solid #fecaca", borderRadius: 4, fontSize: 11, color: "#dc2626", fontFamily: "'IBM Plex Mono',monospace" }}>{kw}</span>)}
+                </div>
+              </div>
+            )}
+
+            {/* Shared keywords */}
+            {ctResults.shared_keywords?.length > 0 && (
+              <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "12px 16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#16a34a", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Shared Keywords</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {ctResults.shared_keywords.map((kw, i) => <span key={i} style={{ padding: "3px 10px", background: "#fff", border: "1px solid #bbf7d0", borderRadius: 4, fontSize: 11, color: "#16a34a", fontFamily: "'IBM Plex Mono',monospace" }}>{kw}</span>)}
+                </div>
+              </div>
+            )}
+
+            {/* Recommendations */}
+            {ctResults.recommendations?.length > 0 && (
+              <div style={{ background: "#fffbf5", border: "1px solid #ffe8c4", borderRadius: 8, padding: "14px 16px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#d97706", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Recommendations</div>
+                {ctResults.recommendations.map((r, i) => <div key={i} style={{ fontSize: 12, color: "#666", padding: "3px 0", display: "flex", gap: 8 }}><span style={{ color: "#d97706", fontWeight: 700 }}>{i + 1}.</span>{r}</div>)}
+              </div>
+            )}
+          </div>);
+        })()}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Competitive analysis is directional {"\u00B7"} Combine with search volume data for best results</span>
+        </div>
+      </div>}
+
+      {/* LISTING DATA EXTRACTOR PAGE */}
+      {page === "listing_extractor" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Extract structured product data from a <strong>marketplace URL</strong> or a <strong>PDF manual/spec sheet</strong>. Supports Amazon, Walmart, Target, Best Buy, brand websites, and uploaded product documents.
+          </p>
+          <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
+            Extracted data can be copied field-by-field, exported as JSON/CSV, or compared against CUCKOO products
+          </p>
+        </div>
+
+        {/* Input mode toggle */}
+        <div style={{ display: "flex", gap: 0, marginBottom: 16 }}>
+          {[{ key: "url", label: "URL", icon: "\u{1F310}" }, { key: "pdf", label: "PDF Upload", icon: "\u{1F4C4}" }].map(m => (
+            <button key={m.key} onClick={() => { setLdInputMode(m.key); setLdError(null); }}
+              style={{ flex: 1, padding: "10px 16px", background: ldInputMode === m.key ? MAROON : "#fff", border: `1px solid ${ldInputMode === m.key ? MAROON : "#e8e5e0"}`, borderRadius: m.key === "url" ? "8px 0 0 8px" : "0 8px 8px 0", color: ldInputMode === m.key ? "#fff" : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", transition: "all .15s", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <span>{m.icon}</span>{m.label}
+            </button>
+          ))}
+        </div>
+
+        {/* URL Input */}
+        {ldInputMode === "url" && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Product URL</label>
+          <input value={ldUrl} onChange={e => setLdUrl(e.target.value)} placeholder="https://www.amazon.com/dp/B0... or any marketplace product URL"
+            style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"}
+            onKeyDown={e => { if (e.key === "Enter" && ldUrl.trim() && !ldLoading) fetchListingData(); }} />
+          {ldUrl.trim() && (() => {
+            try { const h = new URL(ldUrl.trim()).hostname.replace("www.", ""); return <div style={{ marginTop: 6, fontSize: 10, color: "#aaa" }}>Marketplace: {h}</div>; }
+            catch { return <div style={{ marginTop: 6, fontSize: 10, color: "#e57373" }}>Invalid URL format</div>; }
+          })()}
+        </div>}
+
+        {/* PDF Upload */}
+        {ldInputMode === "pdf" && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Product Manual / Spec Sheet (PDF)</label>
+          <div style={{ border: "2px dashed #e8e5e0", borderRadius: 8, padding: 24, textAlign: "center", cursor: "pointer", transition: "border-color .15s" }}
+            onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = MAROON; }}
+            onDragLeave={e => { e.currentTarget.style.borderColor = "#e8e5e0"; }}
+            onDrop={e => {
+              e.preventDefault(); e.currentTarget.style.borderColor = "#e8e5e0";
+              const file = e.dataTransfer.files[0];
+              if (file && file.type === "application/pdf") {
+                if (file.size > 25 * 1024 * 1024) { setLdError("PDF must be under 25 MB"); return; }
+                (async () => {
+                  try {
+                    const pdfjsLib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/+esm");
+                    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs";
+                    const buf = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+                    let text = "";
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                      const pg = await pdf.getPage(i);
+                      const tc = await pg.getTextContent();
+                      text += tc.items.map(it => it.str).join(" ") + "\n";
+                    }
+                    setLdPdfFile({ name: file.name, text: text.trim(), pages: pdf.numPages });
+                    setLdError(null);
+                  } catch (err) { setLdError("Failed to read PDF: " + err.message); }
+                })();
+              } else { setLdError("Please upload a PDF file"); }
+            }}
+            onClick={() => { const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".pdf"; inp.onchange = e => {
+              const file = e.target.files[0];
+              if (file) {
+                if (file.size > 25 * 1024 * 1024) { setLdError("PDF must be under 25 MB"); return; }
+                (async () => {
+                  try {
+                    const pdfjsLib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/+esm");
+                    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs";
+                    const buf = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+                    let text = "";
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                      const pg = await pdf.getPage(i);
+                      const tc = await pg.getTextContent();
+                      text += tc.items.map(it => it.str).join(" ") + "\n";
+                    }
+                    setLdPdfFile({ name: file.name, text: text.trim(), pages: pdf.numPages });
+                    setLdError(null);
+                  } catch (err) { setLdError("Failed to read PDF: " + err.message); }
+                })();
+              }
+            }; inp.click(); }}>
+            {ldPdfFile ? (
+              <div>
+                <div style={{ fontSize: 24, marginBottom: 6 }}>{"\u{1F4C4}"}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a1a", fontFamily: "'IBM Plex Mono',monospace" }}>{ldPdfFile.name}</div>
+                <div style={{ fontSize: 10, color: "#aaa", marginTop: 4 }}>{ldPdfFile.pages ? ldPdfFile.pages + " page" + (ldPdfFile.pages !== 1 ? "s" : "") + " \u00B7 " : ""}Click or drag to replace</div>
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize: 24, marginBottom: 6 }}>{"\u{1F4E4}"}</div>
+                <div style={{ fontSize: 12, color: "#888" }}>Click to select or drag & drop a PDF</div>
+                <div style={{ fontSize: 10, color: "#bbb", marginTop: 4 }}>Product manuals, spec sheets, brochures (max 25 MB)</div>
+              </div>
+            )}
+          </div>
+          {ldPdfFile && <button onClick={() => setLdPdfFile(null)} style={{ marginTop: 8, background: "none", border: "none", fontSize: 11, color: "#dc2626", cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>Remove file</button>}
+        </div>}
+
+        {/* Extract Button */}
+        {(() => {
+          let ready = false;
+          if (ldInputMode === "url") { try { new URL(ldUrl.trim()); ready = true; } catch {} }
+          else { ready = !!ldPdfFile; }
+          const dis = ldLoading || !ready;
+          return (<>
+            <button className="cuckoo-btn" disabled={dis} onClick={fetchListingData}
+              style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: dis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
+              {ldLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                {ldInputMode === "pdf" ? "Extracting from PDF..." : "Extracting listing data..."}
+              </span>) : dis ? (ldInputMode === "pdf" ? "Upload a PDF to extract" : "Enter a valid product URL") : (ldInputMode === "pdf" ? "Extract from PDF" : "Extract Listing Data")}
+            </button>
+            {ldLoading && <div style={{ textAlign: "center", fontSize: 10, color: "#aaa", marginBottom: 12 }}>{ldElapsed}s
+              <button onClick={() => { if (ldAbortRef.current) ldAbortRef.current.abort(); setLdLoading(false); setLdError("Cancelled."); if (ldTimerRef.current) { clearInterval(ldTimerRef.current); ldTimerRef.current = null; } }}
+                style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer", marginLeft: 8 }}>Cancel</button>
+            </div>}
+          </>);
+        })()}
+
+        {/* Error */}
+        {ldError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 24, color: "#dc2626", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{ldError}</span>
+          <button onClick={fetchListingData} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Retry</button>
+        </div>}
+
+        {/* Results */}
+        {ldResults && (() => {
+          try {
+          // Normalize fields to expected types to prevent render crashes
+          const r = { ...ldResults };
+          if (r.bullet_points && !Array.isArray(r.bullet_points)) r.bullet_points = typeof r.bullet_points === "string" ? r.bullet_points.split("\n").filter(Boolean) : [];
+          if (r.specifications && (typeof r.specifications !== "object" || Array.isArray(r.specifications))) r.specifications = {};
+          if (r.specifications) { for (const [k, v] of Object.entries(r.specifications)) { if (typeof v === "object" && v !== null) r.specifications[k] = JSON.stringify(v); } }
+          if (r.review_count != null && typeof r.review_count === "string") { const n = parseInt(r.review_count.replace(/[^0-9]/g, "")); r.review_count = isNaN(n) ? null : n; }
+          if (r.rating != null && typeof r.rating === "string") { const n = parseFloat(r.rating); r.rating = isNaN(n) ? null : n; }
+          if (r.images && !Array.isArray(r.images)) r.images = [];
+          // Stringify any object values in primary fields
+          for (const key of ["title", "brand", "price", "model_number", "asin", "upc", "availability", "seller", "category", "color", "dimensions", "weight", "marketplace"]) {
+            if (r[key] && typeof r[key] === "object") r[key] = JSON.stringify(r[key]);
+          }
+          const copyField = (label, value) => {
+            navigator.clipboard.writeText(String(value));
+            setLdCopied(label);
+            setTimeout(() => setLdCopied(null), 1500);
+          };
+          // Primary fields to show at the top
+          const primaryFields = [
+            { label: "Title", value: r.title },
+            { label: "Brand", value: r.brand },
+            { label: "Price", value: r.price },
+            { label: "Model Number", value: r.model_number },
+            { label: "ASIN", value: r.asin },
+            { label: "UPC", value: r.upc },
+            { label: "Rating", value: r.rating != null ? r.rating + " / 5" : null },
+            { label: "Reviews", value: r.review_count != null ? r.review_count.toLocaleString() : null },
+            { label: "Availability", value: r.availability },
+            { label: "Seller", value: r.seller },
+            { label: "Category", value: r.category },
+            { label: "Color", value: r.color },
+            { label: "Dimensions", value: r.dimensions },
+            { label: "Weight", value: r.weight },
+            { label: "Marketplace", value: r.marketplace },
+          ].filter(f => f.value != null && f.value !== "" && f.value !== "null");
+
+          return (<div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            {/* Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, paddingBottom: 16, borderBottom: "1px solid #f0eeeb" }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a", marginBottom: 4 }}>{r.title || "Product Listing"}</div>
+                <div style={{ fontSize: 11, color: "#aaa" }}>{r.marketplace ? r.marketplace + " listing" : ""}{r.asin ? " \u00B7 " + r.asin : ""}{r.brand ? " \u00B7 " + r.brand : ""}</div>
+              </div>
+              {r.price && <div style={{ fontSize: 22, fontWeight: 800, color: MAROON, fontFamily: "'IBM Plex Mono',monospace", flexShrink: 0 }}>{r.price}</div>}
+            </div>
+
+            {/* Primary fields grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 0, marginBottom: 20 }}>
+              {primaryFields.map((f, i) => (
+                <React.Fragment key={f.label}>
+                  <div style={{ padding: "8px 12px", fontSize: 11, fontWeight: 600, color: "#888", background: i % 2 === 0 ? "#faf9f7" : "#fff", borderBottom: "1px solid #f5f3f0" }}>{f.label}</div>
+                  <div style={{ padding: "8px 12px", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#1a1a1a", background: i % 2 === 0 ? "#faf9f7" : "#fff", borderBottom: "1px solid #f5f3f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>{String(f.value)}</span>
+                    <button onClick={() => copyField(f.label, f.value)} style={{ background: "none", border: "none", fontSize: 10, color: ldCopied === f.label ? "#16a34a" : "#ccc", cursor: "pointer", padding: "2px 6px", flexShrink: 0 }}>{ldCopied === f.label ? "\u2713 copied" : "copy"}</button>
+                  </div>
+                </React.Fragment>
+              ))}
+            </div>
+
+            {/* Bullet Points */}
+            {r.bullet_points && r.bullet_points.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Bullet Points ({r.bullet_points.length})</div>
+                  <button onClick={() => copyField("bullets", r.bullet_points.join("\n"))} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "4px 10px", fontSize: 10, color: ldCopied === "bullets" ? "#16a34a" : "#888", cursor: "pointer" }}>{ldCopied === "bullets" ? "\u2713 copied" : "Copy all"}</button>
+                </div>
+                {r.bullet_points.map((bp, i) => (
+                  <div key={i} style={{ padding: "8px 12px", fontSize: 12, color: "#555", lineHeight: 1.6, background: i % 2 === 0 ? "#faf9f7" : "#fff", borderRadius: 4, marginBottom: 2, display: "flex", gap: 8 }}>
+                    <span style={{ color: MAROON, fontWeight: 700, flexShrink: 0 }}>{"\u2022"}</span>
+                    <span>{bp}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Description */}
+            {r.description && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Description</div>
+                  <button onClick={() => copyField("description", r.description)} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "4px 10px", fontSize: 10, color: ldCopied === "description" ? "#16a34a" : "#888", cursor: "pointer" }}>{ldCopied === "description" ? "\u2713 copied" : "Copy"}</button>
+                </div>
+                <div style={{ padding: "12px 14px", background: "#faf9f7", borderRadius: 8, fontSize: 12, color: "#555", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{r.description}</div>
+              </div>
+            )}
+
+            {/* Specifications */}
+            {r.specifications && Object.keys(r.specifications).length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>Specifications ({Object.keys(r.specifications).length})</div>
+                  <button onClick={() => copyField("specs", Object.entries(r.specifications).map(([k, v]) => k + ": " + v).join("\n"))} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "4px 10px", fontSize: 10, color: ldCopied === "specs" ? "#16a34a" : "#888", cursor: "pointer" }}>{ldCopied === "specs" ? "\u2713 copied" : "Copy all"}</button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 0 }}>
+                  {Object.entries(r.specifications).map(([key, val], i) => (
+                    <React.Fragment key={key}>
+                      <div style={{ padding: "6px 12px", fontSize: 11, fontWeight: 600, color: "#888", background: i % 2 === 0 ? "#faf9f7" : "#fff", borderBottom: "1px solid #f5f3f0" }}>{key}</div>
+                      <div style={{ padding: "6px 12px", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#1a1a1a", background: i % 2 === 0 ? "#faf9f7" : "#fff", borderBottom: "1px solid #f5f3f0" }}>{String(val)}</div>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Export buttons */}
+            <div style={{ display: "flex", gap: 8, paddingTop: 16, borderTop: "1px solid #f0eeeb" }}>
+              <button onClick={() => { const json = JSON.stringify(r, null, 2); navigator.clipboard.writeText(json); setLdCopied("json"); setTimeout(() => setLdCopied(null), 1500); }}
+                style={{ flex: 1, padding: 12, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 8, color: ldCopied === "json" ? "#16a34a" : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                {ldCopied === "json" ? "\u2713 Copied!" : "Copy as JSON"}
+              </button>
+              <button onClick={() => {
+                const fields = [...primaryFields];
+                if (r.bullet_points?.length) fields.push({ label: "Bullet Points", value: r.bullet_points.join(" | ") });
+                if (r.description) fields.push({ label: "Description", value: r.description });
+                if (r.specifications) Object.entries(r.specifications).forEach(([k, v]) => fields.push({ label: "Spec: " + k, value: v }));
+                const esc = s => '"' + String(s || "").replace(/"/g, '""') + '"';
+                const csv = "Field,Value\n" + fields.map(f => esc(f.label) + "," + esc(f.value)).join("\n");
+                const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+                const url = URL.createObjectURL(blob); const a = document.createElement("a");
+                a.href = url; a.download = "listing-data-" + (r.asin || r.model_number || "export") + ".csv"; a.click(); URL.revokeObjectURL(url);
+              }} style={{ flex: 1, padding: 12, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 8, color: "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                {"\u{1F4E5}"} Download CSV
+              </button>
+            </div>
+          </div>);
+          } catch(renderErr) { return <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, color: "#dc2626", fontSize: 13 }}>Error displaying results: {renderErr.message}. <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(ldResults, null, 2)); setLdCopied("json"); setTimeout(() => setLdCopied(null), 1500); }} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", marginLeft: 8 }}>{ldCopied === "json" ? "\u2713 Copied" : "Copy raw JSON"}</button></div>; }
+        })()}
+
+        {/* Compare with CUCKOO Product */}
+        {ldResults && (
+          <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginTop: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Compare with CUCKOO Product</div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>
+              <input value={ldCompareSearch} onChange={e => setLdCompareSearch(e.target.value)} placeholder="Search CUCKOO models..."
+                style={{ flex: 1, padding: "8px 12px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 6, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", color: "#1a1a1a", boxSizing: "border-box" }}
+                onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+              {ldCompareModel && <button onClick={() => { setLdCompareModel(""); setLdCompareSearch(""); }} style={{ background: "none", border: "1px solid #e8e5e0", borderRadius: 6, padding: "6px 12px", fontSize: 11, color: "#888", cursor: "pointer" }}>Clear</button>}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 140, overflowY: "auto", marginBottom: ldCompareModel ? 16 : 0 }}>
+              {Object.entries(PRODUCT_DB).filter(([sku, d]) => {
+                if (!ldCompareSearch.trim()) return true;
+                const q = ldCompareSearch.toLowerCase();
+                return sku.toLowerCase().includes(q) || d.type.toLowerCase().includes(q) || (d.cupSize || "").toLowerCase().includes(q) || (d.color || "").toLowerCase().includes(q);
+              }).map(([sku, d]) => {
+                const sel = ldCompareModel === sku;
+                return (
+                  <button key={sku} onClick={() => { setLdCompareModel(sel ? "" : sku); setLdCompareSearch(""); }}
+                    style={{ padding: "5px 10px", background: sel ? MAROON : "#fff", border: `1.5px solid ${sel ? MAROON : "#e0ddd8"}`, borderRadius: 6, cursor: "pointer", color: sel ? "#fff" : "#555", fontSize: 11, fontWeight: 500, fontFamily: "'IBM Plex Mono',monospace", transition: "all .15s" }}>
+                    {sku} <span style={{ fontSize: 9, opacity: 0.7 }}>{d.type}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Side-by-side comparison table */}
+            {ldCompareModel && (() => {
+              const r = ldResults;
+              const cuckoo = PRODUCT_DB[ldCompareModel];
+              if (!cuckoo) return null;
+              const cuckooFeats = (cuckoo.features || []).join(", ");
+              // Fuzzy spec lookup: search for a value across multiple possible keys
+              const specs = r.specifications || {};
+              const specLookup = (...keys) => {
+                for (const k of keys) { if (specs[k] != null && specs[k] !== "" && specs[k] !== "null") return String(specs[k]); }
+                const specEntries = Object.entries(specs);
+                for (const k of keys) {
+                  const lower = k.toLowerCase().replace(/[^a-z]/g, "");
+                  const found = specEntries.find(([sk]) => sk.toLowerCase().replace(/[^a-z]/g, "").includes(lower) || lower.includes(sk.toLowerCase().replace(/[^a-z]/g, "")));
+                  if (found && found[1] != null && found[1] !== "" && found[1] !== "null") return String(found[1]);
+                }
+                return "—";
+              };
+              // Normalize extracted values
+              let rawType = specLookup("type", "Type", "Product Type", "Cooker Type");
+              let rawHeating = specLookup("heating", "Heating", "Heating Method", "Heating Type", "Heat", "Heating Technology");
+              // "Fuzzy Logic" is not a type — it's Micom; not a heating method — it's Heating Plate
+              if (rawType !== "—" && rawType.toLowerCase().includes("fuzzy logic")) rawType = rawType.replace(/fuzzy logic/i, "Micom").replace(/^\s*,\s*|\s*,\s*$/g, "").trim() || "Micom";
+              if (rawHeating !== "—" && rawHeating.toLowerCase().includes("fuzzy logic")) rawHeating = "Heating Plate";
+              // Default heating to Heating Plate unless specifically noted as Induction
+              if (rawHeating === "—" || rawHeating.toLowerCase() === "fuzzy logic") rawHeating = "Heating Plate";
+              // Normalize pressure: false/no/null → "No", true/yes → "Yes"
+              let rawPressure = specLookup("pressure", "Pressure", "Pressure Cooking");
+              if (rawPressure === "—" || rawPressure === "false" || rawPressure.toLowerCase() === "no" || rawPressure === "null") rawPressure = "No";
+              else if (rawPressure === "true" || rawPressure.toLowerCase() === "yes") rawPressure = "Yes";
+              // Cup size: ensure "Uncooked" or "Cooked" is specified
+              let rawCupSize = specLookup("cup_size", "Cup Size", "Capacity", "Size", "Cooking Capacity");
+              if (rawCupSize !== "—" && !/(uncooked|cooked)/i.test(rawCupSize)) rawCupSize += " (Uncooked)";
+              // Cooking modes: always show mode names if available
+              let rawCookingModes = specLookup("cooking_modes", "Cooking Modes", "Menu Options", "Menu Settings", "Cooking Programs", "Preset Programs");
+              const rawModeNames = specLookup("cooking_mode_names", "Cooking Mode Names", "Menu Names", "Program Names", "Mode Names");
+              if (rawModeNames !== "—") rawCookingModes = rawCookingModes !== "—" ? rawCookingModes + " — " + rawModeNames : rawModeNames;
+              // CUCKOO cooking modes with names
+              let cuckooCookingModes = "—";
+              if (cuckoo.cookingModes) {
+                cuckooCookingModes = cuckoo.cookingModes + (cuckoo.otherMenuModes ? " (+" + cuckoo.otherMenuModes + " other)" : "");
+                if (cuckoo.cookingModeNames) {
+                  const names = typeof cuckoo.cookingModeNames === "string" ? cuckoo.cookingModeNames : cuckoo.cookingModeNames.join(", ");
+                  cuckooCookingModes += " — " + names;
+                }
+              }
+              const compRows = [
+                { label: "Title", extracted: r.title || "—", cuckoo: ldCompareModel + " — " + cuckoo.type },
+                { label: "Brand", extracted: r.brand || "—", cuckoo: "CUCKOO" },
+                { label: "Price", extracted: r.price || "—", cuckoo: cuckoo.price || "—" },
+                { label: "Type", extracted: rawType, cuckoo: cuckoo.type },
+                { label: "Heating", extracted: rawHeating, cuckoo: cuckoo.heating || "—" },
+                { label: "Pressure", extracted: rawPressure, cuckoo: cuckoo.pressure ? "Yes" : "No" },
+                { label: "Cup Size", extracted: rawCupSize, cuckoo: cuckoo.cupSize || "—" },
+                { label: "Color", extracted: r.color || specLookup("color", "Color", "Colour", "Finish"), cuckoo: cuckoo.color || "—" },
+                { label: "Inner Pot", extracted: specLookup("inner_pot", "Inner Pot", "Inner Pot Material", "Inner Bowl", "Cooking Pan", "Nonstick"), cuckoo: cuckoo.innerPot || "—" },
+                { label: "Cooking Modes", extracted: rawCookingModes, cuckoo: cuckooCookingModes },
+                { label: "Features", extracted: specLookup("features", "Features", "Key Features") !== "—" ? specLookup("features", "Features", "Key Features") : (r.bullet_points ? r.bullet_points.slice(0, 3).join("; ") : "—"), cuckoo: cuckooFeats || "—" },
+                { label: "Country of Manufacture", extracted: specLookup("country_of_manufacture", "Country of Origin", "Made In", "Country of Manufacture", "Manufactured In", "Origin"), cuckoo: cuckoo.mfg || "—" },
+                { label: "Dimensions", extracted: specLookup("dimensions", "Dimensions", "Product Dimensions", "Item Dimensions"), cuckoo: cuckoo.dimensions || "—" },
+                { label: "Weight", extracted: specLookup("weight", "Weight", "Item Weight", "Product Weight"), cuckoo: cuckoo.weight || "—" },
+                { label: "Wattage", extracted: specLookup("wattage", "Wattage", "Power", "Power Consumption", "Watts"), cuckoo: cuckoo.wattage || "—" },
+                { label: "Rating", extracted: r.rating != null ? r.rating + " / 5" : "—", cuckoo: "—" },
+                { label: "Reviews", extracted: r.review_count != null ? r.review_count.toLocaleString() : "—", cuckoo: "—" },
+                { label: "ASIN", extracted: r.asin || "—", cuckoo: cuckoo.asin || "—" },
+              ];
+              return (
+                <div style={{ border: "1px solid #e8e5e0", borderRadius: 10, overflow: "hidden" }}>
+                  {/* Table header */}
+                  <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr", borderBottom: "2px solid #e8e5e0" }}>
+                    <div style={{ padding: "12px 14px", background: "#faf9f7", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.06em" }}>Spec</div>
+                    <div style={{ padding: "12px 14px", background: "#faf9f7", borderLeft: "1px solid #f0eeeb", textAlign: "center" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>{r.brand || "Competitor"}</div>
+                      <div style={{ fontSize: 9, color: "#aaa" }}>{r.marketplace || "Extracted"}</div>
+                    </div>
+                    <div style={{ padding: "12px 14px", background: "rgba(107,28,35,0.04)", borderLeft: "1px solid #f0eeeb", textAlign: "center" }}>
+                      {PRODUCT_IMAGES[ldCompareModel] && <img src={PRODUCT_IMAGES[ldCompareModel]} alt={ldCompareModel} style={{ width: 48, height: 48, objectFit: "contain", marginBottom: 4, borderRadius: 4 }} />}
+                      <div style={{ fontSize: 11, fontWeight: 700, color: MAROON }}>{ldCompareModel}</div>
+                      <div style={{ fontSize: 9, color: "#aaa" }}>CUCKOO</div>
+                    </div>
+                  </div>
+                  {/* Data rows */}
+                  {compRows.map((row, i) => {
+                    const match = row.extracted !== "—" && row.cuckoo !== "—" && row.extracted.toLowerCase().replace(/[^a-z0-9]/g, "").includes(row.cuckoo.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8));
+                    return (
+                      <div key={row.label} style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr", borderBottom: "1px solid #f5f3f0", background: i % 2 === 0 ? "#fff" : "#fdfcfb" }}>
+                        <div style={{ padding: "8px 14px", fontSize: 11, fontWeight: 600, color: "#888" }}>{row.label}</div>
+                        <div style={{ padding: "8px 14px", borderLeft: "1px solid #f0eeeb", fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: row.extracted === "—" ? "#ccc" : "#555", lineHeight: 1.5 }}>{row.extracted}</div>
+                        <div style={{ padding: "8px 14px", borderLeft: "1px solid #f0eeeb", fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", color: row.cuckoo === "—" ? "#ccc" : MAROON, fontWeight: row.cuckoo !== "—" ? 600 : 400, lineHeight: 1.5, background: "rgba(107,28,35,0.02)" }}>{row.cuckoo}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {!ldCompareModel && <div style={{ fontSize: 11, color: "#bbb", textAlign: "center", padding: 8 }}>Select a CUCKOO model above to compare side by side</div>}
+          </div>
+        )}
+
+        {!ldResults && !ldLoading && !ldError && (
+          <div style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 10, padding: 24, fontSize: 12, color: "#aaa", textAlign: "center" }}>
+            {ldInputMode === "pdf" ? "Upload a PDF manual or spec sheet above to extract product data" : "Enter a product URL above and click Extract to retrieve listing data"}
+          </div>
+        )}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Data extracted via {ldInputMode === "pdf" ? "PDF document analysis" : "web search"} {"\u00B7"} {ldInputMode === "pdf" ? "Supports product manuals, spec sheets, and brochures" : "Results depend on page accessibility \u00B7 Some marketplaces may block automated access"}</span>
+        </div>
+      </div>}
+
+      {/* REVIEW ANALYZER PAGE */}
+      {page === "review_analyzer" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Analyze <strong>customer reviews</strong> for any CUCKOO product. Surfaces themes, keyword opportunities, bullet point suggestions, competitor mentions, and urgent issues from your review database.
+          </p>
+          <p style={{ fontSize: 11, color: "#aaa", margin: 0, fontFamily: "'Outfit',sans-serif" }}>
+            3,514 reviews across 33 products in database
+          </p>
+        </div>
+
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Product Model or SKU</label>
+          <input value={raModel} onChange={e => setRaModel(e.target.value)} placeholder="e.g. CRP-LHTR0609FW or CR-0671V"
+            style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 14, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+            onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"}
+            onKeyDown={e => { if (e.key === "Enter" && raModel.trim() && !raLoading) analyzeReviews(); }} />
+        </div>
+
+        {(() => {
+          const dis = raLoading || !raModel.trim();
+          return (<>
+            <button disabled={dis} onClick={analyzeReviews}
+              style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: dis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
+              {raLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                Analyzing reviews...
+              </span>) : "Analyze Reviews"}
+            </button>
+            {raLoading && <div style={{ textAlign: "center", fontSize: 10, color: "#aaa", marginBottom: 12 }}>{raElapsed}s
+              <button onClick={() => { if (raAbortRef.current) raAbortRef.current.abort(); setRaLoading(false); setRaError("Cancelled."); if (raTimerRef.current) { clearInterval(raTimerRef.current); raTimerRef.current = null; } }}
+                style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer", marginLeft: 8 }}>Cancel</button>
+            </div>}
+          </>);
+        })()}
+
+        {raError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 16, color: "#dc2626", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{raError}</span>
+          <button onClick={analyzeReviews} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Retry</button>
+        </div>}
+
+        {raResults && (<div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Summary Header */}
+          <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)", display: "flex", alignItems: "center", gap: 20 }}>
+            <div style={{ width: 64, height: 64, borderRadius: "50%", border: `4px solid ${parseFloat(raResults._avgRating) >= 4 ? "#16a34a" : parseFloat(raResults._avgRating) >= 3 ? "#d97706" : "#dc2626"}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <span style={{ fontSize: 20, fontWeight: 800, color: parseFloat(raResults._avgRating) >= 4 ? "#16a34a" : parseFloat(raResults._avgRating) >= 3 ? "#d97706" : "#dc2626", fontFamily: "'IBM Plex Mono',monospace" }}>{raResults._avgRating}{"\u2605"}</span>
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a" }}>{raResults._reviewCount} Reviews Analyzed</div>
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                {[5,4,3,2,1].map(s => <div key={s} style={{ fontSize: 10, color: "#888" }}>{s}{"\u2605"}: {raResults._ratingDist?.[s] || 0}</div>)}
+              </div>
+            </div>
+          </div>
+
+          {/* Positive Themes */}
+          {raResults.themes?.positive?.length > 0 && <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 12, padding: 20 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#16a34a", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Positive Themes</div>
+            {raResults.themes.positive.map((t, i) => (
+              <div key={i} style={{ padding: "8px 0", borderBottom: i < raResults.themes.positive.length - 1 ? "1px solid #dcfce7" : "none" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#166534" }}>{"\u2713"} {t.theme} {t.count ? <span style={{ fontSize: 10, color: "#86efac", fontWeight: 400 }}>({t.count} mentions)</span> : ""}</div>
+                {t.example_quotes?.map((q, j) => <div key={j} style={{ fontSize: 11, color: "#4ade80", marginTop: 4, fontStyle: "italic", paddingLeft: 16 }}>"{q}"</div>)}
+              </div>
+            ))}
+          </div>}
+
+          {/* Negative Themes / Issues */}
+          {raResults.themes?.negative?.length > 0 && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: 20 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#dc2626", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Negative Themes</div>
+            {raResults.themes.negative.map((t, i) => (
+              <div key={i} style={{ padding: "8px 0", borderBottom: i < raResults.themes.negative.length - 1 ? "1px solid #fecaca" : "none" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#991b1b" }}>{"\u2717"} {t.theme} {t.count ? <span style={{ fontSize: 10, color: "#f87171", fontWeight: 400 }}>({t.count} mentions)</span> : ""}</div>
+                {t.suggestion && <div style={{ fontSize: 11, color: "#b91c1c", marginTop: 4, paddingLeft: 16 }}>Suggestion: {t.suggestion}</div>}
+                {t.example_quotes?.map((q, j) => <div key={j} style={{ fontSize: 11, color: "#ef4444", marginTop: 2, fontStyle: "italic", paddingLeft: 16 }}>"{q}"</div>)}
+              </div>
+            ))}
+          </div>}
+
+          {/* Keyword Opportunities */}
+          {raResults.keyword_opportunities?.length > 0 && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Keyword Opportunities from Reviews</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {raResults.keyword_opportunities.map((kw, i) => (
+                <span key={i} style={{ padding: "4px 10px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 6, fontSize: 11, color: "#555", fontFamily: "'IBM Plex Mono',monospace" }} title={kw.reason}>{kw.keyword}</span>
+              ))}
+            </div>
+          </div>}
+
+          {/* Bullet Point Suggestions */}
+          {raResults.bullet_suggestions?.length > 0 && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Bullet Point Suggestions (from customer language)</div>
+            {raResults.bullet_suggestions.map((b, i) => (
+              <div key={i} style={{ padding: "8px 0", borderBottom: i < raResults.bullet_suggestions.length - 1 ? "1px solid #f5f3f0" : "none" }}>
+                <span style={{ fontWeight: 700, color: MAROON, fontSize: 12 }}>{b.heading}:</span>
+                <span style={{ fontSize: 12, color: "#555", marginLeft: 6 }}>{b.text}</span>
+                {b.based_on && <div style={{ fontSize: 10, color: "#bbb", marginTop: 2, paddingLeft: 16 }}>Based on: {b.based_on}</div>}
+              </div>
+            ))}
+          </div>}
+
+          {/* Urgent Issues */}
+          {raResults.urgent_issues?.length > 0 && <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: 20 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Urgent Issues</div>
+            {raResults.urgent_issues.map((iss, i) => (
+              <div key={i} style={{ padding: "6px 0", fontSize: 12, color: "#78350f" }}>{"\u26A0\uFE0F"} <strong>{iss.issue}</strong> — {iss.frequency} {iss.impact ? <span style={{ color: "#b45309" }}>({iss.impact})</span> : ""}</div>
+            ))}
+          </div>}
+
+          {/* Competitor Mentions */}
+          {raResults.competitor_mentions?.length > 0 && <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Competitor Mentions in Reviews</div>
+            {raResults.competitor_mentions.map((cm, i) => (
+              <div key={i} style={{ padding: "4px 0", fontSize: 12, color: "#555" }}><strong>{cm.brand}</strong>: {cm.context}</div>
+            ))}
+          </div>}
+        </div>)}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Review analysis powered by AI {"\u00B7"} Based on verified customer reviews from Amazon</span>
+        </div>
+      </div>}
+
+      {/* COMPLIANCE CHECKER PAGE */}
+      {page === "compliance_checker" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Check a product title against <strong>all 10 marketplace rules</strong> at once. Enter a model number and title to see compliance status per marketplace with specific violations and fixes.
+          </p>
+        </div>
+
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Model Number (for keyword restriction checks)</label>
+            <input value={ccModel} onChange={e => { setCcModel(e.target.value); setCcResults(null); }} placeholder="e.g. CRP-LHTR0609FW"
+              style={{ width: "100%", padding: "8px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Title to Check</label>
+            <input value={ccTitle} onChange={e => { setCcTitle(e.target.value); setCcResults(null); }} placeholder="Paste any marketplace title here..."
+              style={{ width: "100%", padding: "8px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {ccTitle.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{ccTitle.trim().length} characters</div>}
+          </div>
+        </div>
+
+        <button disabled={!ccTitle.trim()} onClick={() => {
+          const title = ccTitle.trim();
+          const product = ccModel.trim() ? lookupProduct(ccModel, liveProductDbRef.current) : null;
+          const checks = {};
+          Object.entries(MARKETPLACES).forEach(([key, mp]) => {
+            const limit = CHAR_LIMITS[key];
+            const issues = [];
+            const pass = [];
+            // Character limit check
+            if (title.length > limit) issues.push("Over " + limit + " char limit (" + title.length + " chars)");
+            else pass.push("Within " + limit + " char limit (" + title.length + ")");
+            // Title case check
+            if (title === title.toUpperCase()) issues.push("ALL CAPS — most marketplaces require Title Case");
+            // Brand check
+            if (!title.toUpperCase().startsWith("CUCKOO")) issues.push("Title doesn't start with CUCKOO");
+            else pass.push("Brand CUCKOO leads");
+            // Cup count check
+            if (hasBadCupCount(title)) issues.push("Cup count missing Uncooked/Cooked qualifier");
+            else if (/\d+-?Cup/i.test(title)) pass.push("Cup count has qualifier");
+            // Prohibited characters
+            if (/[!$?_{}^]/.test(title)) issues.push("Contains prohibited characters (!, $, ?, _, {, }, ^)");
+            else pass.push("No prohibited characters");
+            // & Warmer check
+            if (/&\s*Warmer/i.test(title)) issues.push("Contains '& Warmer' — not allowed per CUCKOO rules");
+            // Keyword restrictions (if product known)
+            if (product) {
+              if (/\bsmall\b|\bmini\b|\bcompact\b/i.test(title)) {
+                const cups = parseInt(product.cupSize) || 99;
+                if (cups > 3) issues.push("Uses 'small/mini/compact' but product is " + product.cupSize);
+              }
+              if (/\bpressure\b/i.test(title) && !product.pressure) issues.push("Uses 'pressure' but product is not a pressure cooker");
+              if (/\binduction\b/i.test(title) && !product.heating?.includes("Induction")) issues.push("Uses 'induction' but product doesn't have induction heating");
+              if (/\bkorean\b/i.test(title) && product.mfg !== "South Korea") issues.push("Uses 'Korean' but product is made in " + (product.mfg || "unknown origin"));
+              if (/\bstainless\s*steel\b/i.test(title) && product.innerPot && !product.innerPot.toLowerCase().includes("stainless")) issues.push("Uses 'Stainless Steel' but inner pot is " + product.innerPot);
+            }
+            // Model number format
+            if (/\([A-Z]{2,3}-[A-Z0-9]+\)\s*$/.test(title)) pass.push("Model number in parentheses at end");
+            checks[key] = { name: mp.name, limit, charCount: title.length, issues, pass, compliant: issues.length === 0 };
+          });
+          setCcResults(checks);
+        }}
+          style={{ width: "100%", padding: 16, background: !ccTitle.trim() ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: !ccTitle.trim() ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: !ccTitle.trim() ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: !ccTitle.trim() ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 16 }}>
+          Check All Marketplaces
+        </button>
+
+        {ccResults && (<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* Summary bar */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <div style={{ flex: 1, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "10px 14px", textAlign: "center" }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "#16a34a" }}>{Object.values(ccResults).filter(c => c.compliant).length}</div>
+              <div style={{ fontSize: 10, color: "#16a34a" }}>Compliant</div>
+            </div>
+            <div style={{ flex: 1, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "10px 14px", textAlign: "center" }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "#dc2626" }}>{Object.values(ccResults).filter(c => !c.compliant).length}</div>
+              <div style={{ fontSize: 10, color: "#dc2626" }}>Issues</div>
+            </div>
+          </div>
+          {/* Per-marketplace results */}
+          {Object.entries(ccResults).map(([key, c]) => (
+            <div key={key} style={{ background: "#fff", border: `1px solid ${c.compliant ? "#bbf7d0" : "#fecaca"}`, borderRadius: 10, padding: "14px 18px", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: c.issues.length > 0 ? 8 : 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: MARKETPLACES[key]?.accent || "#555" }}>{c.name}</span>
+                  <span style={{ fontSize: 10, color: "#aaa" }}>{c.charCount}/{c.limit} chars</span>
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: c.compliant ? "#16a34a" : "#dc2626" }}>{c.compliant ? "\u2713 Pass" : c.issues.length + " issue" + (c.issues.length > 1 ? "s" : "")}</span>
+              </div>
+              {c.issues.map((iss, i) => <div key={i} style={{ fontSize: 11, color: "#dc2626", padding: "2px 0", display: "flex", gap: 6 }}>{"\u2717"} {iss}</div>)}
+              {c.pass.map((p, i) => <div key={i} style={{ fontSize: 11, color: "#16a34a", padding: "2px 0", display: "flex", gap: 6 }}>{"\u2713"} {p}</div>)}
+            </div>
+          ))}
+        </div>)}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Client-side rule checking {"\u00B7"} No API calls {"\u00B7"} Instant results</span>
+        </div>
+      </div>}
+
+      {/* LISTING AUDIT SCORECARD PAGE */}
+      {page === "listing_audit" && <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+            Paste your Amazon listing details to get a comprehensive audit scorecard. The tool evaluates title SEO, bullet point quality, backend keyword optimization, keyword coverage, CUCKOO brand compliance, competitiveness, and completeness.
+          </p>
+        </div>
+
+        <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>ASIN or Model Number <span style={{ fontWeight: 400, color: "#bbb" }}>(auto-fills product data)</span></label>
+            <input value={auditAsin} onChange={e => setAuditAsin(e.target.value)} placeholder="e.g. B08DP4TGNN or CRP-LHTR0609FW"
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Amazon Title</label>
+            <textarea value={auditTitle} onChange={e => setAuditTitle(e.target.value)} placeholder="Paste the current Amazon listing title..." rows={2}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {auditTitle.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{auditTitle.trim().length} chars</div>}
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Bullet Points <span style={{ fontWeight: 400, color: "#bbb" }}>(paste all 5, one per line)</span></label>
+            <textarea value={auditBullets} onChange={e => setAuditBullets(e.target.value)} placeholder="Paste bullet points here (one per line)..." rows={5}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Backend Keywords <span style={{ fontWeight: 400, color: "#bbb" }}>(paste the space-separated string from Seller Central)</span></label>
+            <textarea value={auditBackendKw} onChange={e => setAuditBackendKw(e.target.value)} placeholder="e.g. zojirushi tiger aroma olla arrocera cocedor arroz korean japanese..." rows={3}
+              style={{ width: "100%", padding: "10px 14px", background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, color: "#1a1a1a", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }}
+              onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"} />
+            {auditBackendKw.trim() && <div style={{ marginTop: 4, fontSize: 10, color: "#aaa" }}>{new TextEncoder().encode(auditBackendKw.trim()).length} / 500 bytes</div>}
+          </div>
+        </div>
+
+        {/* Generate */}
+        {(() => {
+          const dis = auditLoading || (!auditTitle.trim() && !auditAsin.trim());
+          return (<>
+            <button className="cuckoo-btn" disabled={dis} onClick={runListingAudit}
+              style={{ width: "100%", padding: 16, background: dis ? "#ddd" : MAROON, border: "none", borderRadius: 10, color: dis ? "#999" : "#fff", fontSize: 14, fontWeight: 700, cursor: dis ? "not-allowed" : "pointer", fontFamily: "'Outfit',sans-serif", boxShadow: dis ? "none" : "0 4px 16px rgba(107,28,35,0.2)", marginBottom: 8 }}>
+              {auditLoading ? (<span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                Auditing listing...
+              </span>) : dis ? "Enter a title or model number to audit" : "Run Listing Audit"}
+            </button>
+            {auditLoading && <div style={{ textAlign: "center", fontSize: 10, color: "#aaa", marginBottom: 12 }}>{auditElapsed}s
+              <button onClick={() => { if (auditAbortRef.current) auditAbortRef.current.abort(); setAuditLoading(false); setAuditError("Cancelled."); if (auditTimerRef.current) { clearInterval(auditTimerRef.current); auditTimerRef.current = null; } }}
+                style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "#666", cursor: "pointer", marginLeft: 8 }}>Cancel</button>
+            </div>}
+          </>);
+        })()}
+
+        {auditError && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 16, marginBottom: 24, color: "#dc2626", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{auditError}</span>
+          <button onClick={runListingAudit} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Retry</button>
+        </div>}
+
+        {/* Results */}
+        {auditResults && (() => {
+          const scoreColor = s => s >= 8 ? "#16a34a" : s >= 5 ? "#d97706" : "#dc2626";
+          const categories = [
+            { key: "title_seo", label: "Title SEO", icon: "\u{1F50D}" },
+            { key: "bullet_quality", label: "Bullet Quality", icon: "\u{1F4DD}" },
+            { key: "backend_keywords", label: "Backend Keywords", icon: "\u{1F511}" },
+            { key: "keyword_coverage", label: "Keyword Coverage", icon: "\u{1F3AF}" },
+            { key: "brand_compliance", label: "Brand Compliance", icon: "\u2713" },
+            { key: "competitiveness", label: "Competitiveness", icon: "\u{1F3C6}" },
+            { key: "completeness", label: "Completeness", icon: "\u{1F4CB}" },
+          ];
+          return (<div className="result-card" style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            {/* Overall score */}
+            <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #f0eeeb" }}>
+              <div style={{ width: 72, height: 72, borderRadius: "50%", border: `4px solid ${scoreColor(auditResults.overall_score)}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <span style={{ fontSize: 24, fontWeight: 800, color: scoreColor(auditResults.overall_score), fontFamily: "'IBM Plex Mono',monospace" }}>{auditResults.overall_score}</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#1a1a1a" }}>Overall Listing Score</div>
+                <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>{auditResults.overall_score >= 8 ? "Strong listing — minor optimizations possible" : auditResults.overall_score >= 5 ? "Needs improvement — several optimization opportunities" : "Significant issues — major rework recommended"}</div>
+              </div>
+            </div>
+
+            {/* Score grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
+              {categories.map(cat => {
+                const score = auditResults.scores?.[cat.key] || 0;
+                return (<div key={cat.key} style={{ background: "#faf9f7", border: "1px solid #e8e5e0", borderRadius: 8, padding: "12px 14px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "#666" }}>{cat.icon} {cat.label}</span>
+                    <span style={{ fontSize: 16, fontWeight: 800, color: scoreColor(score), fontFamily: "'IBM Plex Mono',monospace" }}>{score}</span>
+                  </div>
+                  <div style={{ height: 4, background: "#e8e5e0", borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ width: `${score * 10}%`, height: "100%", background: scoreColor(score), borderRadius: 2 }} />
+                  </div>
+                </div>);
+              })}
+            </div>
+
+            {/* Top actions */}
+            {auditResults.top_actions?.length > 0 && (
+              <div style={{ background: "#fffbf5", border: "1px solid #ffe8c4", borderRadius: 8, padding: "14px 16px", marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#d97706", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Top Actions</div>
+                {auditResults.top_actions.map((a, i) => <div key={i} style={{ fontSize: 12, color: "#666", padding: "4px 0", borderBottom: i < auditResults.top_actions.length - 1 ? "1px solid #f5f3f0" : "none", display: "flex", gap: 8, alignItems: "flex-start" }}><span style={{ color: "#d97706", fontWeight: 700, flexShrink: 0 }}>{i + 1}.</span>{a}</div>)}
+              </div>
+            )}
+
+            {/* Details per category */}
+            {categories.map(cat => {
+              const detail = auditResults.details?.[cat.key];
+              if (!detail) return null;
+              const score = auditResults.scores?.[cat.key] || 0;
+              const items = [...(detail.strengths || []).map(s => ({ text: s, type: "good" })), ...(detail.issues || []).map(s => ({ text: s, type: "issue" })), ...(detail.passes || []).map(s => ({ text: s, type: "good" })), ...(detail.violations || []).map(s => ({ text: s, type: "issue" })), ...(detail.missing_keywords || []).map(s => ({ text: "Missing: " + s, type: "issue" })), ...(detail.present_keywords || []).map(s => ({ text: "Present: " + s, type: "good" })), ...(detail.notes || []).map(s => ({ text: s, type: "note" }))];
+              const rec = detail.recommended;
+              if (!items.length && !rec) return null;
+              return (<div key={cat.key} style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.06em" }}>{cat.label}</div>
+                  {score < 8 && <span style={{ fontSize: 9, fontWeight: 600, color: "#d97706", background: "rgba(217,119,6,0.1)", padding: "1px 6px", borderRadius: 3 }}>Needs improvement</span>}
+                </div>
+                {items.map((item, i) => <div key={i} style={{ fontSize: 12, color: item.type === "issue" ? "#dc2626" : item.type === "good" ? "#16a34a" : "#666", padding: "3px 0", display: "flex", gap: 6 }}><span>{item.type === "good" ? "\u2713" : item.type === "issue" ? "\u2717" : "\u2022"}</span>{item.text}</div>)}
+                {/* Recommended rewrite/fix */}
+                {rec && (
+                  <div style={{ marginTop: 10, background: "#fffbf5", border: "1px solid #ffe8c4", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#d97706", textTransform: "uppercase", letterSpacing: "0.06em" }}>Recommended {cat.key === "bullet_quality" ? "Bullets" : cat.key === "backend_keywords" ? "Keywords" : cat.key === "title_seo" ? "Title" : "Fix"}</div>
+                      <button onClick={() => {
+                        const text = Array.isArray(rec) ? rec.join("\n") : rec;
+                        copy(text, "audit-rec-" + cat.key);
+                      }} style={{ padding: "3px 10px", background: copied === "audit-rec-" + cat.key ? "#16a34a" : MAROON, border: "none", borderRadius: 4, color: "#fff", fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                        {copied === "audit-rec-" + cat.key ? "\u2713 Copied" : "Copy"}
+                      </button>
+                    </div>
+                    {Array.isArray(rec) ? rec.map((line, i) => (
+                      <div key={i} style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#555", lineHeight: 1.7, padding: "4px 0", borderBottom: i < rec.length - 1 ? "1px solid #f5ead6" : "none" }}>
+                        <span style={{ color: "#d97706", fontWeight: 700, marginRight: 6 }}>{i + 1}.</span>{line}
+                      </div>
+                    )) : (
+                      <div style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#555", lineHeight: 1.7 }}>{rec}</div>
+                    )}
+                    {/* Apply button for title */}
+                    {cat.key === "title_seo" && typeof rec === "string" && (
+                      <button onClick={() => { setAuditTitle(rec); setToast("Title updated with recommendation"); setTimeout(() => setToast(null), 2000); }}
+                        style={{ marginTop: 8, padding: "5px 12px", background: "#d97706", border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                        Apply to Title Field
+                      </button>
+                    )}
+                    {/* Apply button for bullets */}
+                    {cat.key === "bullet_quality" && Array.isArray(rec) && (
+                      <button onClick={() => { setAuditBullets(rec.join("\n")); setToast("Bullets updated with recommendations"); setTimeout(() => setToast(null), 2000); }}
+                        style={{ marginTop: 8, padding: "5px 12px", background: "#d97706", border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                        Apply to Bullets Field
+                      </button>
+                    )}
+                    {/* Apply button for backend keywords */}
+                    {cat.key === "backend_keywords" && typeof rec === "string" && (
+                      <button onClick={() => { setAuditBackendKw(rec); setToast("Backend keywords updated with recommendation"); setTimeout(() => setToast(null), 2000); }}
+                        style={{ marginTop: 8, padding: "5px 12px", background: "#d97706", border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif" }}>
+                        Apply to Keywords Field
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>);
+            })}
+          </div>);
+        })()}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #e8e5e0" }}>
+          <span style={{ fontSize: 10, color: "#ccc" }}>Listing audit scores are directional {"\u00B7"} Always verify against current marketplace requirements</span>
+        </div>
+      </div>}
+
+      {/* ASIN REFERENCE PAGE */}
+      {page === "asin_reference" && (() => {
+        // Merge static ASIN_DATA with any new ASINs from the live product DB
+        const existingAsins = new Set(ASIN_DATA.map(r => r.asin));
+        const dbExtras = Object.entries(liveProductDb).filter(([sku, d]) => d.asin && !existingAsins.has(d.asin)).map(([sku, d]) => ({ asin: d.asin, sku }));
+        const mergedAsinData = [...ASIN_DATA, ...dbExtras];
+        const filtered = asinSearch.trim()
+          ? mergedAsinData.filter(r => r.asin.toLowerCase().includes(asinSearch.toLowerCase()) || r.sku.toLowerCase().includes(asinSearch.toLowerCase()))
+          : mergedAsinData;
+        return (
+          <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px 60px" }}>
+            <div style={{ marginBottom: 20 }}>
+              <p style={{ fontSize: 13, color: "#666", lineHeight: 1.6, margin: "0 0 6px", fontFamily: "'Outfit',sans-serif" }}>
+                All CUCKOO products currently listed on Amazon. Click any ASIN to open the product detail page.
+              </p>
+              <p style={{ fontSize: 11, color: "#aaa", margin: 0 }}>{mergedAsinData.length} ASINs{dbExtras.length > 0 ? ` (${dbExtras.length} from custom DB)` : ""} · March 2026</p>
+            </div>
+
+            {/* Search + Export */}
+            <div style={{ marginBottom: 16, display: "flex", gap: 10, alignItems: "center" }}>
+              <input
+                value={asinSearch} onChange={e => setAsinSearch(e.target.value)}
+                placeholder="Search by ASIN or SKU..."
+                style={{ flex: 1, padding: "10px 16px", background: "#fff", border: "1px solid #e8e5e0", borderRadius: 8, fontSize: 13, fontFamily: "'Outfit',sans-serif", outline: "none", boxSizing: "border-box", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}
+                onFocus={e => e.target.style.borderColor = MAROON} onBlur={e => e.target.style.borderColor = "#e8e5e0"}
+              />
+              <button onClick={() => {
+                const rows = [["ASIN", "SKU"].join(","), ...filtered.map(r => [r.asin, r.sku].join(","))];
+                const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = "cuckoo-asin-sku" + (asinSearch.trim() ? "-filtered" : "") + "-" + new Date().toISOString().slice(0, 10) + ".csv";
+                a.click(); URL.revokeObjectURL(a.href);
+              }} style={{ padding: "10px 16px", background: MAROON, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit',sans-serif", whiteSpace: "nowrap" }}>
+                {"\u2B07"} Export CSV ({filtered.length})
+              </button>
+            </div>
+            {asinSearch && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 12 }}>{filtered.length} result{filtered.length !== 1 ? "s" : ""}</div>}
+
+            {/* Table */}
+            <div style={{ background: "#fff", border: "1px solid #e8e5e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+              {/* Header */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", background: "#faf9f7", borderBottom: "2px solid #e8e5e0" }}>
+                <div style={{ padding: "12px 20px", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em" }}>ASIN</div>
+                <div style={{ padding: "12px 20px", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.08em", borderLeft: "1px solid #f0eeeb" }}>SKU / Model</div>
+              </div>
+              {/* Rows */}
+              {filtered.length === 0 && (
+                <div style={{ padding: 32, textAlign: "center", fontSize: 13, color: "#aaa" }}>No results for "{asinSearch}"</div>
+              )}
+              {filtered.map((row, i) => (
+                <div key={row.asin + i} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderBottom: i < filtered.length - 1 ? "1px solid #f5f3f0" : "none", background: i % 2 === 0 ? "#fff" : "#fdfcfb" }}>
+                  <div style={{ padding: "11px 20px", display: "flex", alignItems: "center" }}>
+                    <a href={`https://www.amazon.com/dp/${row.asin}`} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: MAROON, fontWeight: 600, textDecoration: "none", letterSpacing: "0.02em" }}
+                      onMouseEnter={e => e.target.style.textDecoration = "underline"} onMouseLeave={e => e.target.style.textDecoration = "none"}>
+                      {row.asin}
+                    </a>
+                  </div>
+                  <div style={{ padding: "11px 20px", borderLeft: "1px solid #f0eeeb", fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "#444", display: "flex", alignItems: "center" }}>
+                    {row.sku}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid #e8e5e0" }}>
+              <span style={{ fontSize: 10, color: "#ccc" }}>ASIN Reference · {ASIN_DATA.length} products · March 2026</span>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Image lightbox */}
+      {enlargedImage && (
+        <div onClick={() => setEnlargedImage(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", backdropFilter: "blur(4px)" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: 24, maxWidth: "90vw", maxHeight: "90vh", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, boxShadow: "0 16px 48px rgba(0,0,0,0.3)", cursor: "default" }}>
+            <img src={enlargedImage.src} alt={enlargedImage.sku} style={{ width: 240, height: 240, objectFit: "contain", borderRadius: 8, imageRendering: "auto" }} />
+            <div style={{ fontSize: 14, fontWeight: 700, color: MAROON, fontFamily: "'IBM Plex Mono',monospace" }}>{enlargedImage.sku}</div>
+            <button onClick={() => setEnlargedImage(null)} style={{ padding: "6px 20px", background: "#e8e5e0", border: "none", borderRadius: 6, fontSize: 12, color: "#666", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontWeight: 600 }}>Close</button>
+          </div>
+        </div>
+      )}
+
+      {/* Toast notification */}
+      {toast && (
+        <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: "#1a1a1a", color: "#fff", padding: "10px 20px", borderRadius: 8, fontSize: 12, fontWeight: 600, fontFamily: "'Outfit',sans-serif", boxShadow: "0 4px 16px rgba(0,0,0,0.2)", zIndex: 100, animation: "toastIn .2s ease" }}>
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Wrap in ErrorBoundary to prevent white-screen crashes
+export default function App() {
+  return React.createElement(ErrorBoundary, null, React.createElement(AppInner));
+}
+
