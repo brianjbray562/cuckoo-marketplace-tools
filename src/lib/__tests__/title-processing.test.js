@@ -38,6 +38,20 @@ import {
   BULLET_TIER_PROMPT_MID,
   BULLET_TIER_PROMPT_PREMIUM,
   getBulletPromptForTier,
+  // #6: Backend keyword diffing + backfill
+  bkByteLength,
+  tokenizeForBk,
+  buildFrontendTokenSet,
+  diffBackendKeywords,
+  buildBackendKeywordPool,
+  backfillBackendKeywords,
+  optimizeBackendKeywords,
+  BK_COMPETITORS_RICE_COOKER,
+  BK_ALT_LANG_SPANISH,
+  BK_ALT_LANG_ASIAN_SCRIPTS,
+  BK_CULTURAL_DISHES,
+  BK_USE_CASE_LONGTAIL,
+  BK_KNOWN_MISSPELLINGS,
 } from "../title-processing.js";
 
 // -------------------------------------------------------------
@@ -1705,5 +1719,278 @@ describe("getBulletPromptForTier", () => {
     expect(BULLET_TIER_PROMPT_BASIC).toMatch(/120-150/);
     expect(BULLET_TIER_PROMPT_MID).toMatch(/150-180/);
     expect(BULLET_TIER_PROMPT_PREMIUM).toMatch(/180-220/);
+  });
+});
+
+// =============================================================
+// #6 — BACKEND KEYWORD DIFFING + BACKFILL POOLS
+// =============================================================
+
+// -------------------------------------------------------------
+// bkByteLength / tokenizeForBk / buildFrontendTokenSet
+// -------------------------------------------------------------
+describe("bkByteLength", () => {
+  it("returns 0 for empty/null input", () => {
+    expect(bkByteLength("")).toBe(0);
+    expect(bkByteLength(null)).toBe(0);
+  });
+
+  it("matches UTF-8 byte counts for ASCII", () => {
+    expect(bkByteLength("rice cooker")).toBe(11);
+  });
+
+  it("counts multi-byte characters correctly (Korean/Japanese/Chinese scripts)", () => {
+    // "밥솥" (Korean) = 6 bytes in UTF-8 (3 bytes per hangul char)
+    expect(bkByteLength("밥솥")).toBe(6);
+    // "炊飯器" (Japanese) = 9 bytes
+    expect(bkByteLength("炊飯器")).toBe(9);
+  });
+});
+
+describe("tokenizeForBk", () => {
+  it("lowercases and splits on whitespace", () => {
+    expect(tokenizeForBk("Rice Cooker Nonstick")).toEqual(["rice", "cooker", "nonstick"]);
+  });
+
+  it("strips punctuation but keeps numbers and apostrophes", () => {
+    expect(tokenizeForBk("12-cup mom's rice cooker")).toEqual(["12", "cup", "mom's", "rice", "cooker"]);
+  });
+
+  it("preserves non-latin scripts", () => {
+    expect(tokenizeForBk("밥솥 炊飯器 rice")).toEqual(["밥솥", "炊飯器", "rice"]);
+  });
+
+  it("returns empty array for null/empty input", () => {
+    expect(tokenizeForBk("")).toEqual([]);
+    expect(tokenizeForBk(null)).toEqual([]);
+  });
+});
+
+describe("buildFrontendTokenSet", () => {
+  it("combines tokens from title and bullets into one set", () => {
+    const set = buildFrontendTokenSet(
+      "CUCKOO Micom Rice Cooker",
+      "ONE-TOUCH COOKING: Press one button for perfect rice"
+    );
+    expect(set.has("cuckoo")).toBe(true);
+    expect(set.has("rice")).toBe(true);
+    expect(set.has("button")).toBe(true);
+    expect(set.has("one-touch")).toBe(false); // punctuation stripped — would be tokenized as "one" and "touch"
+    expect(set.has("one")).toBe(true);
+    expect(set.has("touch")).toBe(true);
+  });
+});
+
+// -------------------------------------------------------------
+// diffBackendKeywords
+// -------------------------------------------------------------
+describe("diffBackendKeywords", () => {
+  it("removes BK tokens that exactly match tokens in title", () => {
+    const title = "CUCKOO Micom Rice Cooker 12-Cup Cooked";
+    const bullets = "";
+    const bk = "rice cooker nonstick inner pot korean brand";
+    const result = diffBackendKeywords(bk, title, bullets);
+    // "rice" and "cooker" appear in title -> removed
+    expect(result.removed).toContain("rice");
+    expect(result.removed).toContain("cooker");
+    // "nonstick", "inner", "pot", "korean", "brand" stay
+    expect(result.kept).toContain("nonstick");
+    expect(result.kept).toContain("korean");
+  });
+
+  it("preserves plural/singular variants (user chose exact-match only)", () => {
+    // "cooker" in title should NOT strip "cookers" from BK
+    const result = diffBackendKeywords("cookers rice-cookers multi-cooker", "rice cooker", "");
+    expect(result.kept.toLowerCase()).toContain("cookers");
+  });
+
+  it("reports bytesReclaimed correctly", () => {
+    const bk = "rice cooker nonstick"; // 19 bytes
+    const result = diffBackendKeywords(bk, "rice cooker", "");
+    // "rice" + " " + "cooker" = 11 bytes removed (plus trailing space cleanup)
+    expect(result.bytesReclaimed).toBeGreaterThan(0);
+    expect(result.kept).toBe("nonstick");
+  });
+
+  it("handles empty BK gracefully", () => {
+    const result = diffBackendKeywords("", "title", "bullets");
+    expect(result.kept).toBe("");
+    expect(result.removed).toEqual([]);
+    expect(result.bytesReclaimed).toBe(0);
+  });
+
+  it("strips tokens that appear in bullets even if not in title", () => {
+    const title = "CUCKOO Rice Cooker";
+    const bullets = "ONE-TOUCH SIMPLICITY: Effortless cleanup with nonstick coating";
+    const bk = "nonstick cleanup effortless brand new";
+    const result = diffBackendKeywords(bk, title, bullets);
+    expect(result.removed).toContain("nonstick");
+    expect(result.removed).toContain("cleanup");
+    expect(result.removed).toContain("effortless");
+    expect(result.kept).toContain("brand");
+    expect(result.kept).toContain("new");
+  });
+});
+
+// -------------------------------------------------------------
+// buildBackendKeywordPool
+// -------------------------------------------------------------
+describe("buildBackendKeywordPool", () => {
+  it("returns a prioritized pool with tier labels", () => {
+    const pool = buildBackendKeywordPool(micomProductCR0675FW, new Set());
+    expect(pool.length).toBeGreaterThan(30);
+    // First entries should be tier 1 (competitors)
+    expect(pool[0].tier).toBe(1);
+    expect(pool[0].reason).toBe("competitor");
+    // Should include competitor brands
+    expect(pool.some(p => p.text === "zojirushi")).toBe(true);
+    expect(pool.some(p => p.text === "instant pot")).toBe(true);
+  });
+
+  it("includes Spanish alt-language (tier 2)", () => {
+    const pool = buildBackendKeywordPool(micomProductCR0675FW, new Set());
+    expect(pool.some(p => p.text === "olla arrocera" && p.tier === 2)).toBe(true);
+  });
+
+  it("includes Korean/Japanese/Chinese scripts (tier 3)", () => {
+    const pool = buildBackendKeywordPool(micomProductCR0675FW, new Set());
+    expect(pool.some(p => p.text === "밥솥" && p.tier === 3)).toBe(true);
+    expect(pool.some(p => p.text === "炊飯器" && p.tier === 3)).toBe(true);
+    expect(pool.some(p => p.text === "电饭煲" && p.tier === 3)).toBe(true);
+  });
+
+  it("adds pressure-specific terms for pressure products", () => {
+    const pressureProduct = { sku: "CRP-P0609S", pressure: true, type: "Pressure" };
+    const pool = buildBackendKeywordPool(pressureProduct, new Set());
+    expect(pool.some(p => p.text === "electric pressure cooker")).toBe(true);
+    expect(pool.some(p => p.text === "korean pressure cooker")).toBe(true);
+  });
+
+  it("adds induction-specific terms for induction products", () => {
+    const pool = buildBackendKeywordPool(premiumStainless, new Set());
+    expect(pool.some(p => p.text === "induction rice maker")).toBe(true);
+    expect(pool.some(p => p.text === "3d induction cooker")).toBe(true);
+  });
+
+  it("does NOT add pressure extras for basic/micom non-pressure products", () => {
+    const pool = buildBackendKeywordPool(basicProductCR0601C, new Set());
+    expect(pool.some(p => p.text === "electric pressure cooker")).toBe(false);
+  });
+
+  it("filters out pool entries whose tokens all appear in frontend", () => {
+    const frontendSet = new Set(["instant", "pot"]);
+    const pool = buildBackendKeywordPool(micomProductCR0675FW, frontendSet);
+    // "instant pot" should be filtered (both tokens in frontend)
+    expect(pool.some(p => p.text === "instant pot")).toBe(false);
+    // But "zojirushi" (single token not in frontend) remains
+    expect(pool.some(p => p.text === "zojirushi")).toBe(true);
+  });
+
+  it("does NOT filter multi-word entries when only one token matches frontend", () => {
+    const frontendSet = new Set(["rice"]); // just "rice"
+    const pool = buildBackendKeywordPool(micomProductCR0675FW, frontendSet);
+    // "rise cooker" has "rise" (not in frontend) and "cooker" — should be kept
+    expect(pool.some(p => p.text === "rise cooker")).toBe(true);
+  });
+});
+
+// -------------------------------------------------------------
+// backfillBackendKeywords
+// -------------------------------------------------------------
+describe("backfillBackendKeywords", () => {
+  it("adds pool entries to reach close to the byte limit", () => {
+    const pool = [
+      { text: "zojirushi", tier: 1, reason: "competitor" },
+      { text: "instant pot", tier: 1, reason: "competitor" },
+      { text: "aroma", tier: 1, reason: "competitor" },
+    ];
+    const result = backfillBackendKeywords("starting terms", pool, 499);
+    expect(result.added.length).toBeGreaterThan(0);
+    expect(result.finalBk).toContain("starting terms");
+    expect(result.finalBk).toContain("zojirushi");
+    expect(result.finalBytes).toBeLessThanOrEqual(499);
+  });
+
+  it("respects the byte limit strictly", () => {
+    // Make an already-long BK and force backfill to stop before exceeding
+    const existingBk = "x".repeat(490); // 490 bytes
+    const pool = [
+      { text: "a-very-long-candidate-keyword-phrase-too-big-to-fit", tier: 1, reason: "test" },
+      { text: "short", tier: 1, reason: "test" },
+    ];
+    const result = backfillBackendKeywords(existingBk, pool, 499);
+    expect(result.finalBytes).toBeLessThanOrEqual(499);
+    // "short" (5 chars) fits after 490 + 1 space = 496, so should be added
+    expect(result.added.some(a => a.text === "short")).toBe(true);
+    // The long one does not fit
+    expect(result.added.some(a => a.text.startsWith("a-very-long"))).toBe(false);
+  });
+
+  it("does not add duplicates of what's already in BK", () => {
+    const pool = [{ text: "zojirushi", tier: 1, reason: "competitor" }];
+    const result = backfillBackendKeywords("zojirushi already", pool, 499);
+    expect(result.added).toEqual([]);
+  });
+
+  it("handles empty pool gracefully", () => {
+    const result = backfillBackendKeywords("existing bk", [], 499);
+    expect(result.finalBk).toBe("existing bk");
+    expect(result.added).toEqual([]);
+  });
+
+  it("prioritizes by pool order (competitors first)", () => {
+    const pool = [
+      { text: "zojirushi", tier: 1, reason: "competitor" },
+      { text: "aroma", tier: 1, reason: "competitor" },
+      { text: "밥솥", tier: 3, reason: "asian_script" },
+      { text: "rise cooker", tier: 6, reason: "misspelling" },
+    ];
+    const result = backfillBackendKeywords("start", pool, 499);
+    // All should fit; competitor should have been added before misspelling
+    const firstAddedTier = result.added[0]?.tier;
+    const lastAddedTier = result.added[result.added.length - 1]?.tier;
+    expect(firstAddedTier).toBeLessThanOrEqual(lastAddedTier);
+  });
+});
+
+// -------------------------------------------------------------
+// optimizeBackendKeywords — full end-to-end
+// -------------------------------------------------------------
+describe("optimizeBackendKeywords", () => {
+  it("diffs then backfills in one call — the CR-0301C bulk-export scenario", () => {
+    // Real CR-0301C data from the bulk export the user shared
+    const title = "CUCKOO Basic Rice Cooker 6-Cup Cooked, Rice Maker & Rice Steamer with Nonstick Inner Pot for Everyday Rice & Grains, Keep Warm Function, White (CR-0301C)";
+    const bullets = "ONE-TOUCH SIMPLICITY: Press one button for perfectly cooked rice.\nCOMPACT CAPACITY: 3 cups uncooked serves singles and couples.\nNONSTICK CLEANUP: Nonstick inner pot releases rice cleanly.";
+    const originalBk = "rice cooker small 3 cup white basic simple one touch automatic keep warm nonstick inner pot compact apartment kitchen singles couples";
+    const product = { sku: "CR-0301C", type: "Basic", heating: "Heating Plate", pressure: false, innerPot: "Nonstick" };
+
+    const result = optimizeBackendKeywords(originalBk, title, bullets, product);
+
+    // Should have removed duplicated tokens
+    expect(result.removed.length).toBeGreaterThan(0);
+    expect(result.removed.map(r => r.toLowerCase())).toContain("rice");
+    expect(result.removed.map(r => r.toLowerCase())).toContain("cooker");
+    expect(result.removed.map(r => r.toLowerCase())).toContain("nonstick");
+
+    // Should have backfilled with pool candidates
+    expect(result.added.length).toBeGreaterThan(0);
+
+    // Final BK under byte limit
+    expect(result.byte_count).toBeLessThanOrEqual(499);
+
+    // Should contain at least one competitor and one alt-language
+    expect(result.keywords.toLowerCase()).toMatch(/zojirushi|aroma|instant pot|tiger|toshiba/);
+    // At least one non-latin script
+    expect(result.keywords).toMatch(/[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff\uac00-\ud7af]/);
+  });
+
+  it("reports bytesReclaimed so users can see the improvement", () => {
+    const result = optimizeBackendKeywords(
+      "rice cooker nonstick inner pot",
+      "CUCKOO Rice Cooker with Nonstick Inner Pot",
+      "",
+      { sku: "CR-0675FW" }
+    );
+    expect(result.bytesReclaimed).toBeGreaterThan(0);
   });
 });
