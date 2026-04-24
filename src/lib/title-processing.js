@@ -1106,25 +1106,27 @@ export const BULLET_TIER_PROMPT_BASIC = `Role: Senior ecommerce copywriter for C
 
 OUTPUT: Exactly the number of bullet points specified in the user message. Each bullet starts with a CAPITALIZED HEADING (2-4 words) followed by a colon and ONE concise sentence.
 
+HEADING FORMAT (strict): The heading you put in the JSON "heading" field must NOT include a trailing colon. The colon is added automatically by the rendering layer. Example: {"heading":"ONE-TOUCH SIMPLICITY","text":"..."} — NOT {"heading":"ONE-TOUCH SIMPLICITY:","text":"..."}.
+
 TIER-SPECIFIC VOICE (Basic):
 - Tone: reassuring, uncomplicated, everyday-home-cook friendly
 - Vocabulary: plain, functional language — "press one button", "daily use", "effortless cleanup", "ready when you are"
 - AVOID: technical jargon, sophisticated cooking terminology, premium/luxury phrasing
 - AVOID: restaurant-quality claims, precision language, craft terminology — these are premium claims
-- Target bullet length: 120-150 chars (single focused sentence)
+- TARGET bullet length: 130-150 chars TOTAL (including "HEADING: " prefix). Write fuller single sentences. Don't cut too short.
 - Total sentences per bullet: 1
 
 STRUCTURE (each bullet):
-- Heading: 2-4 capitalized words ending with a colon (e.g., "ONE-TOUCH SIMPLICITY:")
-- Body: ONE sentence describing a concrete daily-use benefit
-- Hard char limit: 220 total. Soft target: 120-150 total.
+- Heading: 2-4 capitalized words, NO trailing colon in the JSON heading field
+- Body: ONE sentence describing a concrete daily-use benefit. Make it descriptive enough to hit 130+ chars.
+- HARD CAP: 220 chars total.
 
 CUCKOO RULES:
 - Use only features/modes/attributes from VERIFIED PRODUCT DATA.
 - Do NOT invent cooking modes or dedicated programs.
 - Approved everyday uses: rice, grains, oatmeal, quinoa, porridge, soups, one-pot meals.
-- No puffery ("premium", "luxury", "advanced craftsmanship", "revolutionary").
-- First bullet heading: USE THE EXACT HEADING PROVIDED in the user message (for product-family consistency).
+- No puffery ("premium", "luxury", "advanced craftsmanship", "revolutionary", "advanced microcomputer").
+- First bullet heading: USE THE EXACT HEADING PROVIDED in the user message (for product-family consistency). Do NOT add a colon to the heading field.
 
 Respond ONLY with valid JSON: {"bullets":[{"heading":"...","text":"..."},...]}`;
 
@@ -1132,25 +1134,28 @@ export const BULLET_TIER_PROMPT_MID = `Role: Senior ecommerce copywriter for CUC
 
 OUTPUT: Exactly the number of bullet points specified in the user message. Each bullet starts with a CAPITALIZED HEADING (2-4 words) followed by a colon and 1-2 concise sentences.
 
+HEADING FORMAT (strict): The heading you put in the JSON "heading" field must NOT include a trailing colon. The colon is added automatically by the rendering layer. Example: {"heading":"MICOM INTELLIGENCE","text":"..."} — NOT {"heading":"MICOM INTELLIGENCE:","text":"..."}.
+
 TIER-SPECIFIC VOICE (Mid):
 - Tone: confident, capable, benefit-driven
 - Vocabulary: concrete feature benefits — "dedicated programs", "consistent results", "restaurant-quality texture", "cooking control"
 - AVOID: basic oversimplification ("just press a button" — this product has more to it)
 - AVOID: craft/connoisseur language ("starch gelatinization", "rice-science") — that's premium
-- Target bullet length: 150-180 chars
+- TARGET bullet length: 150-180 chars TOTAL (including "HEADING: " prefix). HARD CAP: 220 chars.
 - Total sentences per bullet: 1-2
 
 STRUCTURE (each bullet):
-- Heading: 2-4 capitalized words ending with a colon (e.g., "TEN COOKING PROGRAMS:")
+- Heading: 2-4 capitalized words, NO trailing colon in the JSON heading field
 - Body: 1-2 sentences — the benefit plus a specific feature tie-in
-- Hard char limit: 220 total. Soft target: 150-180 total.
+- HARD CAP: 220 chars total.
 
 CUCKOO RULES:
 - Use only features/modes/attributes from VERIFIED PRODUCT DATA.
 - Mention specific verified modes by name when they add value (e.g., "GABA rice", "porridge", "multi-grain").
 - Approved everyday uses: rice, grains, oatmeal, quinoa, porridge, soups, one-pot meals.
 - Equipment-dependent claims (steaming) only if "Steam Tray" / "Steamer Basket" is in features.
-- First bullet heading: USE THE EXACT HEADING PROVIDED in the user message (for product-family consistency).
+- NEVER use "Advanced Microcomputer Technology" / "Advanced Micom" / "Premium Craftsmanship" — puffery is banned.
+- First bullet heading: USE THE EXACT HEADING PROVIDED in the user message (for product-family consistency). Do NOT add a colon to the heading field.
 
 Respond ONLY with valid JSON: {"bullets":[{"heading":"...","text":"..."},...]}`;
 
@@ -1158,19 +1163,21 @@ export const BULLET_TIER_PROMPT_PREMIUM = `Role: Senior ecommerce copywriter for
 
 OUTPUT: Exactly the number of bullet points specified in the user message. Each bullet starts with a CAPITALIZED HEADING (2-4 words) followed by a colon and 2 concise sentences.
 
+HEADING FORMAT (strict): The heading you put in the JSON "heading" field must NOT include a trailing colon. The colon is added automatically by the rendering layer. Example: {"heading":"TWIN PRESSURE INDUCTION","text":"..."} — NOT {"heading":"TWIN PRESSURE INDUCTION:","text":"..."}.
+
 TIER-SPECIFIC VOICE (Premium):
 - Tone: authoritative, sophisticated, craft-oriented — speaking to customers who take rice seriously
 - Vocabulary: precise and specific — "precise induction heating", "pressure-sealed moisture retention", "dedicated programs tuned per grain type", "restaurant-quality texture"
 - USE: Korean food culture references where appropriate (scorched rice / nurungji, GABA rice, mixed-grain dishes)
 - AVOID: simplistic phrasing ("press a button") — that's Basic voice
 - AVOID: generic benefit claims without concrete feature tie-ins
-- Target bullet length: 180-220 chars
-- Total sentences per bullet: 2
+- TARGET bullet length: 180-215 chars TOTAL (including "HEADING: " prefix). HARD CAP: 220 chars. Never exceed 220.
+- Total sentences per bullet: 2 short sentences, not 2 long ones. Count your characters.
 
 STRUCTURE (each bullet):
-- Heading: 2-4 capitalized words ending with a colon (e.g., "TWIN PRESSURE INDUCTION:")
-- Body: 2 sentences — the first establishes the sophisticated feature/benefit; the second gives the concrete cooking outcome
-- Hard char limit: 220 total. Soft target: 180-220 total.
+- Heading: 2-4 capitalized words, NO trailing colon in the JSON heading field
+- Body: 2 sentences — the first establishes the feature/benefit; the second gives the concrete cooking outcome
+- HARD CAP: 220 chars total. Write tighter sentences to stay under this.
 
 CUCKOO RULES:
 - Use only features/modes/attributes from VERIFIED PRODUCT DATA.
@@ -1178,7 +1185,8 @@ CUCKOO RULES:
 - For Full Stainless inner pot: highlight the material honestly and specifically.
 - Made in South Korea claims: ONLY if product.mfg === "South Korea" (verified).
 - Equipment-dependent claims (steaming) only if "Steam Tray" / "Steam Plate" / "Steamer Basket" is in features.
-- First bullet heading: USE THE EXACT HEADING PROVIDED in the user message (for product-family consistency).
+- NEVER use "Advanced Microcomputer Technology" / "Advanced Micom" / "Premium Craftsmanship" — puffery is banned.
+- First bullet heading: USE THE EXACT HEADING PROVIDED in the user message (for product-family consistency). Do NOT add a colon to the heading field.
 
 Respond ONLY with valid JSON: {"bullets":[{"heading":"...","text":"..."},...]}`;
 
@@ -1190,6 +1198,256 @@ export function getBulletPromptForTier(tier) {
 }
 
 // --- LISTING OUTPUT VALIDATION (continued) ---
+
+// =============================================================
+// COLOR-VARIANT GROUPING (narrow F+[WGBR] rule)
+// =============================================================
+// Pure color variants of the same model should produce identical titles
+// except for the color word and the SKU. Detection uses a narrow rule:
+// "SKU ends in F + [W|G|B|R]" — matches CR-0675FW/CR-0675FG, avoids
+// false positives from model-level F suffixes (CR-0631F, CR-0301C, etc.).
+//
+// Flow: at the start of a batch, cluster SKUs by stem. Within each group,
+// the alphabetically-first SKU is the "leader" — its titles are generated
+// first, then reused for follower SKUs with color+SKU swaps.
+
+// Map color suffix letters to English color words. Used for title rewriting.
+export const COLOR_LETTER_TO_NAME = {
+  W: "White",
+  G: "Gray",
+  B: "Black",
+  R: "Red",
+};
+
+// Extract (stem, colorLetter) from a SKU that matches the F+[WGBR] pattern.
+// Returns {stem, colorLetter} or null when the SKU doesn't fit.
+// Example: "CR-0675FW" -> {stem: "CR-0675F", colorLetter: "W"}
+//          "CR-0631F"  -> null (single trailing letter F is model marker, not color)
+//          "CR-0301C"  -> null
+export function getColorVariantStem(sku) {
+  if (!sku || typeof sku !== "string") return null;
+  const m = /^(.*F)([WGBR])$/.exec(sku.trim());
+  if (!m) return null;
+  return { stem: m[1], colorLetter: m[2] };
+}
+
+// Build a stem -> [sku, sku, ...] map from a DB. Only includes stems with 2+
+// members (single-member stems aren't actionable — nothing to rewrite from).
+// Caller can pass any object keyed by SKU; values aren't used.
+export function buildColorVariantGroups(dbMap) {
+  const groups = {};
+  if (!dbMap || typeof dbMap !== "object") return {};
+  for (const sku of Object.keys(dbMap)) {
+    const parsed = getColorVariantStem(sku);
+    if (!parsed) continue;
+    if (!groups[parsed.stem]) groups[parsed.stem] = [];
+    groups[parsed.stem].push(sku);
+  }
+  // Filter to multi-member stems only
+  const result = {};
+  for (const stem of Object.keys(groups)) {
+    if (groups[stem].length >= 2) {
+      result[stem] = groups[stem].sort(); // alphabetical so leader is deterministic
+    }
+  }
+  return result;
+}
+
+// Pick the leader SKU for a group. Always alphabetically first.
+export function pickColorVariantLeader(skusInGroup) {
+  if (!Array.isArray(skusInGroup) || skusInGroup.length === 0) return null;
+  return [...skusInGroup].sort()[0];
+}
+
+// Given a SKU, find its leader from the groups map.
+// Returns the leader SKU (which is the same SKU if this SKU IS the leader,
+// or null if the SKU isn't in any group).
+export function getLeaderForSku(sku, groupsMap) {
+  const parsed = getColorVariantStem(sku);
+  if (!parsed) return null;
+  const group = groupsMap[parsed.stem];
+  if (!group) return null;
+  return pickColorVariantLeader(group);
+}
+
+// Rewrite a single title string by swapping the color word and SKU.
+// Handles:
+//   - The color word: replaces the last occurrence of `leaderColor` with `followerColor`
+//     (using word boundaries, case-insensitive match but preserving title case output)
+//   - The SKU: replaces the leader SKU everywhere it appears with the follower SKU
+// Returns the rewritten title string.
+//
+// Example:
+//   rewriteTitleForFollower(
+//     "CUCKOO Micom Rice Cooker 12-Cup Cooked, Gray (CR-0675FG)",
+//     "CR-0675FG", "Gray", "CR-0675FW", "White"
+//   )
+//   -> "CUCKOO Micom Rice Cooker 12-Cup Cooked, White (CR-0675FW)"
+export function rewriteTitleForFollower(leaderTitle, leaderSku, leaderColor, followerSku, followerColor) {
+  if (!leaderTitle || typeof leaderTitle !== "string") return leaderTitle;
+  let out = leaderTitle;
+  // Swap SKU — exact, case-sensitive (SKUs are uppercase, unambiguous)
+  if (leaderSku && followerSku && leaderSku !== followerSku) {
+    out = out.split(leaderSku).join(followerSku);
+  }
+  // Swap color — word-boundary, case-insensitive match, last occurrence only
+  // (product titles may contain a color adjective elsewhere — we only want the
+  // final ", Color" slot before the SKU parenthetical)
+  if (leaderColor && followerColor && leaderColor.toLowerCase() !== followerColor.toLowerCase()) {
+    const colorRegex = new RegExp("\\b" + leaderColor.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&") + "\\b", "gi");
+    // Find the last match and replace only it
+    let lastIndex = -1;
+    let m;
+    while ((m = colorRegex.exec(out)) !== null) {
+      lastIndex = m.index;
+      if (m.index === colorRegex.lastIndex) colorRegex.lastIndex++;
+    }
+    if (lastIndex >= 0) {
+      const matchText = out.substring(lastIndex).match(new RegExp("^" + leaderColor.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&"), "i"));
+      if (matchText) {
+        out = out.substring(0, lastIndex) + followerColor + out.substring(lastIndex + matchText[0].length);
+      }
+    }
+  }
+  return out;
+}
+
+// Rewrite a full titles.conversions object (all marketplaces) for a follower SKU
+// by applying the color+SKU swap to each marketplace title.
+// Mutates the followerConversions object in place.
+// Returns { rewrittenCount, warnings }
+export function applyColorVariantRewrite(leaderConversions, followerConversions, leaderSku, leaderColor, followerSku, followerColor) {
+  const warnings = [];
+  let rewrittenCount = 0;
+  if (!leaderConversions || !followerConversions) {
+    warnings.push("COLOR_VARIANT_REWRITE: missing conversions");
+    return { rewrittenCount, warnings };
+  }
+  for (const mp of Object.keys(leaderConversions)) {
+    const leaderTitle = leaderConversions[mp]?.title;
+    if (!leaderTitle) continue;
+    const rewritten = rewriteTitleForFollower(leaderTitle, leaderSku, leaderColor, followerSku, followerColor);
+    if (!followerConversions[mp]) followerConversions[mp] = {};
+    followerConversions[mp].title = rewritten;
+    rewrittenCount++;
+  }
+  return { rewrittenCount, warnings };
+}
+
+// --- LISTING OUTPUT VALIDATION (continued) ---
+// =============================================================
+
+// Clean an individual bullet heading — strips double-colons, trailing colons,
+// and leading/trailing whitespace. Fixes the "DUAL PRESSURE SYSTEM::" artifact
+// seen in the second bulk run where the LLM appended its own colon after
+// using the required heading (which already ended without one).
+export function cleanBulletHeading(heading) {
+  if (!heading || typeof heading !== "string") return heading;
+  let h = heading.trim();
+  // Loop stripping trailing colons + whitespace until neither is present
+  // (handles patterns like "HEAD : :" where colons are interleaved with spaces)
+  while (/[\s:]$/.test(h)) {
+    h = h.replace(/[\s:]+$/g, "").trim();
+  }
+  return h;
+}
+
+// Extend puffery removal to bullet bodies. Same rules as removePuffery() for
+// titles, but applied to bullet.text strings. Also strips "Advanced
+// Microcomputer Technology" which was missed on titles (caught here too).
+export function removeBulletPuffery(bulletsObj) {
+  if (!bulletsObj?.bullets || !Array.isArray(bulletsObj.bullets)) return;
+  for (const b of bulletsObj.bullets) {
+    if (!b?.text || typeof b.text !== "string") continue;
+    let text = b.text;
+    // "Premium" before colors, materials, or finishes (as in titles)
+    text = text.replace(/\bPremium\s+(White|Black|Gray|Red|Silver|Gold|Pink|Copper|Stainless\s+Steel|Nonstick|Finish)/gi, "$1");
+    // "Luxury" standalone
+    text = text.replace(/\bLuxury\s+/gi, "");
+    // "Advanced" before tech terms — catches "Advanced Micom", "Advanced Pressure",
+    // "Advanced Microcomputer Technology" (the CR-0675FW bulk finding)
+    text = text.replace(/\bAdvanced\s+(Micom|Pressure|Induction|Heating|Technology|Microcomputer)/gi, "$1");
+    // "Premium Craftsmanship", "Classic Finish", "Easy Clean Design" (generic puffery)
+    text = text.replace(/\bPremium\s+Craftsmanship\b/gi, "");
+    text = text.replace(/\bClassic\s+Finish\b/gi, "");
+    text = text.replace(/\bEasy\s+Clean\s+Design\b/gi, "Easy Clean");
+    text = text.replace(/\bTrusted\s+Quality\b/gi, "");
+    // Artifact cleanup
+    text = text.replace(/\s{2,}/g, " ").replace(/\s+,/g, ",").replace(/,\s*,/g, ",").trim();
+    b.text = text;
+  }
+  // Also clean headings while we're iterating
+  for (const b of bulletsObj.bullets) {
+    if (b?.heading) b.heading = cleanBulletHeading(b.heading);
+  }
+}
+
+// Trim an individual bullet's full text (heading + ": " + body) to a maximum
+// character count. Prefers cutting at sentence boundaries (". ", "! ", "? ").
+// If no sentence boundary fits, falls back to cutting at the last space before
+// the limit. Returns { text, wasTrimmed } — the bullet's body only, not the heading.
+//
+// The 220-char hard cap is measured across heading + ": " + body combined.
+export function trimBulletToMaxChars(heading, body, maxChars = 220) {
+  if (!body) return { text: body || "", wasTrimmed: false };
+  const prefix = (heading || "") + ": ";
+  const bodyLimit = Math.max(0, maxChars - prefix.length);
+  if (body.length <= bodyLimit) return { text: body, wasTrimmed: false };
+
+  // Try sentence-boundary cuts (look backward from the limit for ". ", "! ", "? ")
+  const searchWindow = body.slice(0, bodyLimit);
+  const sentenceMatches = [...searchWindow.matchAll(/[.!?]\s+/g)];
+  if (sentenceMatches.length > 0) {
+    const last = sentenceMatches[sentenceMatches.length - 1];
+    const cutAt = last.index + last[0].length;
+    return { text: body.slice(0, cutAt).trim(), wasTrimmed: true };
+  }
+
+  // Fall back: cut at last word boundary before limit
+  const lastSpace = searchWindow.lastIndexOf(" ");
+  if (lastSpace > 0) {
+    return { text: body.slice(0, lastSpace).trim(), wasTrimmed: true };
+  }
+
+  // Last resort: hard cut
+  return { text: body.slice(0, bodyLimit).trim(), wasTrimmed: true };
+}
+
+// Apply trimBulletToMaxChars across a full bullets object. Mutates in place.
+// Returns array of { index, originalLen, newLen } for any bullets that were trimmed.
+export function trimOversizedBullets(bulletsObj, maxChars = 220) {
+  const trimmed = [];
+  if (!bulletsObj?.bullets || !Array.isArray(bulletsObj.bullets)) return trimmed;
+  for (let i = 0; i < bulletsObj.bullets.length; i++) {
+    const b = bulletsObj.bullets[i];
+    if (!b?.text) continue;
+    const fullLen = ((b.heading || "") + ": " + b.text).length;
+    if (fullLen <= maxChars) continue;
+    const result = trimBulletToMaxChars(b.heading, b.text, maxChars);
+    if (result.wasTrimmed) {
+      trimmed.push({ index: i, originalLen: fullLen, newLen: ((b.heading || "") + ": " + result.text).length });
+      b.text = result.text;
+    }
+  }
+  return trimmed;
+}
+
+// Full bullet post-processing pipeline — run after the LLM returns.
+// Mutates bulletsObj in place. Returns { trimmed, warnings }.
+export function runBulletPipeline(bulletsObj, maxCharsPerBullet = 220) {
+  const warnings = [];
+  if (!bulletsObj?.bullets) return { trimmed: [], warnings };
+  // 1. Strip puffery + clean heading colons
+  removeBulletPuffery(bulletsObj);
+  // 2. Trim any oversized bullets (>220 chars)
+  const trimmed = trimOversizedBullets(bulletsObj, maxCharsPerBullet);
+  if (trimmed.length > 0) {
+    for (const t of trimmed) {
+      warnings.push(`BULLET_TRIMMED: bullet ${t.index + 1} was ${t.originalLen} chars, trimmed to ${t.newLen}`);
+    }
+  }
+  return { trimmed, warnings };
+}
 
 // -----------------------------------------------------------
 // FULL PIPELINE WRAPPER
