@@ -22,6 +22,7 @@ import {
   // Chunk B: bullet 1 heading rotation + tier-differentiated prompts
   selectBulletOneHeading,
   createBulletHeadingSession,
+  createLifestyleSession,
   getBulletPromptForTier,
   runBulletPipeline,
   // Color-variant grouping — identical-except-for-color title inheritance
@@ -149,6 +150,9 @@ RULE 5 — ONLY use features, cooking modes, or cooking mode names that are list
 AMAZON TITLE LENGTH REQUIREMENT (critical):
 Amazon hard limit: 200 chars. TARGET 180-195 characters. You are underusing Amazon space if the title is under 175 chars and there are additional verified features available to include. Use search synonyms like "Rice Maker", "Rice Steamer", and relevant verified feature callouts to reach the target length. Do NOT pad with filler. Do NOT leave 20+ chars unused when strong verified differentiators fit cleanly.
 
+AMAZON COLOR PRESERVATION (critical):
+The color (e.g., "White", "Black", "Gray", "Red", "Copper", "Gold", "Stainless Steel") MUST appear in the Amazon title, placed immediately before the model number in parentheses: "..., Color (CR-XXXX)". If the title approaches the 200-char cap, drop a secondary feature BEFORE dropping color. Color is non-negotiable because shoppers filter by it. For Stainless inner pot products, list "Stainless Steel Inner Pot" separately from the product color — do not use "Stainless Steel" as the color value unless the product's actual color is Stainless.
+
 GENERAL RICE COOKER CAPABILITIES (approved everyday-use language, always allowed for any rice cooker):
 Rice cookers are water-based cooking appliances. The following everyday uses are approved for title descriptor language and bullet language for ANY rice cooker, regardless of cooking mode names:
 - Rice (always)
@@ -156,12 +160,8 @@ Rice cookers are water-based cooking appliances. The following everyday uses are
 - Oatmeal, quinoa, mixed grains (as general water-based uses)
 - Porridge, soups, one-pot meals (as general water-based uses)
 
-Approved short title descriptors for everyday framing (optional, use only if space allows after the core block):
-- "for Everyday Rice & Grains"
-- "for Rice, Grains & Oatmeal"
-- "for Daily Rice & Grain Cooking"
-
-Use at most ONE concise everyday-use descriptor per title, not a list of foods.
+Approved descriptor style for non-Amazon marketplaces (optional, use only if space allows after the core block):
+Use natural descriptive modifiers, not "for X" constructions. Examples: "Family-Size Capacity", "Meal-Prep Size", "Party-Size Capacity", "Voice-Guided Operation", "Low-Maintenance Design". Do NOT use "for Everyday Rice & Grains" or similar generic "for X" filler phrases.
 
 EQUIPMENT-DEPENDENT USES (only claim when verified in product features):
 - Steaming vegetables / fish / dumplings / eggs: ONLY if "Steam Tray" or "Steamer Basket" is in the product features array
@@ -2176,6 +2176,8 @@ function AppInner() {
     const results = [];
     // Chunk B: shared bullet-heading session — all SKUs in this bulk batch share family-consistent heading rotation
     const bulkHeadingSession = createBulletHeadingSession();
+    // Family-consistent lifestyle descriptor — all SKUs sharing a Parent ASIN get the same Target descriptor
+    const bulkLifestyleSession = createLifestyleSession();
 
     // Color-variant grouping: reorder beModels so leaders are processed FIRST
     // within each group. Followers will inherit the leader's titles with
@@ -2238,11 +2240,11 @@ function AppInner() {
           titles = await callApi(SYSTEM_PROMPT + catRules, titleMsg, 1500, 0.3);
           if (!titles) throw new Error("Title parse failed");
           if (titles.conversions) {
-            runFullTitlePipeline(titles, product, sku, capacityModeRef.current);
+            runFullTitlePipeline(titles, product, sku, capacityModeRef.current, bulkLifestyleSession);
             try {
               const resampleResult = await resampleInvalidDescriptors(titles, product, sku, capacityModeRef.current, callApi, { maxRetries: 2 });
               if (resampleResult.titlesUpdated) {
-                runFullTitlePipeline(titles, product, sku, capacityModeRef.current);
+                runFullTitlePipeline(titles, product, sku, capacityModeRef.current, bulkLifestyleSession);
               }
             } catch (resampleErr) {
               // Non-fatal
