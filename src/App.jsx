@@ -23,6 +23,13 @@ import {
   selectBulletOneHeading,
   createBulletHeadingSession,
   getBulletPromptForTier,
+  runBulletPipeline,
+  // Color-variant grouping — identical-except-for-color title inheritance
+  buildColorVariantGroups,
+  getLeaderForSku,
+  getColorVariantStem,
+  applyColorVariantRewrite,
+  COLOR_LETTER_TO_NAME,
   // #6: Backend keyword diff + backfill
   optimizeBackendKeywords,
 } from "./lib/title-processing.js";
@@ -1621,6 +1628,8 @@ function AppInner() {
       if (!parsed) throw new Error("Could not parse response");
       parsed._productVerified = !!product;
       parsed._productSku = product?.sku || null;
+      // Post-process: strip puffery, clean heading colons, trim oversized bullets
+      runBulletPipeline(parsed, 220);
       setBpResults(parsed);
     } catch (e) {
       setBpError(formatApiError(e));
@@ -1938,6 +1947,8 @@ function AppInner() {
       const bulletSysPrompt = getBulletPromptForTier(classifyProductTier(product));
       const bpMsg = buildBulletUserMessage(product, wsModel.trim(), amazonTitle, bulletCountRef.current, liveSearchData, requiredHeading);
       const bullets = await callApi(bulletSysPrompt, bpMsg, 2000, 0.4);
+      // Post-process: strip puffery, clean heading colons, trim oversized bullets
+      runBulletPipeline(bullets, 220);
       setWsResults(prev => ({ ...prev, bullets }));
 
       // Step 3: Backend Keywords
@@ -2023,35 +2034,76 @@ function AppInner() {
     const results = [];
     // Chunk B: shared bullet-heading session — all SKUs in this bulk batch share family-consistent heading rotation
     const bulkHeadingSession = createBulletHeadingSession();
-    for (let i = 0; i < beModels.length; i++) {
+
+    // Color-variant grouping: reorder beModels so leaders are processed FIRST
+    // within each group. Followers will inherit the leader's titles with
+    // color+SKU swaps (1 API call per group instead of N).
+    const colorVariantGroups = buildColorVariantGroups(PRODUCT_DB);
+    const leaderTitlesCache = {}; // leaderSku -> titles object (after pipeline)
+    const sortedModels = [...beModels].sort((a, b) => {
+      const aLeader = getLeaderForSku(a, colorVariantGroups);
+      const bLeader = getLeaderForSku(b, colorVariantGroups);
+      // Leaders process before their followers
+      if (aLeader && aLeader === a && bLeader === a) return -1; // a is leader of b's group
+      if (bLeader && bLeader === b && aLeader === b) return 1;  // b is leader of a's group
+      return a.localeCompare(b);
+    });
+
+    for (let i = 0; i < sortedModels.length; i++) {
       // Pause between products to avoid rate limiting
       if (i > 0) await delay(2000);
-      const sku = beModels[i];
+      const sku = sortedModels[i];
       const product = PRODUCT_DB[sku];
       if (!product) { results.push({ sku, error: "Not in database" }); continue; }
       const productCtx = formatProductContext({ sku, ...product });
       try {
-        // Titles
-        setBeProgress({ current: i + 1, total: beModels.length, sku, step: "titles" });
-        const gl = allMpKeys.map(k => MARKETPLACES[k]?.guidelines || "").join("\n---\n");
-        const titleMsg = `Model number: "${sku}"\nCreate optimized titles.\n\n${productCtx}\n1. Use VERIFIED PRODUCT DATA as ONLY source.\n2. Create Amazon title maximizing 200 chars.\n3. Convert for: ${allMpKeys.join(", ")}\nGuidelines:\n${gl}\nRespond ONLY with valid JSON.`;
-        const titles = await callApi(SYSTEM_PROMPT + catRules, titleMsg, 1500, 0.3);
-        if (!titles) throw new Error("Title parse failed");
-        // Run the full title post-processing pipeline (Chunk A: canonical core + diversification)
-        if (titles.conversions) {
-          runFullTitlePipeline(titles, product, sku, capacityModeRef.current);
-          try {
-            const resampleResult = await resampleInvalidDescriptors(titles, product, sku, capacityModeRef.current, callApi, { maxRetries: 2 });
-            if (resampleResult.titlesUpdated) {
-              runFullTitlePipeline(titles, product, sku, capacityModeRef.current);
+        // Titles — check if this SKU is a color-variant FOLLOWER with a cached leader
+        setBeProgress({ current: i + 1, total: sortedModels.length, sku, step: "titles" });
+        const leaderSku = getLeaderForSku(sku, colorVariantGroups);
+        const isFollower = leaderSku && leaderSku !== sku && leaderTitlesCache[leaderSku];
+        let titles;
+        if (isFollower) {
+          // Reuse leader's titles with color+SKU swap — NO API call
+          const cached = leaderTitlesCache[leaderSku];
+          const leaderProduct = PRODUCT_DB[leaderSku];
+          titles = JSON.parse(JSON.stringify(cached)); // deep clone
+          applyColorVariantRewrite(
+            cached.conversions,
+            titles.conversions,
+            leaderSku,
+            leaderProduct?.color || COLOR_LETTER_TO_NAME[getColorVariantStem(leaderSku)?.colorLetter] || "",
+            sku,
+            product.color || COLOR_LETTER_TO_NAME[getColorVariantStem(sku)?.colorLetter] || ""
+          );
+          // Also rewrite Amazon suggested_title if present (audit block)
+          if (titles.amazon_audit?.suggested_title) {
+            titles.amazon_audit.suggested_title = titles.conversions?.amazon?.title || titles.amazon_audit.suggested_title;
+          }
+        } else {
+          // Normal path — LLM call + pipeline + resample
+          const gl = allMpKeys.map(k => MARKETPLACES[k]?.guidelines || "").join("\n---\n");
+          const titleMsg = `Model number: "${sku}"\nCreate optimized titles.\n\n${productCtx}\n1. Use VERIFIED PRODUCT DATA as ONLY source.\n2. Create Amazon title maximizing 200 chars.\n3. Convert for: ${allMpKeys.join(", ")}\nGuidelines:\n${gl}\nRespond ONLY with valid JSON.`;
+          titles = await callApi(SYSTEM_PROMPT + catRules, titleMsg, 1500, 0.3);
+          if (!titles) throw new Error("Title parse failed");
+          if (titles.conversions) {
+            runFullTitlePipeline(titles, product, sku, capacityModeRef.current);
+            try {
+              const resampleResult = await resampleInvalidDescriptors(titles, product, sku, capacityModeRef.current, callApi, { maxRetries: 2 });
+              if (resampleResult.titlesUpdated) {
+                runFullTitlePipeline(titles, product, sku, capacityModeRef.current);
+              }
+            } catch (resampleErr) {
+              // Non-fatal
             }
-          } catch (resampleErr) {
-            // Non-fatal
+          }
+          // Cache for any followers in this group
+          if (leaderSku === sku) {
+            leaderTitlesCache[sku] = JSON.parse(JSON.stringify(titles));
           }
         }
         const amazonTitle = titles.conversions?.amazon?.title || "";
         // Bullets — Chunk B: locked heading from batch session + tier-specific prompt
-        setBeProgress({ current: i + 1, total: beModels.length, sku, step: "bullets" });
+        setBeProgress({ current: i + 1, total: sortedModels.length, sku, step: "bullets" });
         // Auto-optimize bullet count by tier: basic=5, mid=6, premium=7
         // Bullet count is determined by exact product type per merchandising mapping
         const autoBulletCount = getBulletCountForType(product?.type);
@@ -2059,8 +2111,10 @@ function AppInner() {
         const bulkBulletSysPrompt = getBulletPromptForTier(classifyProductTier(product));
         const bpMsg = buildBulletUserMessage(product, sku, amazonTitle, autoBulletCount, liveSearchData, bulkRequiredHeading);
         const bullets = await callApi(bulkBulletSysPrompt, bpMsg, 2000, 0.4);
+        // Post-process: strip puffery, clean heading colons, trim oversized bullets
+        runBulletPipeline(bullets, 220);
         // Keywords
-        setBeProgress({ current: i + 1, total: beModels.length, sku, step: "keywords" });
+        setBeProgress({ current: i + 1, total: sortedModels.length, sku, step: "keywords" });
         const bulletText = bullets?.bullets?.map(b => b.heading + ": " + b.text).join("\n") || "";
         const bkSys = "Amazon backend keyword specialist for CUCKOO. Generate search terms (499 byte max). Space-separated, no punctuation, no words in title/bullets. Every keyword must be a real shopper search term — do NOT use vague filler words like vessel, container, bowl, utensil, gadget, device, machine, equipment, tool, product, item, goods, thing, stuff.\nRespond ONLY with valid JSON: {\"keywords\":\"...\",\"byte_count\":0}";
         const bkMsg = "Backend keywords for CUCKOO " + sku + ":\n" + productCtx + (amazonTitle ? "\nTitle: \"" + amazonTitle + "\"" : "") + (bulletText ? "\nBullets:\n" + bulletText : "") + "\nRespond ONLY with valid JSON.";
@@ -2089,7 +2143,7 @@ function AppInner() {
     }
     if (beTimerRef.current) { clearInterval(beTimerRef.current); beTimerRef.current = null; }
     setBeLoading(false); beAbortRef.current = null;
-    setBeProgress({ current: beModels.length, total: beModels.length, sku: "Done", step: "complete" });
+    setBeProgress({ current: sortedModels.length, total: sortedModels.length, sku: "Done", step: "complete" });
   }, [beModels]);
 
   // Bulk export to XLSX
