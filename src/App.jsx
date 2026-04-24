@@ -347,13 +347,34 @@ function lookupProduct(input, db) {
   if (!input) return null;
   const source = db || PRODUCT_DB;
   const q = input.trim().toUpperCase();
+  // Find matching SKU in the provided DB
+  let matchedSku = null;
+  let matchedData = null;
   for (const [sku, data] of Object.entries(source)) {
-    if (sku.toUpperCase() === q) return { sku, ...data, verified: true };
+    if (sku.toUpperCase() === q) { matchedSku = sku; matchedData = data; break; }
   }
-  for (const [sku, data] of Object.entries(source)) {
-    if (sku.toUpperCase().startsWith(q) || q.startsWith(sku.toUpperCase())) return { sku, ...data, verified: true };
+  if (!matchedSku) {
+    for (const [sku, data] of Object.entries(source)) {
+      if (sku.toUpperCase().startsWith(q) || q.startsWith(sku.toUpperCase())) { matchedSku = sku; matchedData = data; break; }
+    }
   }
-  return null;
+  if (!matchedSku) {
+    // Also check hardcoded DB in case the live DB doesn't have this SKU
+    for (const [sku, data] of Object.entries(PRODUCT_DB)) {
+      if (sku.toUpperCase() === q) { matchedSku = sku; matchedData = data; break; }
+    }
+    if (!matchedSku) {
+      for (const [sku, data] of Object.entries(PRODUCT_DB)) {
+        if (sku.toUpperCase().startsWith(q) || q.startsWith(sku.toUpperCase())) { matchedSku = sku; matchedData = data; break; }
+      }
+    }
+  }
+  if (!matchedSku) return null;
+  // Merge: hardcoded PRODUCT_DB provides full fields (cookingModeNames, mfg, wattage, etc.),
+  // live DB provides user-uploaded fields (parentAsin, etc.). Live fields win on conflict.
+  const hardcoded = PRODUCT_DB[matchedSku] || {};
+  const live = (db && db !== PRODUCT_DB) ? (db[matchedSku] || {}) : {};
+  return { sku: matchedSku, ...hardcoded, ...live, verified: true };
 }
 
 // Format product DB entry as prompt context
