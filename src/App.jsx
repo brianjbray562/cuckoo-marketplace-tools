@@ -1067,7 +1067,7 @@ function buildBulletUserMessage(product, sku, finalTitle, count, searchData, req
 // --- APP COMPONENT ---
 
 function AppInner() {
-  const [page, setPage] = useState("title_optimizer"); // "title_optimizer" or "backend_keywords"
+  const [page, setPage] = useState("listing_workspace"); // Default landing: Listing Workspace (full flow, single SKU)
   const isMac = useMemo(() => typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform), []);
   const [amazonTitle, setAmazonTitle] = useState("");
   const [inputMode, setInputMode] = useState("model"); // "title" or "model"
@@ -1196,8 +1196,12 @@ function AppInner() {
   const [darkMode, setDarkMode] = useState(false);
   useEffect(() => { (async () => { try { const dm = await window.storage.get("dark_mode"); if (dm?.value === "true") { setDarkMode(true); document.body.classList.add("dark-mode"); } } catch(e) {} try { const cm = await window.storage.get("capacity_mode"); if (cm?.value && ["both","uncooked","cooked"].includes(cm.value)) { setCapacityMode(cm.value); capacityModeRef.current = cm.value; } } catch(e) {} try { const bc = await window.storage.get("bullet_count"); const n = parseInt(bc?.value); if (n >= 5 && n <= 7) { setBulletCount(n); bulletCountRef.current = n; } } catch(e) {} })(); }, []);
   const toggleDarkMode = useCallback(() => { setDarkMode(prev => { const next = !prev; document.body.classList.toggle("dark-mode", next); try { window.storage.set("dark_mode", String(next)); } catch(e) {} return next; }); }, []);
-  // Nav group dropdown
+  // Nav group dropdown (legacy — kept for compatibility, new sidebar uses sidebarExpandedGroups)
   const [openNavGroup, setOpenNavGroup] = useState(null);
+  // Sidebar state (Option A+B redesign)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarExpandedGroups, setSidebarExpandedGroups] = useState({ generate: true, analyze: true, reference: true });
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const navGroupRef = useRef(null);
   useEffect(() => { if (!openNavGroup) return; const handler = (e) => { if (navGroupRef.current && !navGroupRef.current.contains(e.target)) setOpenNavGroup(null); }; document.addEventListener("mousedown", handler); return () => document.removeEventListener("mousedown", handler); }, [openNavGroup]);
   // History state
@@ -1220,7 +1224,7 @@ function AppInner() {
   const CREDENTIALS = { cuckoo: "cka2026$", admin: "cka2026$" };
   const authTokenRef = useRef(null);
   const handleLogin = useCallback(() => { const user = authUser.trim().toLowerCase(); if (CREDENTIALS[user] && CREDENTIALS[user] === authPass) { authTokenRef.current = authPass; setAuthState("authenticated"); setIsAdmin(user === "admin"); setLoggedInUser(user); setAuthError(""); setAuthUser(""); setAuthPass(""); } else { setAuthError("Invalid username or password"); } }, [authUser, authPass]);
-  const handleLogout = useCallback(() => { setAuthState("login"); setIsAdmin(false); setLoggedInUser(""); setShowAccountMenu(false); setPage("title_optimizer"); }, []);
+  const handleLogout = useCallback(() => { setAuthState("login"); setIsAdmin(false); setLoggedInUser(""); setShowAccountMenu(false); setPage("listing_workspace"); }, []);
   const [dbUploadStatus, setDbUploadStatus] = useState(null);
   const [dbLastUpdated, setDbLastUpdated] = useState(null);
   const [liveProductDb, setLiveProductDb] = useState(PRODUCT_DB);
@@ -2038,7 +2042,7 @@ function AppInner() {
     // Color-variant grouping: reorder beModels so leaders are processed FIRST
     // within each group. Followers will inherit the leader's titles with
     // color+SKU swaps (1 API call per group instead of N).
-    const colorVariantGroups = buildColorVariantGroups(PRODUCT_DB);
+    const colorVariantGroups = buildColorVariantGroups(liveProductDbRef.current);
     const leaderTitlesCache = {}; // leaderSku -> titles object (after pipeline)
     const sortedModels = [...beModels].sort((a, b) => {
       const aLeader = getLeaderForSku(a, colorVariantGroups);
@@ -2053,7 +2057,7 @@ function AppInner() {
       // Pause between products to avoid rate limiting
       if (i > 0) await delay(2000);
       const sku = sortedModels[i];
-      const product = PRODUCT_DB[sku];
+      const product = liveProductDbRef.current[sku];
       if (!product) { results.push({ sku, error: "Not in database" }); continue; }
       const productCtx = formatProductContext({ sku, ...product });
       try {
@@ -2065,7 +2069,7 @@ function AppInner() {
         if (isFollower) {
           // Reuse leader's titles with color+SKU swap — NO API call
           const cached = leaderTitlesCache[leaderSku];
-          const leaderProduct = PRODUCT_DB[leaderSku];
+          const leaderProduct = liveProductDbRef.current[leaderSku];
           titles = JSON.parse(JSON.stringify(cached)); // deep clone
           applyColorVariantRewrite(
             cached.conversions,
@@ -2152,7 +2156,7 @@ function AppInner() {
     const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs");
     const mpKeys = Object.keys(MARKETPLACES);
     const rows = beResults.filter(r => !r.error).map(r => {
-      const row = { SKU: r.sku, "Product Type": PRODUCT_DB[r.sku]?.type || "", "Cup Size": PRODUCT_DB[r.sku]?.cupSize || "" };
+      const row = { SKU: r.sku, "Product Type": liveProductDbRef.current[r.sku]?.type || "", "Cup Size": liveProductDbRef.current[r.sku]?.cupSize || "" };
       // Amazon suggested title
       row["Amazon Title (Suggested)"] = r.amazonTitle || "";
       row["Amazon Chars"] = (r.amazonTitle || "").length;
@@ -2444,14 +2448,15 @@ function AppInner() {
           <nav ref={navGroupRef} className="nav-scroll" role="tablist" aria-label="Tool navigation" style={{ flex: 1, display: "flex", gap: 0 }}>
           {[
             { group: "generate", label: "Generate", icon: "\u270F\uFE0F", items: [
-              { key: "listing_workspace", label: "Listing Workspace", icon: "\u{1F680}" },
-              { key: "bulk_export", label: "Bulk Export", icon: "\u{1F4E6}" },
-              { key: "title_optimizer", label: "Marketplace Titles", icon: "\u270F\uFE0F" },
-              { key: "bullet_points", label: "Bullet Points", icon: "\u{1F4DD}" },
-              { key: "backend_keywords", label: "Backend Keywords", icon: "\u{1F50D}" },
-              { key: "listing_audit", label: "Listing Audit", icon: "\u{1F4CB}" },
+              { key: "listing_workspace", label: "Listing Workspace", icon: "\u{1F680}", primary: true },
+              { key: "bulk_export", label: "Bulk Export", icon: "\u{1F4E6}", primary: true },
+              { key: "_divider_generate", divider: true },
+              { key: "title_optimizer", label: "Just Titles", icon: "\u270F\uFE0F" },
+              { key: "bullet_points", label: "Just Bullets", icon: "\u{1F4DD}" },
+              { key: "backend_keywords", label: "Just Keywords", icon: "\u{1F50D}" },
             ]},
             { group: "analyze", label: "Analyze", icon: "\u{1F4CA}", items: [
+              { key: "listing_audit", label: "Listing Audit", icon: "\u{1F4CB}" },
               { key: "competitor_analyzer", label: "Competitor Analyzer", icon: "\u{1F3C6}" },
               { key: "listing_extractor", label: "Listing Extractor", icon: "\u{1F310}" },
               { key: "review_analyzer", label: "Review Analyzer", icon: "\u{2B50}" },
@@ -2472,15 +2477,18 @@ function AppInner() {
                   <span style={{ fontSize: 14 }}>{group.icon}</span>{group.label}<span style={{ fontSize: 9, opacity: 0.6, transform: isOpen ? "rotate(180deg)" : "rotate(0)", transition: "transform .15s" }}>{"\u25BC"}</span>
                 </button>
                 {isOpen && (
-                  <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 200, minWidth: 220, overflow: "hidden", marginTop: 2 }}>
-                    {group.items.map(item => (
+                  <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #e8e5e0", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 200, minWidth: 240, overflow: "hidden", marginTop: 2 }}>
+                    {group.items.map(item => {
+                      if (item.divider) return <div key={item.key} style={{ height: 1, background: "#e8e5e0", margin: "4px 0" }} />;
+                      return (
                       <button key={item.key} role="tab" aria-selected={page === item.key} onClick={() => { setPage(item.key); setOpenNavGroup(null); window.scrollTo(0, 0); }}
-                        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", background: page === item.key ? "rgba(107,28,35,0.06)" : "transparent", border: "none", borderLeft: page === item.key ? `3px solid ${MAROON}` : "3px solid transparent", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontSize: 12, fontWeight: page === item.key ? 700 : 400, color: page === item.key ? MAROON : "#555", textAlign: "left", transition: "background .1s" }}
+                        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: item.primary ? "12px 16px" : "11px 16px", background: page === item.key ? "rgba(107,28,35,0.06)" : "transparent", border: "none", borderLeft: page === item.key ? `3px solid ${MAROON}` : "3px solid transparent", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontSize: item.primary ? 13 : 12, fontWeight: page === item.key ? 700 : (item.primary ? 600 : 400), color: page === item.key ? MAROON : (item.primary ? "#333" : "#555"), textAlign: "left", transition: "background .1s" }}
                         onMouseEnter={e => { if (page !== item.key) e.target.style.background = "#faf9f7"; }}
                         onMouseLeave={e => { if (page !== item.key) e.target.style.background = "transparent"; }}>
                         <span style={{ fontSize: 14 }}>{item.icon}</span>{item.label}
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
