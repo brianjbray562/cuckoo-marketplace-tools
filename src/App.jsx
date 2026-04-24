@@ -347,34 +347,13 @@ function lookupProduct(input, db) {
   if (!input) return null;
   const source = db || PRODUCT_DB;
   const q = input.trim().toUpperCase();
-  // Find matching SKU in the provided DB
-  let matchedSku = null;
-  let matchedData = null;
   for (const [sku, data] of Object.entries(source)) {
-    if (sku.toUpperCase() === q) { matchedSku = sku; matchedData = data; break; }
+    if (sku.toUpperCase() === q) return { sku, ...data, verified: true };
   }
-  if (!matchedSku) {
-    for (const [sku, data] of Object.entries(source)) {
-      if (sku.toUpperCase().startsWith(q) || q.startsWith(sku.toUpperCase())) { matchedSku = sku; matchedData = data; break; }
-    }
+  for (const [sku, data] of Object.entries(source)) {
+    if (sku.toUpperCase().startsWith(q) || q.startsWith(sku.toUpperCase())) return { sku, ...data, verified: true };
   }
-  if (!matchedSku) {
-    // Also check hardcoded DB in case the live DB doesn't have this SKU
-    for (const [sku, data] of Object.entries(PRODUCT_DB)) {
-      if (sku.toUpperCase() === q) { matchedSku = sku; matchedData = data; break; }
-    }
-    if (!matchedSku) {
-      for (const [sku, data] of Object.entries(PRODUCT_DB)) {
-        if (sku.toUpperCase().startsWith(q) || q.startsWith(sku.toUpperCase())) { matchedSku = sku; matchedData = data; break; }
-      }
-    }
-  }
-  if (!matchedSku) return null;
-  // Merge: hardcoded PRODUCT_DB provides full fields (cookingModeNames, mfg, wattage, etc.),
-  // live DB provides user-uploaded fields (parentAsin, etc.). Live fields win on conflict.
-  const hardcoded = PRODUCT_DB[matchedSku] || {};
-  const live = (db && db !== PRODUCT_DB) ? (db[matchedSku] || {}) : {};
-  return { sku: matchedSku, ...hardcoded, ...live, verified: true };
+  return null;
 }
 
 // Format product DB entry as prompt context
@@ -1255,7 +1234,145 @@ function AppInner() {
   const [svUploadStatus, setSvUploadStatus] = useState(null);
   useEffect(() => { if (!showAccountMenu) return; const handler = (e) => { if (accountMenuRef.current && !accountMenuRef.current.contains(e.target)) setShowAccountMenu(false); }; document.addEventListener("mousedown", handler); return () => document.removeEventListener("mousedown", handler); }, [showAccountMenu]);
   useEffect(() => { (async () => { try { const customDb = await window.storage.get("product_db_custom"); if (customDb && customDb.value) setLiveProductDb(JSON.parse(customDb.value)); } catch(e) {} try { const ts = await window.storage.get("product_db_updated"); if (ts && ts.value) setDbLastUpdated(ts.value); } catch(e) {} try { const customSv = await window.storage.get("search_data_custom"); if (customSv && customSv.value) setLiveSearchData(JSON.parse(customSv.value)); } catch(e) {} })(); }, []);
-  const handleDbUpload = useCallback(async (file) => { setDbUploadStatus(null); if (!file) return; if (file.size > 2*1024*1024) { setDbUploadStatus({type:"error",message:"File too large"}); return; } const ext = file.name.split(".").pop().toLowerCase(); if (!["xlsx","xls","json"].includes(ext)) { setDbUploadStatus({type:"error",message:"Use .xlsx or .json"}); return; } try { let db; const errors = []; let missingParentAsin = 0; if (ext==="json") { db=JSON.parse(await file.text()); /* count missing parentAsin in JSON too */ for (const sku of Object.keys(db)) { if (!db[sku].parentAsin) missingParentAsin++; } } else { const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs"); const wb=XLSX.read(await file.arrayBuffer(),{type:"array"}); const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]); db={}; for (const row of rows) { /* Handle whitespace in column headers (e.g., " SKU") */ const normalizedRow = {}; for (const k of Object.keys(row)) { normalizedRow[k.trim()] = row[k]; } const sku=String(normalizedRow["Model Number"]||normalizedRow["SKU"]||Object.values(normalizedRow)[0]||"").trim(); if(!sku||!sku.startsWith("CR")){errors.push(sku+": invalid"); continue;} const parentAsin = String(normalizedRow["Parent ASIN"]||"").trim(); if (!parentAsin) missingParentAsin++; db[sku]={type:normalizedRow["Type"]||"",heating:normalizedRow["Heating"]||"",pressure:normalizedRow["Pressure"]===true||String(normalizedRow["Pressure"]).toLowerCase()==="yes",cupSize:normalizedRow["Cup Size"]||"",color:normalizedRow["Color"]||"",innerPot:normalizedRow["Inner Pot"]||normalizedRow["Inner Pot Coating"]||"",features:typeof normalizedRow["Features"]==="string"?normalizedRow["Features"].split(",").map(f=>f.trim()).filter(Boolean):[],asin:normalizedRow["ASIN"]||"",parentAsin:parentAsin}; if(normalizedRow["Cooking Modes"])db[sku].cookingModes=String(normalizedRow["Cooking Modes"]); if(normalizedRow["# of Cooking Modes"])db[sku].cookingModes=String(normalizedRow["# of Cooking Modes"]); } } const count=Object.keys(db).length; if(count===0){setDbUploadStatus({type:"error",message:"No valid models"});return;} const warnings = []; if (missingParentAsin > 0) { warnings.push(missingParentAsin + " of " + count + " SKUs missing 'Parent ASIN' — bullet heading rotation will fall back to ASIN/SKU for those. Add the Parent ASIN column for family-consistent headings."); } setDbUploadStatus({type:"preview",message:count+" models parsed",data:db,errors:errors.slice(0,10),count,warnings}); } catch(err){setDbUploadStatus({type:"error",message:"Parse error: "+err.message});} }, []);
+  const handleDbUpload = useCallback(async (file) => {
+    setDbUploadStatus(null);
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { setDbUploadStatus({ type: "error", message: "File too large" }); return; }
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (!["xlsx", "xls", "json"].includes(ext)) { setDbUploadStatus({ type: "error", message: "Use .xlsx or .json" }); return; }
+    try {
+      let db;
+      const errors = [];
+      let missingParentAsin = 0;
+
+      if (ext === "json") {
+        db = JSON.parse(await file.text());
+        for (const sku of Object.keys(db)) { if (!db[sku].parentAsin) missingParentAsin++; }
+      } else {
+        const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs");
+        const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+        // Prefer the "Categorization" sheet if present, otherwise use the first sheet
+        const sheetName = wb.SheetNames.find(n => n.toLowerCase().includes("categor")) || wb.SheetNames[0];
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName]);
+        db = {};
+
+        // Helper: normalize boolean-ish values ("Yes", "No", "Yes (KOR & ENG)", true/false)
+        const yn = (v) => {
+          if (v === true) return true;
+          if (v === false || v == null) return false;
+          const s = String(v).trim().toLowerCase();
+          return s.startsWith("yes") || s === "true";
+        };
+
+        // Helper: parse a multi-line string into an array (splits on \n, \r, and commas)
+        const splitList = (v) => {
+          if (!v) return [];
+          return String(v)
+            .split(/[\n\r,]/)
+            .map(s => s.trim())
+            .filter(Boolean);
+        };
+
+        for (const row of rows) {
+          // Normalize column headers: strip whitespace so " SKU" matches "SKU"
+          const r = {};
+          for (const k of Object.keys(row)) { r[k.trim()] = row[k]; }
+
+          const sku = String(r["SKU"] || r["Model Number"] || Object.values(r)[0] || "").trim();
+          if (!sku || !sku.startsWith("CR")) { errors.push(sku + ": invalid"); continue; }
+
+          const parentAsin = String(r["Parent ASIN"] || "").trim();
+          if (!parentAsin) missingParentAsin++;
+
+          // Build the product entry. Field names match what App.jsx and
+          // formatProductContext expect from the hardcoded PRODUCT_DB.
+          const entry = {
+            type: String(r["Type"] || "").trim(),
+            heating: String(r["Heating"] || "").trim(),
+            pressure: yn(r["High Pressure Cooking"] || r["High Pressure"] || r["Pressure"]),
+            cupSize: String(r["Cup Size"] || "").trim(),
+            color: String(r["Color"] || "").trim(),
+            asin: String(r["ASIN"] || "").trim(),
+            parentAsin: parentAsin,
+            innerPot: String(r["Inner Pot Coating"] || r["Inner Pot"] || "").trim(),
+          };
+
+          // Cooking modes: the new format stores the actual mode names newline-separated
+          // (e.g., "Glutinous/White\nWhite Rice Quick\nMulti Grain").
+          // Parse into cookingModeNames (array) AND set cookingModes (count as string) for backward compat.
+          const cookingModesRaw = r["Cooking Modes"] || r["# of Cooking Modes"] || "";
+          const modeNames = splitList(cookingModesRaw);
+          if (modeNames.length > 0) {
+            entry.cookingModeNames = modeNames;
+            entry.cookingModes = String(modeNames.length);
+          } else if (cookingModesRaw) {
+            // Fallback: if the column is just a number (old format), preserve it
+            entry.cookingModes = String(cookingModesRaw).trim();
+          }
+
+          // Build the features array from the individual boolean columns
+          // (replaces the hardcoded DB's features: ["Auto Clean", "Turbo Mode", ...]).
+          const features = [];
+          if (yn(r["Auto Clean Mode"]) || yn(r["Auto Clean?"])) features.push("Auto Clean");
+          const fastCook = String(r["Fast Cook"] || r["Turbo Mode?"] || "").trim();
+          if (fastCook && fastCook.toLowerCase() !== "no") {
+            // "Turbo Mode", "Quick Mode", etc. — use the value as the feature name
+            features.push(fastCook);
+          }
+          const preset = String(r["Preset Timer Duration"] || r["Preset Timer"] || "").trim();
+          if (preset && preset.toLowerCase() !== "no" && preset.toLowerCase() !== "nan") {
+            features.push("Preset Timer (" + preset + ")");
+          }
+          if (yn(r["Drain Dish Included"]) || yn(r["Water Capture/Drain Dish?"])) features.push("Water Capture");
+          if (yn(r["Steam Tray Included"]) || yn(r["Steam Tray?"])) features.push("Steam Tray");
+          if (yn(r["Steam Plate Included"]) || yn(r["Steam Plate?"])) features.push("Steam Plate");
+          const voiceGuided = String(r["Voice Guided"] || r["Voice Guide?"] || "").trim();
+          if (voiceGuided && voiceGuided.toLowerCase() !== "no" && voiceGuided.toLowerCase() !== "nan") {
+            // Could be "Yes", "Yes (KOR & ENG)", etc. — include as "Voice Guide" feature
+            features.push("Voice Guide");
+          }
+
+          // Also fold in any "Unique Features" column entries (e.g., "Silent Pressure System")
+          const uniqueFeatures = splitList(r["Unique Features"] || r["Special Features"] || "");
+          for (const uf of uniqueFeatures) {
+            if (uf && !features.includes(uf)) features.push(uf);
+          }
+
+          // Legacy: if a plain "Features" comma-separated column exists, merge it too
+          if (typeof r["Features"] === "string") {
+            for (const f of r["Features"].split(",").map(s => s.trim()).filter(Boolean)) {
+              if (!features.includes(f)) features.push(f);
+            }
+          }
+
+          entry.features = features;
+
+          // Optional: fast-cook speed details — store for prompt context if needed
+          const fastCookSpeed = String(r["Fast Cook Speed (2 Cups Cooked)"] || r["How Fast & Amount? (Turbo)"] || "").trim();
+          if (fastCookSpeed && fastCookSpeed.toLowerCase() !== "nan") entry.fastCookSpeed = fastCookSpeed;
+
+          db[sku] = entry;
+        }
+      }
+
+      const count = Object.keys(db).length;
+      if (count === 0) { setDbUploadStatus({ type: "error", message: "No valid models" }); return; }
+
+      const warnings = [];
+      if (missingParentAsin > 0) {
+        warnings.push(missingParentAsin + " of " + count + " SKUs missing 'Parent ASIN' — bullet heading rotation will fall back to ASIN/SKU for those. Add the Parent ASIN column for family-consistent headings.");
+      }
+      // Warn if cooking mode names are missing (new format should populate this)
+      const missingModeNames = Object.values(db).filter(p => !p.cookingModeNames || p.cookingModeNames.length === 0).length;
+      if (missingModeNames > 0 && missingModeNames < count) {
+        warnings.push(missingModeNames + " of " + count + " SKUs missing cooking mode names in the 'Cooking Modes' column. Mode-specific prompts may be generic for those SKUs.");
+      }
+
+      setDbUploadStatus({ type: "preview", message: count + " models parsed", data: db, errors: errors.slice(0, 10), count, warnings });
+    } catch (err) {
+      setDbUploadStatus({ type: "error", message: "Parse error: " + err.message });
+    }
+  }, []);
   const applyDbUpload = useCallback(async () => { if(!dbUploadStatus||!dbUploadStatus.data)return; try{await window.storage.set("product_db_backup",JSON.stringify(liveProductDb));await window.storage.set("product_db_custom",JSON.stringify(dbUploadStatus.data));const ts=new Date().toISOString();await window.storage.set("product_db_updated",ts);setLiveProductDb(dbUploadStatus.data);setDbLastUpdated(ts);setDbUploadStatus({type:"success",message:"Updated: "+Object.keys(dbUploadStatus.data).length+" models"});}catch(err){setDbUploadStatus({type:"error",message:"Save failed"});} }, [dbUploadStatus, liveProductDb]);
   const revertDb = useCallback(async () => { try{const b=await window.storage.get("product_db_backup");if(b&&b.value){const p=JSON.parse(b.value);await window.storage.set("product_db_custom",JSON.stringify(p));setLiveProductDb(p);setDbUploadStatus({type:"success",message:"Reverted"});}else setDbUploadStatus({type:"error",message:"No backup"});}catch(e){setDbUploadStatus({type:"error",message:"Revert failed"});} }, []);
   const resetDbToDefault = useCallback(async () => { try{await window.storage.delete("product_db_custom");await window.storage.delete("product_db_updated");await window.storage.delete("product_db_backup");setLiveProductDb(PRODUCT_DB);setDbLastUpdated(null);setDbUploadStatus({type:"success",message:"Reset to defaults"});}catch(e){setDbUploadStatus({type:"error",message:"Reset failed"});} }, []);
