@@ -52,6 +52,20 @@ import {
   BK_CULTURAL_DISHES,
   BK_USE_CASE_LONGTAIL,
   BK_KNOWN_MISSPELLINGS,
+  // Bullet post-processing (bulk-review-24 fixes)
+  cleanBulletHeading,
+  removeBulletPuffery,
+  trimBulletToMaxChars,
+  trimOversizedBullets,
+  runBulletPipeline,
+  // Color-variant grouping
+  getColorVariantStem,
+  buildColorVariantGroups,
+  pickColorVariantLeader,
+  getLeaderForSku,
+  rewriteTitleForFollower,
+  applyColorVariantRewrite,
+  COLOR_LETTER_TO_NAME,
 } from "../title-processing.js";
 
 // -------------------------------------------------------------
@@ -1716,9 +1730,9 @@ describe("getBulletPromptForTier", () => {
   });
 
   it("tier prompts have distinct length targets in their instructions", () => {
-    expect(BULLET_TIER_PROMPT_BASIC).toMatch(/120-150/);
+    expect(BULLET_TIER_PROMPT_BASIC).toMatch(/130-150/);
     expect(BULLET_TIER_PROMPT_MID).toMatch(/150-180/);
-    expect(BULLET_TIER_PROMPT_PREMIUM).toMatch(/180-220/);
+    expect(BULLET_TIER_PROMPT_PREMIUM).toMatch(/180-215|180-220/);
   });
 });
 
@@ -1992,5 +2006,417 @@ describe("optimizeBackendKeywords", () => {
       { sku: "CR-0675FW" }
     );
     expect(result.bytesReclaimed).toBeGreaterThan(0);
+  });
+});
+
+// =============================================================
+// BULLET POST-PROCESSING (bulk-review-24 fixes)
+// =============================================================
+
+describe("cleanBulletHeading", () => {
+  it("strips a single trailing colon", () => {
+    expect(cleanBulletHeading("DUAL PRESSURE SYSTEM:")).toBe("DUAL PRESSURE SYSTEM");
+  });
+
+  it("strips multiple trailing colons (the '::' artifact from LLM)", () => {
+    expect(cleanBulletHeading("DUAL PRESSURE SYSTEM::")).toBe("DUAL PRESSURE SYSTEM");
+    expect(cleanBulletHeading("INDUCTION + TWIN PRESSURE:::")).toBe("INDUCTION + TWIN PRESSURE");
+  });
+
+  it("trims whitespace around trailing colons", () => {
+    expect(cleanBulletHeading("MICOM INTELLIGENCE :")).toBe("MICOM INTELLIGENCE");
+    expect(cleanBulletHeading("MICOM INTELLIGENCE : :")).toBe("MICOM INTELLIGENCE");
+  });
+
+  it("leaves headings without colons unchanged", () => {
+    expect(cleanBulletHeading("TWIN PRESSURE INDUCTION")).toBe("TWIN PRESSURE INDUCTION");
+  });
+
+  it("handles null, undefined, and empty", () => {
+    expect(cleanBulletHeading(null)).toBe(null);
+    expect(cleanBulletHeading(undefined)).toBe(undefined);
+    expect(cleanBulletHeading("")).toBe("");
+  });
+
+  it("does not strip internal colons (e.g., subtitles)", () => {
+    expect(cleanBulletHeading("SMART: CONTROL")).toBe("SMART: CONTROL");
+  });
+});
+
+describe("removeBulletPuffery", () => {
+  it("strips 'Advanced Microcomputer' (the CR-0675FW bulk finding)", () => {
+    const bullets = {
+      bullets: [
+        { heading: "SMART MICOM CONTROL", text: "Advanced microcomputer technology automatically adjusts cooking time for consistently fluffy rice." },
+      ],
+    };
+    removeBulletPuffery(bullets);
+    expect(bullets.bullets[0].text).not.toMatch(/Advanced microcomputer/i);
+    expect(bullets.bullets[0].text).toMatch(/microcomputer/i); // bare "microcomputer" kept
+  });
+
+  it("strips 'Advanced Micom'", () => {
+    const bullets = { bullets: [{ heading: "H", text: "This Advanced Micom cooker is reliable." }] };
+    removeBulletPuffery(bullets);
+    expect(bullets.bullets[0].text).not.toMatch(/Advanced Micom/i);
+    expect(bullets.bullets[0].text).toContain("Micom");
+  });
+
+  it("strips 'Premium White', 'Luxury', 'Premium Craftsmanship'", () => {
+    const bullets = {
+      bullets: [
+        { heading: "A", text: "Premium White finish." },
+        { heading: "B", text: "Luxury cooking experience." },
+        { heading: "C", text: "Built with Premium Craftsmanship." },
+      ],
+    };
+    removeBulletPuffery(bullets);
+    expect(bullets.bullets[0].text).not.toMatch(/Premium White/);
+    expect(bullets.bullets[1].text).not.toMatch(/Luxury/);
+    expect(bullets.bullets[2].text).not.toMatch(/Premium Craftsmanship/);
+  });
+
+  it("also cleans heading double-colons during the same pass", () => {
+    const bullets = {
+      bullets: [
+        { heading: "DUAL PRESSURE SYSTEM::", text: "Some text." },
+      ],
+    };
+    removeBulletPuffery(bullets);
+    expect(bullets.bullets[0].heading).toBe("DUAL PRESSURE SYSTEM");
+  });
+
+  it("handles null/empty bullets gracefully", () => {
+    expect(() => removeBulletPuffery(null)).not.toThrow();
+    expect(() => removeBulletPuffery({})).not.toThrow();
+    expect(() => removeBulletPuffery({ bullets: [] })).not.toThrow();
+    expect(() => removeBulletPuffery({ bullets: [{ heading: "H" }] })).not.toThrow(); // no text field
+  });
+});
+
+describe("trimBulletToMaxChars", () => {
+  it("returns unchanged when total is already under the limit", () => {
+    const result = trimBulletToMaxChars("HEAD", "Short body.", 220);
+    expect(result.wasTrimmed).toBe(false);
+    expect(result.text).toBe("Short body.");
+  });
+
+  it("trims at a sentence boundary when possible (premium bullet over 220)", () => {
+    // Heading "DUAL PRESSURE" (13 chars) + ": " (2) = 15 prefix; 205 chars body max
+    const body = "Twin pressure technology delivers restaurant-quality texture control through precise steam circulation. Achieve perfectly tender grains with enhanced flavor absorption for premium rice dishes and elevated daily meals.";
+    const result = trimBulletToMaxChars("DUAL PRESSURE", body, 220);
+    expect(result.wasTrimmed).toBe(true);
+    // Should cut at the ". " after "circulation"
+    expect(result.text).toMatch(/circulation\.$/);
+    expect(("DUAL PRESSURE: " + result.text).length).toBeLessThanOrEqual(220);
+  });
+
+  it("falls back to word-boundary when no sentence boundary fits", () => {
+    const heading = "H";
+    const body = "a".repeat(250);
+    const result = trimBulletToMaxChars(heading, body, 50);
+    expect(result.wasTrimmed).toBe(true);
+    expect(("H: " + result.text).length).toBeLessThanOrEqual(50);
+  });
+
+  it("handles null body", () => {
+    const result = trimBulletToMaxChars("H", null, 220);
+    expect(result.wasTrimmed).toBe(false);
+  });
+});
+
+describe("trimOversizedBullets", () => {
+  it("trims bullets whose heading + ': ' + body exceeds 220 chars", () => {
+    const bullets = {
+      bullets: [
+        { heading: "OK", text: "short." },
+        { heading: "PREMIUM", text: "This is a sentence. ".repeat(20) }, // way over 220
+      ],
+    };
+    const trimmed = trimOversizedBullets(bullets, 220);
+    expect(trimmed.length).toBe(1);
+    expect(trimmed[0].index).toBe(1);
+    // First bullet untouched
+    expect(bullets.bullets[0].text).toBe("short.");
+    // Second bullet now fits
+    const fullLen = ("PREMIUM: " + bullets.bullets[1].text).length;
+    expect(fullLen).toBeLessThanOrEqual(220);
+  });
+
+  it("returns empty array when all bullets fit", () => {
+    const bullets = { bullets: [{ heading: "H", text: "fine." }] };
+    const trimmed = trimOversizedBullets(bullets, 220);
+    expect(trimmed).toEqual([]);
+  });
+
+  it("reports original and new length for each trimmed bullet", () => {
+    const bullets = {
+      bullets: [
+        { heading: "P", text: "This is long enough to exceed the tiny cap we are setting for this test case where we want a definite trim." },
+      ],
+    };
+    const trimmed = trimOversizedBullets(bullets, 50);
+    expect(trimmed[0]).toHaveProperty("originalLen");
+    expect(trimmed[0]).toHaveProperty("newLen");
+    expect(trimmed[0].newLen).toBeLessThan(trimmed[0].originalLen);
+  });
+});
+
+describe("runBulletPipeline", () => {
+  it("runs puffery removal + heading clean + trim in one pass", () => {
+    const bullets = {
+      bullets: [
+        {
+          heading: "SMART MICOM CONTROL::",
+          text: "Advanced microcomputer technology automatically adjusts cooking time and temperature for consistently fluffy, perfectly textured rice every time with precision and care.",
+        },
+      ],
+    };
+    const result = runBulletPipeline(bullets, 220);
+    // Heading cleaned
+    expect(bullets.bullets[0].heading).toBe("SMART MICOM CONTROL");
+    // Puffery stripped
+    expect(bullets.bullets[0].text).not.toMatch(/Advanced microcomputer/i);
+    // Total length within cap
+    const fullLen = (bullets.bullets[0].heading + ": " + bullets.bullets[0].text).length;
+    expect(fullLen).toBeLessThanOrEqual(220);
+    expect(Array.isArray(result.warnings)).toBe(true);
+  });
+
+  it("handles the real-world CRP-LHTAR0609FW case from bulk run (280 chars with ::)", () => {
+    const bullets = {
+      bullets: [
+        {
+          heading: "INDUCTION + TWIN PRESSURE::",
+          text: "Precise induction heating combined with dual pressure systems delivers restaurant-quality rice with optimal texture and moisture retention. Each grain achieves perfect consistency through controlled temperature distribution and pressure-sealed cooking.",
+        },
+      ],
+    };
+    const before = bullets.bullets[0].heading + ": " + bullets.bullets[0].text;
+    expect(before.length).toBeGreaterThan(220); // confirms starting state
+    runBulletPipeline(bullets, 220);
+    const after = bullets.bullets[0].heading + ": " + bullets.bullets[0].text;
+    expect(after.length).toBeLessThanOrEqual(220);
+    expect(bullets.bullets[0].heading).toBe("INDUCTION + TWIN PRESSURE"); // colons stripped
+  });
+
+  it("returns BULLET_TRIMMED warning when a bullet is trimmed", () => {
+    const bullets = {
+      bullets: [
+        { heading: "P", text: "This is a sentence. ".repeat(20) },
+      ],
+    };
+    const result = runBulletPipeline(bullets, 220);
+    expect(result.trimmed.length).toBe(1);
+    expect(result.warnings.some(w => w.startsWith("BULLET_TRIMMED"))).toBe(true);
+  });
+
+  it("handles null input safely", () => {
+    expect(() => runBulletPipeline(null, 220)).not.toThrow();
+    const result = runBulletPipeline(null, 220);
+    expect(result.trimmed).toEqual([]);
+    expect(result.warnings).toEqual([]);
+  });
+});
+
+// =============================================================
+// COLOR-VARIANT GROUPING (narrow F+[WGBR] rule)
+// =============================================================
+
+describe("getColorVariantStem", () => {
+  it("matches F + W (White) pattern", () => {
+    expect(getColorVariantStem("CR-0675FW")).toEqual({ stem: "CR-0675F", colorLetter: "W" });
+  });
+
+  it("matches F + G (Gray) pattern", () => {
+    expect(getColorVariantStem("CR-0675FG")).toEqual({ stem: "CR-0675F", colorLetter: "G" });
+  });
+
+  it("matches F + B (Black) pattern", () => {
+    expect(getColorVariantStem("CRP-LHTAR0609FB")).toEqual({ stem: "CRP-LHTAR0609F", colorLetter: "B" });
+  });
+
+  it("matches F + R (Red) pattern", () => {
+    expect(getColorVariantStem("CR-0351FR")).toEqual({ stem: "CR-0351F", colorLetter: "R" });
+  });
+
+  it("handles long stems with multiple letter runs (CR-HA0810FG, CRP-LHTAR0609FB)", () => {
+    expect(getColorVariantStem("CR-HA0810FG")).toEqual({ stem: "CR-HA0810F", colorLetter: "G" });
+    expect(getColorVariantStem("CRP-LHTAR0609FB")).toEqual({ stem: "CRP-LHTAR0609F", colorLetter: "B" });
+  });
+
+  it("returns null for SKUs ending in F alone (not F+color)", () => {
+    // These are model-level F suffixes, not color codes
+    expect(getColorVariantStem("CR-0631F")).toBeNull();
+    expect(getColorVariantStem("CR-0632F")).toBeNull();
+    expect(getColorVariantStem("CR-0641F")).toBeNull();
+    expect(getColorVariantStem("CRP-JHR0609F")).toBeNull();
+  });
+
+  it("returns null for SKUs ending in other letters (C, S, V, N, D)", () => {
+    expect(getColorVariantStem("CR-0301C")).toBeNull();
+    expect(getColorVariantStem("CRP-P0609S")).toBeNull();
+    expect(getColorVariantStem("CR-0671V")).toBeNull();
+    expect(getColorVariantStem("CRP-CHSS1009FN")).toBeNull();
+    expect(getColorVariantStem("CRP-DHSR0609FD")).toBeNull();
+  });
+
+  it("returns null for SKUs with two-letter suffixes where first isn't F", () => {
+    // e.g., CRP-P1009SB ends in SB, not F+[WGBR]
+    expect(getColorVariantStem("CRP-P1009SB")).toBeNull();
+    expect(getColorVariantStem("CRP-P1009SW")).toBeNull();
+  });
+
+  it("returns null for empty/non-string/unrecognized", () => {
+    expect(getColorVariantStem(null)).toBeNull();
+    expect(getColorVariantStem("")).toBeNull();
+    expect(getColorVariantStem("NOTAMODEL")).toBeNull();
+    expect(getColorVariantStem(123)).toBeNull();
+  });
+
+  it("trims whitespace before matching", () => {
+    expect(getColorVariantStem("  CR-0675FW  ")).toEqual({ stem: "CR-0675F", colorLetter: "W" });
+  });
+});
+
+describe("buildColorVariantGroups", () => {
+  it("groups the 7 real CUCKOO color-variant families correctly", () => {
+    // This is the real cluster pattern from the 47-SKU DB
+    const db = {
+      "CR-0675FW": {}, "CR-0675FG": {},
+      "CR-0375FW": {}, "CR-0375FG": {},
+      "CR-HA0810FW": {}, "CR-HA0810FG": {},
+      "CRP-LHTAR0609FB": {}, "CRP-LHTAR0609FW": {},
+      "CRP-RT0609FB": {}, "CRP-RT0609FW": {},
+      "CRP-ST0609FG": {}, "CRP-ST0609FW": {},
+      "CRP-ST1009FG": {}, "CRP-ST1009FW": {},
+    };
+    const groups = buildColorVariantGroups(db);
+    expect(Object.keys(groups).length).toBe(7);
+    expect(groups["CR-0675F"]).toEqual(["CR-0675FG", "CR-0675FW"]);
+    expect(groups["CR-0375F"]).toEqual(["CR-0375FG", "CR-0375FW"]);
+    expect(groups["CR-HA0810F"]).toEqual(["CR-HA0810FG", "CR-HA0810FW"]);
+    expect(groups["CRP-LHTAR0609F"]).toEqual(["CRP-LHTAR0609FB", "CRP-LHTAR0609FW"]);
+    expect(groups["CRP-RT0609F"]).toEqual(["CRP-RT0609FB", "CRP-RT0609FW"]);
+    expect(groups["CRP-ST0609F"]).toEqual(["CRP-ST0609FG", "CRP-ST0609FW"]);
+    expect(groups["CRP-ST1009F"]).toEqual(["CRP-ST1009FG", "CRP-ST1009FW"]);
+  });
+
+  it("excludes stems with only one member (no sibling to rewrite from)", () => {
+    const db = { "CR-0675FW": {}, "CR-0675FG": {}, "CRP-HS0657FW": {} };
+    const groups = buildColorVariantGroups(db);
+    expect(groups["CR-0675F"]).toBeDefined();
+    expect(groups["CRP-HS0657F"]).toBeUndefined(); // solo, excluded
+  });
+
+  it("excludes SKUs not matching the F+[WGBR] pattern", () => {
+    const db = {
+      "CR-0301C": {}, "CR-0601C": {}, // should be grouped? no — rule excludes C
+      "CRP-P1009SB": {}, "CRP-P1009SW": {}, // S+[BW] — excluded, rule requires F
+    };
+    const groups = buildColorVariantGroups(db);
+    expect(Object.keys(groups).length).toBe(0);
+  });
+
+  it("returns an empty object for empty/null input", () => {
+    expect(buildColorVariantGroups(null)).toEqual({});
+    expect(buildColorVariantGroups({})).toEqual({});
+  });
+
+  it("sorts members alphabetically so leader is deterministic", () => {
+    const db = { "CR-0675FW": {}, "CR-0675FG": {} };
+    const groups = buildColorVariantGroups(db);
+    // G comes before W alphabetically
+    expect(groups["CR-0675F"][0]).toBe("CR-0675FG");
+    expect(groups["CR-0675F"][1]).toBe("CR-0675FW");
+  });
+});
+
+describe("pickColorVariantLeader", () => {
+  it("returns the alphabetically first SKU", () => {
+    expect(pickColorVariantLeader(["CR-0675FW", "CR-0675FG"])).toBe("CR-0675FG");
+    expect(pickColorVariantLeader(["CRP-LHTAR0609FW", "CRP-LHTAR0609FB"])).toBe("CRP-LHTAR0609FB");
+  });
+
+  it("returns null for empty/invalid input", () => {
+    expect(pickColorVariantLeader([])).toBeNull();
+    expect(pickColorVariantLeader(null)).toBeNull();
+    expect(pickColorVariantLeader("not-an-array")).toBeNull();
+  });
+});
+
+describe("getLeaderForSku", () => {
+  it("returns leader for a SKU in a group", () => {
+    const groups = { "CR-0675F": ["CR-0675FG", "CR-0675FW"] };
+    expect(getLeaderForSku("CR-0675FW", groups)).toBe("CR-0675FG");
+    expect(getLeaderForSku("CR-0675FG", groups)).toBe("CR-0675FG"); // leader leads itself
+  });
+
+  it("returns null for SKU not in any group", () => {
+    const groups = { "CR-0675F": ["CR-0675FG", "CR-0675FW"] };
+    expect(getLeaderForSku("CR-0301C", groups)).toBeNull();
+    expect(getLeaderForSku("CR-0631F", groups)).toBeNull();
+  });
+});
+
+describe("rewriteTitleForFollower", () => {
+  it("swaps color and SKU in a simple CUCKOO title", () => {
+    const leaderTitle = "CUCKOO Micom Rice Cooker 12-Cup Cooked, Gray (CR-0675FG)";
+    const result = rewriteTitleForFollower(leaderTitle, "CR-0675FG", "Gray", "CR-0675FW", "White");
+    expect(result).toBe("CUCKOO Micom Rice Cooker 12-Cup Cooked, White (CR-0675FW)");
+  });
+
+  it("swaps color in a title with a descriptor and ending color+SKU", () => {
+    const leaderTitle = "CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked with Stainless Steel Inner Pot, Black (CRP-LHTAR0609FB)";
+    const result = rewriteTitleForFollower(leaderTitle, "CRP-LHTAR0609FB", "Black", "CRP-LHTAR0609FW", "White");
+    expect(result).toBe("CUCKOO Twin Pressure Induction Heating Rice Cooker 12-Cup Cooked with Stainless Steel Inner Pot, White (CRP-LHTAR0609FW)");
+  });
+
+  it("only swaps the LAST occurrence of the color word (preserves 'black' mentions earlier)", () => {
+    // Hypothetical title mentioning 'black' in the descriptor AND the final color slot
+    const leaderTitle = "CUCKOO Rice Cooker with Black Steel Interior, Black (CRP-RT0609FB)";
+    const result = rewriteTitleForFollower(leaderTitle, "CRP-RT0609FB", "Black", "CRP-RT0609FW", "White");
+    // Only the final 'Black' is swapped
+    expect(result).toBe("CUCKOO Rice Cooker with Black Steel Interior, White (CRP-RT0609FW)");
+  });
+
+  it("handles case-insensitive color matching", () => {
+    const leaderTitle = "some cucKOO title gray (CR-0675FG)";
+    const result = rewriteTitleForFollower(leaderTitle, "CR-0675FG", "Gray", "CR-0675FW", "White");
+    // Matches 'gray' case-insensitively, replaces with 'White'
+    expect(result).toContain("White");
+    expect(result).toContain("CR-0675FW");
+  });
+
+  it("returns original title when leaderColor == followerColor (idempotent)", () => {
+    const t = "CUCKOO ... Gray (CR-0675FG)";
+    expect(rewriteTitleForFollower(t, "CR-0675FG", "Gray", "CR-0675FG", "Gray")).toBe(t);
+  });
+
+  it("handles null/empty inputs gracefully", () => {
+    expect(rewriteTitleForFollower(null, "A", "White", "B", "Gray")).toBeNull();
+    expect(rewriteTitleForFollower("", "A", "White", "B", "Gray")).toBe("");
+  });
+});
+
+describe("applyColorVariantRewrite", () => {
+  it("rewrites all marketplace titles in a conversions object", () => {
+    const leaderConversions = {
+      amazon: { title: "CUCKOO Rice Cooker ..., Gray (CR-0675FG)" },
+      walmart: { title: "CUCKOO Rice Cooker with Auto Clean, Gray (CR-0675FG)" },
+      target: { title: "CUCKOO Rice Cooker for Everyday Rice, Gray (CR-0675FG)" },
+    };
+    const followerConversions = {};
+    const result = applyColorVariantRewrite(leaderConversions, followerConversions, "CR-0675FG", "Gray", "CR-0675FW", "White");
+    expect(result.rewrittenCount).toBe(3);
+    expect(followerConversions.amazon.title).toBe("CUCKOO Rice Cooker ..., White (CR-0675FW)");
+    expect(followerConversions.walmart.title).toBe("CUCKOO Rice Cooker with Auto Clean, White (CR-0675FW)");
+    expect(followerConversions.target.title).toBe("CUCKOO Rice Cooker for Everyday Rice, White (CR-0675FW)");
+  });
+
+  it("warns when leaderConversions is missing", () => {
+    const result = applyColorVariantRewrite(null, {}, "A", "White", "B", "Gray");
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.rewrittenCount).toBe(0);
   });
 });
