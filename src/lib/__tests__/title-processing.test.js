@@ -24,6 +24,7 @@ import {
   validateDescriptorFacet,
   diversifyMarketplaceDescriptors,
   buildDescriptorPool,
+  getCapacityTier,
   pickAlternativeDescriptor,
   rebuildTitleWithDescriptor,
   // Pipeline wrappers
@@ -1146,11 +1147,39 @@ describe("buildDescriptorPool", () => {
     expect(texts).toContain("with 10 Cooking Modes");
   });
 
-  it("always includes lifestyle/cultural descriptors", () => {
-    const pool = buildDescriptorPool(basicProductCR0601C);
+  it("includes capacity-aware lifestyle descriptors (family tier)", () => {
+    const pool = buildDescriptorPool(basicProductCR0601C); // 6-cup uncooked = family tier
     const texts = pool.map(p => p.text);
-    expect(texts).toContain("for Everyday Rice & Grains");
-    expect(texts).toContain("for Rice & Grains");
+    expect(texts).toContain("Family-Size Capacity");
+    expect(texts).toContain("Family Meal-Prep Size");
+    // Ensure the old 'for X' generic phrases are gone
+    expect(texts).not.toContain("for Everyday Rice & Grains");
+    expect(texts).not.toContain("for Rice & Grains");
+  });
+
+  it("picks 'small' lifestyle tier for 3-cup uncooked products", () => {
+    const small = { ...basicProductCR0601C, cupSize: "3 Cup Uncooked / 6 Cup Cooked" };
+    const pool = buildDescriptorPool(small);
+    const texts = pool.map(p => p.text);
+    expect(texts).toContain("Single-Serve Size");
+    expect(texts).toContain("Compact Countertop Size");
+    expect(texts).not.toContain("Family-Size Capacity");
+  });
+
+  it("picks 'large' lifestyle tier for 10-cup uncooked products", () => {
+    const large = { ...basicProductCR0601C, cupSize: "10 Cup Uncooked / 20 Cup Cooked" };
+    const pool = buildDescriptorPool(large);
+    const texts = pool.map(p => p.text);
+    expect(texts).toContain("Large-Batch Capacity");
+    expect(texts).toContain("Party-Size Capacity");
+  });
+
+  it("picks 'commercial' lifestyle tier for Commercial type", () => {
+    const commercial = { ...basicProductCR0601C, type: "Commerical", cupSize: "30 Cup Uncooked / 60 Cup Cooked" };
+    const pool = buildDescriptorPool(commercial);
+    const texts = pool.map(p => p.text);
+    expect(texts).toContain("Commercial Capacity");
+    expect(texts).toContain("High-Volume Service Size");
   });
 });
 
