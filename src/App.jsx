@@ -2057,7 +2057,13 @@ function AppInner() {
       // Pause between products to avoid rate limiting
       if (i > 0) await delay(2000);
       const sku = sortedModels[i];
-      const product = liveProductDbRef.current[sku];
+      // Merge hardcoded PRODUCT_DB (has full fields like cookingModeNames, mfg, wattage, dimensions)
+      // with live DB uploaded by user (has parentAsin). Live fields override hardcoded.
+      const hardcodedProduct = PRODUCT_DB[sku];
+      const liveProduct = liveProductDbRef.current[sku];
+      const product = hardcodedProduct || liveProduct
+        ? { ...(hardcodedProduct || {}), ...(liveProduct || {}) }
+        : null;
       if (!product) { results.push({ sku, error: "Not in database" }); continue; }
       const productCtx = formatProductContext({ sku, ...product });
       try {
@@ -2069,7 +2075,11 @@ function AppInner() {
         if (isFollower) {
           // Reuse leader's titles with color+SKU swap — NO API call
           const cached = leaderTitlesCache[leaderSku];
-          const leaderProduct = liveProductDbRef.current[leaderSku];
+          const leaderHardcoded = PRODUCT_DB[leaderSku];
+          const leaderLive = liveProductDbRef.current[leaderSku];
+          const leaderProduct = leaderHardcoded || leaderLive
+            ? { ...(leaderHardcoded || {}), ...(leaderLive || {}) }
+            : null;
           titles = JSON.parse(JSON.stringify(cached)); // deep clone
           applyColorVariantRewrite(
             cached.conversions,
@@ -2156,7 +2166,9 @@ function AppInner() {
     const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs");
     const mpKeys = Object.keys(MARKETPLACES);
     const rows = beResults.filter(r => !r.error).map(r => {
-      const row = { SKU: r.sku, "Product Type": liveProductDbRef.current[r.sku]?.type || "", "Cup Size": liveProductDbRef.current[r.sku]?.cupSize || "" };
+      // Merge hardcoded + live DB for output row (live wins, hardcoded fills gaps)
+      const mergedProduct = { ...(PRODUCT_DB[r.sku] || {}), ...(liveProductDbRef.current[r.sku] || {}) };
+      const row = { SKU: r.sku, "Product Type": mergedProduct.type || "", "Cup Size": mergedProduct.cupSize || "" };
       // Amazon suggested title
       row["Amazon Title (Suggested)"] = r.amazonTitle || "";
       row["Amazon Chars"] = (r.amazonTitle || "").length;
