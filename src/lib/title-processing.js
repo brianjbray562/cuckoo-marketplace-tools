@@ -701,13 +701,84 @@ export function buildDescriptorPool(product) {
     pool.push({ text: modeCount + " Cooking Modes", suggestedFacets: ["tech_spec"] });
   }
 
-  // Lifestyle / cultural descriptors
-  pool.push({ text: "for Everyday Rice & Grains", suggestedFacets: ["lifestyle"] });
-  pool.push({ text: "for Family Meal Prep", suggestedFacets: ["lifestyle"] });
-  pool.push({ text: "for Rice & Grains", suggestedFacets: ["practical_cultural", "lifestyle"] });
-  pool.push({ text: "for Multi-Grain & GABA Rice", suggestedFacets: ["practical_cultural"] });
+  // Lifestyle descriptors — capacity- and feature-aware.
+  // Dropped legacy "for X" phrasing entirely (sounded clipped / AI-generated).
+  // Use natural descriptive modifiers that say something specific about this SKU.
+  const capacityTier = getCapacityTier(product);
+  if (capacityTier === "small") {
+    pool.push({ text: "Single-Serve Size", suggestedFacets: ["lifestyle"] });
+    pool.push({ text: "Compact Countertop Size", suggestedFacets: ["lifestyle"] });
+  } else if (capacityTier === "family") {
+    pool.push({ text: "Family-Size Capacity", suggestedFacets: ["lifestyle"] });
+    pool.push({ text: "Family Meal-Prep Size", suggestedFacets: ["lifestyle"] });
+  } else if (capacityTier === "large") {
+    pool.push({ text: "Large-Batch Capacity", suggestedFacets: ["lifestyle"] });
+    pool.push({ text: "Party-Size Capacity", suggestedFacets: ["lifestyle"] });
+  } else if (capacityTier === "commercial") {
+    pool.push({ text: "Commercial Capacity", suggestedFacets: ["lifestyle"] });
+    pool.push({ text: "High-Volume Service Size", suggestedFacets: ["lifestyle"] });
+  }
+
+  // Feature-driven lifestyle angles (choose when relevant, independent of capacity)
+  if (features.includes("Voice Guide")) {
+    pool.push({ text: "Voice-Guided Operation", suggestedFacets: ["lifestyle", "primary_benefit"] });
+  }
+  if (features.includes("Auto Clean")) {
+    pool.push({ text: "Low-Maintenance Design", suggestedFacets: ["lifestyle"] });
+  }
+  if (features.includes("Turbo Mode") || features.includes("Quick Mode")) {
+    pool.push({ text: "Quick-Cook Ready", suggestedFacets: ["lifestyle", "viral_hook"] });
+  }
+
+  // Cultural / grain-specific descriptors (practical_cultural facet)
+  // Only include if we can back them up with actual cooking modes
+  const modeNames = Array.isArray(product.cookingModeNames) ? product.cookingModeNames.map(m => m.toLowerCase()) : [];
+  const hasGaba = modeNames.some(m => m.includes("gaba"));
+  const hasMultiGrain = modeNames.some(m => m.includes("multi grain") || m.includes("multi-grain"));
+  const hasScorched = modeNames.some(m => m.includes("scorched") || m.includes("nurungji"));
+  const hasPorridge = modeNames.some(m => m.includes("porridge"));
+  const hasBabyFood = modeNames.some(m => m.includes("baby"));
+
+  if (hasGaba && hasMultiGrain) {
+    pool.push({ text: "Multi-Grain & GABA Rice Ready", suggestedFacets: ["practical_cultural"] });
+  } else if (hasGaba) {
+    pool.push({ text: "GABA Rice Ready", suggestedFacets: ["practical_cultural"] });
+  } else if (hasMultiGrain) {
+    pool.push({ text: "Multi-Grain Ready", suggestedFacets: ["practical_cultural"] });
+  }
+  if (hasScorched) {
+    pool.push({ text: "Scorched Rice & Nurungji Ready", suggestedFacets: ["practical_cultural"] });
+  }
+  if (hasPorridge && hasBabyFood) {
+    pool.push({ text: "Porridge & Baby Food Ready", suggestedFacets: ["practical_cultural"] });
+  } else if (hasPorridge) {
+    pool.push({ text: "Porridge-Mode Ready", suggestedFacets: ["practical_cultural"] });
+  }
 
   return pool;
+}
+
+// Classify a product's capacity into a tier for lifestyle descriptor selection.
+// Uses cupSize field which looks like "6 Cup Uncooked / 12 Cup Cooked" or just "3 Cup Uncooked".
+// Returns: "small" | "family" | "large" | "commercial" | null (if unparseable)
+export function getCapacityTier(product) {
+  if (!product) return null;
+  const cupSize = String(product.cupSize || "");
+  // Try to extract uncooked cup count first (that's the primary product spec)
+  const uncookedMatch = cupSize.match(/(\d+)\s*Cup\s+Uncooked/i);
+  const cookedMatch = cupSize.match(/(\d+)\s*Cup\s+Cooked/i);
+  // Also check product type for commercial tier
+  const isCommercial = String(product.type || "").toLowerCase().includes("commercial");
+  if (isCommercial) return "commercial";
+  const uncooked = uncookedMatch ? parseInt(uncookedMatch[1]) : null;
+  const cooked = cookedMatch ? parseInt(cookedMatch[1]) : null;
+  // Use uncooked if available, otherwise fall back to cooked/2
+  const effective = uncooked || (cooked ? Math.round(cooked / 2) : null);
+  if (effective === null) return null;
+  if (effective <= 3) return "small";        // 3-cup uncooked = 6-cup cooked
+  if (effective <= 6) return "family";       // 6-cup uncooked = 12-cup cooked (most common)
+  if (effective <= 10) return "large";       // 10-cup uncooked = 20-cup cooked
+  return "commercial";                        // 20+ cup = commercial territory
 }
 
 // Pick an alternative descriptor from the pool that:
@@ -731,13 +802,62 @@ export function rebuildTitleWithDescriptor(originalTitle, oldDescriptor, newDesc
   const coreNoColorNoSku = buildCanonicalCore(product, sku, capacityMode, { skipColor: true, skipModel: true });
   const color = (product.color || "").trim();
 
-  // Rebuild: core + ", " + descriptor + ", " + color + " (" + sku + ")"
+  // Determine separator between core and descriptor.
+  // - "with X" / "for X" / "& X" / preposition-led -> space only (reads naturally after capacity)
+  // - Standalone modifiers like "Family-Size Capacity" -> comma + space (grammatically correct)
+  const leadsWithPreposition = /^(with|for|and|&)\b/i.test(newDescriptor.trim());
+  const separator = leadsWithPreposition ? " " : ", ";
+
+  // Rebuild: core + separator + descriptor + ", " + color + " (" + sku + ")"
   let rebuilt = coreNoColorNoSku;
-  if (newDescriptor) rebuilt += " " + newDescriptor;
+  if (newDescriptor) rebuilt += separator + newDescriptor;
   if (color) rebuilt += ", " + color;
   if (sku) rebuilt += " (" + sku + ")";
   rebuilt = rebuilt.replace(/\s{2,}/g, " ").replace(/,\s*,/g, ",").trim();
   return rebuilt;
+}
+
+// Enforce family-consistent lifestyle descriptor across all lifestyle-facet
+// marketplaces (currently just Target). All SKUs sharing a Parent ASIN will
+// get the same lifestyle descriptor phrase. Pass a session (from
+// createLifestyleSession) that persists across a batch.
+//
+// Note: the new descriptors use NO "for" prefix — they're natural modifiers
+// like "Family-Size Capacity" or "Party-Size Capacity". Since they don't
+// start with "with"/"for", we inject them with a comma separator:
+//   "CUCKOO Micom Rice Cooker 12-Cup Cooked, Family-Size Capacity, White (SKU)"
+export function enforceLifestyleFamilyConsistency(conversions, product, sku, session, capacityMode = "cooked") {
+  if (!conversions || !product || !session) return [];
+  const warnings = [];
+  const desiredDescriptor = selectLifestyleDescriptor(product, sku, session);
+  if (!desiredDescriptor) return warnings;
+
+  // Find all lifestyle-facet marketplaces
+  for (const [mp, facet] of Object.entries(MARKETPLACE_FACETS)) {
+    if (facet !== "lifestyle") continue;
+    const conv = conversions[mp];
+    if (!conv?.title) continue;
+
+    // Extract current descriptor (if any) so we can swap it out
+    const currentDescriptor = extractDescriptorSlot(conv.title, product, sku, capacityMode);
+    if (currentDescriptor && currentDescriptor.trim() === desiredDescriptor.trim()) continue;
+
+    // Rebuild with the desired family-consistent descriptor
+    const newTitle = rebuildTitleWithDescriptor(
+      conv.title,
+      currentDescriptor || "",
+      desiredDescriptor,
+      product,
+      sku,
+      capacityMode
+    );
+    if (newTitle && newTitle !== conv.title) {
+      conv.title = newTitle;
+      conv.char_count = newTitle.length;
+      warnings.push(mp + ": lifestyle descriptor pinned to '" + desiredDescriptor + "' (Parent ASIN family consistency)");
+    }
+  }
+  return warnings;
 }
 
 // --- LISTING OUTPUT VALIDATION ---
@@ -1088,6 +1208,50 @@ export function createBulletHeadingSession() {
     familyHeadings: new Map(),
     typeCounters: new Map(),
   };
+}
+
+// -----------------------------------------------------------
+// LIFESTYLE DESCRIPTOR SESSION (Parent ASIN family consistency)
+// -----------------------------------------------------------
+// Analogous to createBulletHeadingSession, but for the lifestyle descriptor
+// used by Target (and any other marketplace assigned the "lifestyle" facet).
+// All SKUs sharing a Parent ASIN get the SAME lifestyle phrase. This prevents
+// "CR-0631F says Family-Size Capacity while CR-0632F says Family Meal-Prep Size"
+// when both are the same product family with only trivial differences.
+//
+// Session shape:
+//   {
+//     familyDescriptors: Map<parentKey, descriptor>,  // memoized per family
+//   }
+export function createLifestyleSession() {
+  return {
+    familyDescriptors: new Map(),
+  };
+}
+
+// Pick a family-consistent lifestyle descriptor for this SKU.
+// - If the parent family has already been assigned a descriptor, reuse it.
+// - Otherwise, pick the first lifestyle-facet entry from the product's pool
+//   and remember it for this family.
+// Returns the descriptor string, or null if the product has no lifestyle entries
+// in its pool (rare — only happens if capacity is unparseable).
+export function selectLifestyleDescriptor(product, sku, session) {
+  if (!product || !session) return null;
+  const familyKey = getModelBase(product, sku);
+  if (!familyKey) return null;
+
+  // Reuse existing family choice if present
+  if (session.familyDescriptors.has(familyKey)) {
+    return session.familyDescriptors.get(familyKey);
+  }
+
+  // Otherwise pick from this product's pool (first lifestyle-facet entry)
+  const pool = buildDescriptorPool(product);
+  const lifestyleEntry = pool.find(e => e.suggestedFacets.includes("lifestyle"));
+  if (!lifestyleEntry) return null;
+
+  session.familyDescriptors.set(familyKey, lifestyleEntry.text);
+  return lifestyleEntry.text;
 }
 
 // -----------------------------------------------------------
@@ -1455,7 +1619,11 @@ export function runBulletPipeline(bulletsObj, maxCharsPerBullet = 220) {
 // Runs the complete title post-processing sequence in the correct order.
 // Replaces the 7-line sequence duplicated across 4 call sites in App.jsx.
 // Returns { warnings } aggregating all warnings from every step.
-export function runFullTitlePipeline(titles, product, sku, capacityMode = "cooked") {
+//
+// lifestyleSession (optional): pass a session from createLifestyleSession()
+// to pin Target's lifestyle descriptor to the Parent ASIN family choice.
+// If omitted, lifestyle descriptors are left as-is (LLM picks per-SKU).
+export function runFullTitlePipeline(titles, product, sku, capacityMode = "cooked", lifestyleSession = null) {
   const warnings = [];
   if (!titles?.conversions || !product) return { warnings };
 
@@ -1483,6 +1651,15 @@ export function runFullTitlePipeline(titles, product, sku, capacityMode = "cooke
   // Bloomingdale's (minimal) are skipped inside the function.
   const diversifyWarnings = diversifyMarketplaceDescriptors(titles.conversions, product, sku, capacityMode);
   warnings.push(...diversifyWarnings);
+
+  // Step 5b: Pin lifestyle descriptor to the Parent ASIN family choice
+  // (only if a lifestyleSession was provided — typically during bulk export).
+  if (lifestyleSession) {
+    const lifestyleWarnings = enforceLifestyleFamilyConsistency(
+      titles.conversions, product, sku, lifestyleSession, capacityMode
+    );
+    warnings.push(...lifestyleWarnings);
+  }
 
   // Step 6: Add comma after capacity when missing
   normalizeCommaAfterCapacity(titles.conversions);
